@@ -1,0 +1,101 @@
+---
+Language: C
+Standard: c++20
+
+# indentation
+IndentWidth: 4
+TabWidth: 4
+
+AccessModifierOffset: -4
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: Yes
+BreakStringLiterals: false
+MaxEmptyLinesToKeep: 2
+PointerAlignment: Right
+UseCRLF: false
+
+# maximum column width
+ColumnLimit: 110
+
+# brace breaking style like Linux
+BreakBeforeBraces: Linux
+
+# always break after an open bracket, if the parameters don’t fit on a single line
+AlignAfterOpenBracket: Align
+
+# align consecutive macros
+AlignConsecutiveMacros: true
+
+# horizontally align operands of binary and ternary expressions
+AlignOperands: true
+
+# align trailing comments
+AlignTrailingComments: true
+
+# left-align array of structures
+AlignArrayOfStructures: Left
+
+# don't allow putting all parameters of a function/declaration onto the next line
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+
+# only merge empty blocks.
+AllowShortBlocksOnASingleLine: Empty
+
+# always break after the return type of top-level definitions
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+
+# never pack parameters/arguments
+BinPackParameters: false
+BinPackArguments: false
+
+# regroup include blocks
+IncludeBlocks: Regroup
+
+# never sort includes
+SortIncludes: false
+
+# space after casts
+SpaceAfterCStyleCast: true
+
+# statement macros that are not followed by a semicolon
+StatementMacros: [
+    'G_DEFINE_TYPE',
+    'G_DEFINE_TYPE_WITH_PRIVATE',
+    'G_DEFINE_TYPE_WITH_CODE',
+    'G_DEFINE_INTERFACE',
+    'G_DEFINE_BOXED_TYPE',
+    'G_BEGIN_DECLS',
+    'G_END_DECLS',
+]
+
+# loop helpers
+ForEachMacros: [
+    'SD_HWDB_FOREACH_PROPERTY',
+    'SD_JOURNAL_FOREACH',
+    'SD_JOURNAL_FOREACH_BACKWARDS',
+    'SD_JOURNAL_FOREACH_DATA',
+    'SD_JOURNAL_FOREACH_FIELD',
+    'SD_JOURNAL_FOREACH_UNIQUE',
+]
+
+# avoid breaking around an assignment operator
+PenaltyBreakAssignment: 250
+
+# left-align newline escapes, e.g. in macros
+AlignEscapedNewlines: Left
+
+# don't indent case labels
+IndentCaseLabels: false
+
+# don't reflow comments, this can cause issues with documentation / GIR annotations
+ReflowComments: false
+
+# all enums should be on their own line
+AllowShortEnumsOnASingleLine: false
+
+# break after operators
+BreakBeforeBinaryOperators: None
