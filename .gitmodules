@@ -1,0 +1,3 @@
+[submodule "capsule/libcapsule"]
+	path = capsule/libcapsule
+	url = https://gitlab.com/fledermaus/libcapsule.git
