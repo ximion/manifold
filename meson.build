@@ -1,6 +1,6 @@
 project('Manifold', 'c',
   meson_version: '>=0.62',
-  default_options: ['c_std=gnu23'],
+  default_options: ['c_std=gnu23', 'b_pie=true'],
 
   license: 'LGPL-2.1-or-later',
   version: '0.0.1',
@@ -38,12 +38,8 @@ if get_option('maintainer')
       '-Wfloat-equal',
       '-Wno-error=comment',
       '-Werror=format-security',
-
-      # used in rsvg's headers, so we can not make this fatal yet
-      '-Wno-error=expansion-to-defined',
     ]
     add_project_arguments(maintainer_c_args, language: 'c')
-    add_project_arguments(maintainer_c_args, language: 'cpp')
 endif
 
 # a few compiler warning flags we always want enabled
@@ -61,7 +57,6 @@ add_project_arguments(
     '-Werror=incompatible-pointer-types',
     '-Werror=misleading-indentation',
     '-Werror=missing-include-dirs',
-    '-Werror=declaration-after-statement',
     '-Werror=format-security',
 
     '-Wno-missing-field-initializers',
@@ -75,15 +70,13 @@ add_project_arguments(
 add_project_arguments('-DMF_COMPILATION', language: 'c')
 
 #
-# Hardening flags for the binaries involved in launching applications
+# Hardening flags we want to enforce on some binaries
 #
 hardening_c_args = cc.get_supported_arguments([
     '-fstack-protector-strong',
     '-fstack-clash-protection',
     '-fcf-protection=full',
-    '-mbranch-protection=standard',
     '-ftrivial-auto-var-init=zero',
-    '-fno-plt',
 ])
 if get_option('optimization') != '0'
     # fortification requires optimization
@@ -106,6 +99,8 @@ glib_dep = dependency('glib-2.0', version: '>= 2.80')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.80')
 systemd_dep = dependency('systemd')
 libzip_dep = dependency('libzip', version: '>= 1.7')
+libglnx_dep = dependency('libglnx', default_options: ['tests=false'])
+libcryptsetup_dep = dependency('libcryptsetup', version: '>= 2.4')
 
 #
 # Modules
@@ -121,6 +116,12 @@ mf_bindir     = mf_prefix / get_option('bindir')
 mf_libexecdir = mf_prefix / get_option('libexecdir')
 mf_runtimedir = '/run/manifold'
 mf_store_dir  = '/var/lib/manifold'
+mf_cache_dir  = '/var/cache/manifold'
+
+# what manifold-rund mounts, in a mount namespace of its own, and what it caches
+mf_run_mount_dir = mf_runtimedir / 'rund'
+mf_run_cache_dir = mf_cache_dir / 'run'
+mf_capsule_capture_libs = mf_prefix / mf_libdir / 'capsule' / 'capsule-capture-libs'
 
 systemd_system_unit_dir = systemd_dep.get_variable(
     pkgconfig: 'systemdsystemunitdir',
@@ -136,15 +137,18 @@ systemd_system_unit_dir = systemd_dep.get_variable(
 #
 conf = configuration_data()
 conf.set_quoted('MF_VERSION', mf_version)
-conf.set_quoted('MF_ENTER_PATH', mf_libexecdir / 'manifold-enter')
-conf.set_quoted('MF_COMPOSE_INTERFACE', mf_compose_interface)
-conf.set_quoted('MF_COMPOSE_SOCKET_PATH', mf_compose_socket)
 conf.set_quoted('MF_INTERFACE', mf_interface)
 conf.set_quoted('MF_SOCKET_PATH', mf_socket)
 conf.set_quoted('MF_STORE_DIR', mf_store_dir)
+conf.set_quoted('MF_RUN_MOUNT_DIR', mf_run_mount_dir)
+conf.set_quoted('MF_RUN_CACHE_DIR', mf_run_cache_dir)
+conf.set_quoted('MF_CAPSULE_CAPTURE_LIBS', mf_capsule_capture_libs)
 configure_file(output: 'config.h', configuration: conf)
 
 #
 # Subdirectories
 #
 subdir('capsule')
+subdir('data')
+subdir('src')
+subdir('tests')
