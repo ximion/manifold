@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+[Unit]
+Description=Manifold Manager Socket
+
+[Socket]
+ListenStream=@MF_SOCKET_PATH@
+Symlinks=/run/varlink/registry/@MF_INTERFACE@
+FileDescriptorName=varlink
+SocketMode=0666
+
+[Install]
+WantedBy=sockets.target

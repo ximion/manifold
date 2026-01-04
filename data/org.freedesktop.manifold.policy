@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<policyconfig>
+  <vendor>Manifold</vendor>
+  <vendor_url>https://github.com/ximion/manifold</vendor_url>
+
+  <!-- A trusted bundle is one whose signature verifies against a key the host trusts -->
+  <action id="org.freedesktop.manifold.install">
+    <description>Install trusted components</description>
+    <message>Authentication is required to install a software bundle</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
+  <!-- An untrusted bundle is unsigned, or signed by a key the host does not trust -->
+  <action id="org.freedesktop.manifold.install-untrusted">
+    <description>Install untrusted components</description>
+    <message>Authentication is required to install a software bundle from an untrusted source</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.freedesktop.manifold.remove">
+    <description>Remove software components</description>
+    <message>Authentication is required to remove a software component</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

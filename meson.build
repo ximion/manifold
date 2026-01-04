@@ -131,12 +131,18 @@ systemd_system_unit_dir = systemd_dep.get_variable(
 #
 # Varlink
 #
+mf_interface     = 'org.freedesktop.manifold'
+mf_socket        = mf_runtimedir / mf_interface
+mf_run_interface = 'org.freedesktop.manifold.run'
+mf_run_socket    = mf_runtimedir / mf_run_interface
 
 #
 # Configuration
 #
 conf = configuration_data()
 conf.set_quoted('MF_VERSION', mf_version)
+conf.set_quoted('MF_RUN_INTERFACE', mf_run_interface)
+conf.set_quoted('MF_RUN_SOCKET_PATH', mf_run_socket)
 conf.set_quoted('MF_INTERFACE', mf_interface)
 conf.set_quoted('MF_SOCKET_PATH', mf_socket)
 conf.set_quoted('MF_STORE_DIR', mf_store_dir)

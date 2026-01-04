@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+[Unit]
+Description=Manifold Manager
+Requires=manifold.socket
+
+[Service]
+Type=notify
+ExecStart=@MF_LIBEXECDIR@/manifoldd
+StateDirectory=manifold
+StateDirectoryMode=0755
+
+LockPersonality=yes
+RestrictRealtime=yes
+ProtectHome=yes
+
+[Install]
+Also=manifold.socket

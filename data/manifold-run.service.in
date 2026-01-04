@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+[Unit]
+Description=Manifold Mount Tree Composer
+Requires=manifold-run.socket
+
+[Service]
+Type=notify
+ExecStart=@MF_LIBEXECDIR@/manifold-rund
+CacheDirectory=manifold/run
+
+# NOTE: The service enters a mount namespace of its own.
+# Options that restrict the filesystem must not be set.
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+Also=manifold-run.socket
