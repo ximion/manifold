@@ -97,6 +97,7 @@ appstream_dep = dependency('appstream')
 libsystemd_dep = dependency('libsystemd', version: '>= 257')
 glib_dep = dependency('glib-2.0', version: '>= 2.80')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.80')
+gio_dep = dependency('gio-2.0', version: '>= 2.80')
 systemd_dep = dependency('systemd')
 libzip_dep = dependency('libzip', version: '>= 1.7')
 libglnx_dep = dependency('libglnx', default_options: ['tests=false'])
@@ -121,7 +122,7 @@ mf_cache_dir  = '/var/cache/manifold'
 # what manifold-rund mounts, in a mount namespace of its own, and what it caches
 mf_run_mount_dir = mf_runtimedir / 'rund'
 mf_run_cache_dir = mf_cache_dir / 'run'
-mf_capsule_capture_libs = mf_prefix / mf_libdir / 'capsule' / 'capsule-capture-libs'
+mf_capsule_bin_dir = mf_prefix / mf_libdir / 'capsule'
 
 systemd_system_unit_dir = systemd_dep.get_variable(
     pkgconfig: 'systemdsystemunitdir',
@@ -145,10 +146,21 @@ conf.set_quoted('MF_RUN_INTERFACE', mf_run_interface)
 conf.set_quoted('MF_RUN_SOCKET_PATH', mf_run_socket)
 conf.set_quoted('MF_INTERFACE', mf_interface)
 conf.set_quoted('MF_SOCKET_PATH', mf_socket)
+conf.set_quoted('MF_RUNTIME_DIR', mf_runtimedir)
 conf.set_quoted('MF_STORE_DIR', mf_store_dir)
+conf.set_quoted('MF_CACHE_DIR', mf_cache_dir)
 conf.set_quoted('MF_RUN_MOUNT_DIR', mf_run_mount_dir)
 conf.set_quoted('MF_RUN_CACHE_DIR', mf_run_cache_dir)
-conf.set_quoted('MF_CAPSULE_CAPTURE_LIBS', mf_capsule_capture_libs)
+conf.set_quoted('MF_CAPSULE_BIN_DIR', mf_capsule_bin_dir)
+conf.set_quoted('GETTEXT_PACKAGE', 'manifold')
+conf.set_quoted('LOCALEDIR',
+                get_option('prefix') / get_option('localedir'))
+conf.set_quoted('LOCALSTATEDIR',
+                get_option('prefix') / get_option('localstatedir'))
+conf.set_quoted('LIBEXECDIR',
+                get_option('prefix') / get_option('libexecdir'))
+conf.set_quoted('LIBDIR',
+                get_option('prefix') / get_option('libdir'))
 configure_file(output: 'config.h', configuration: conf)
 
 #
@@ -158,3 +170,4 @@ subdir('capsule')
 subdir('data')
 subdir('src')
 subdir('tests')
+subdir('docs')

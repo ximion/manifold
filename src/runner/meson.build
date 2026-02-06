@@ -1,4 +1,3 @@
-
 #
 # manifold-run: The unprivileged, user-facing runner
 #

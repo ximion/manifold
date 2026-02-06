@@ -61,6 +61,21 @@ SortIncludes: false
 # space after casts
 SpaceAfterCStyleCast: true
 
+WhitespaceSensitiveMacros: [
+    'G_DEFINE_QUARK',
+    'G_DEFINE_AUTOPTR_CLEANUP_FUNC',
+    'G_TYPE_CHECK_CLASS_CAST',
+    'G_OBJECT',
+    # boilerplate macros whose argument list is a fixed
+    # signature, not a parameter list to be wrapped.
+    'G_DECLARE_FINAL_TYPE',
+    'G_DECLARE_DERIVABLE_TYPE',
+    'G_DECLARE_INTERFACE',
+    'G_GNUC_PRINTF'
+]
+
+AttributeMacros: ['G_GNUC_NULL_TERMINATED', 'G_GNUC_CONST', 'G_GNUC_PURE']
+
 # statement macros that are not followed by a semicolon
 StatementMacros: [
     'G_DEFINE_TYPE',
@@ -70,6 +85,8 @@ StatementMacros: [
     'G_DEFINE_BOXED_TYPE',
     'G_BEGIN_DECLS',
     'G_END_DECLS',
+    'MF_BEGIN_PRIVATE_DECLS',
+    'MF_INTERNAL_VISIBLE',
 ]
 
 # loop helpers

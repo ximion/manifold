@@ -33,5 +33,5 @@ executable('capsule-capture-libs',
     c_args: capsule_c_args,
     dependencies: [libelf_dep, libdl_dep],
     install: true,
-    install_dir: mf_libdir / 'capsule',
+    install_dir: mf_capsule_bin_dir,
 )

@@ -1,0 +1,134 @@
+/*
+ * Copyright (C) 2025-2026 Matthias Klumpp <matthias@tenstral.net>
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
+#include "config.h"
+
+#include <locale.h>
+#include <glib.h>
+#include <glib/gi18n-lib.h>
+#include <manifold.h>
+
+#include "mfc-context.h"
+#include "mfc-manage.h"
+#include "mfc-query.h"
+#include "mfc-util.h"
+
+/* global options, valid for all commands */
+static gboolean optn_show_version = FALSE;
+static gboolean optn_verbose = FALSE;
+static char *optn_socket_path = NULL;
+
+static const GOptionEntry mfc_global_options[] = {
+    {"version", 0, 0, G_OPTION_ARG_NONE, &optn_show_version, "Show the program version.",         NULL  },
+    {"verbose", 0, 0, G_OPTION_ARG_NONE, &optn_verbose,      "Show extra debugging information.", NULL  },
+    {"socket",
+     0,            0,
+     G_OPTION_ARG_FILENAME,              &optn_socket_path,
+     "Reach the Manifold service at this socket.",                                                "PATH"},
+    G_OPTION_ENTRY_NULL,
+};
+
+static char *
+mfc_get_help_summary(MfcContext *ctx)
+{
+    g_autoptr(GString) summary = g_string_new("Manifold command-line interface\n\nCommands:\n");
+
+    for (guint i = 0; i < ctx->commands->len; i++) {
+        const MfcCommand *cmd = g_ptr_array_index(ctx->commands, i);
+        g_autofree char *usage = g_strconcat(cmd->name, " ", cmd->arguments, NULL);
+
+        g_string_append_printf(summary, "  %-32s %s\n", usage, cmd->summary);
+    }
+    g_string_truncate(summary, summary->len - 1);
+
+    return g_string_free(g_steal_pointer(&summary), FALSE);
+}
+
+/**
+ * mfc_wants_subcommand_help:
+ *
+ * Check if we need to display the help text of a subcommand.
+ */
+static gboolean
+mfc_wants_subcommand_help(int argc, char **argv)
+{
+    gboolean have_command = FALSE;
+
+    for (int i = 1; i < argc; i++) {
+        if (!g_str_has_prefix(argv[i], "-")) {
+            have_command = TRUE;
+            continue;
+        }
+        if (have_command && (g_strcmp0(argv[i], "--help") == 0 || g_strcmp0(argv[i], "-h") == 0))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+int
+main(int argc, char **argv)
+{
+    g_autoptr(GOptionContext) context = NULL;
+    g_autoptr(MfcContext) ctx = NULL;
+    MfcCommand *cmd;
+    gboolean show_global_help;
+    int ret;
+
+    /* bind locale */
+    setlocale(LC_ALL, "");
+    bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR);
+    bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
+    textdomain(GETTEXT_PACKAGE);
+
+    ctx = mfc_context_new();
+    mfc_register_query_commands(ctx);
+    mfc_register_manage_commands(ctx);
+
+    context = g_option_context_new("COMMAND");
+    g_option_context_add_main_entries(context, mfc_global_options, NULL);
+
+    /* unknown options are handled by the subcommands */
+    g_option_context_set_ignore_unknown_options(context, TRUE);
+
+    /* a command handles its own --help, we only display the global help here */
+    show_global_help = !mfc_wants_subcommand_help(argc, argv);
+    g_option_context_set_help_enabled(context, show_global_help);
+    if (show_global_help) {
+        g_autofree char *summary = mfc_get_help_summary(ctx);
+        g_option_context_set_summary(context, summary);
+    }
+
+    ret = mfc_parse_command_options(context, NULL, &argc, &argv);
+    if (ret != MFC_EXIT_SUCCESS)
+        return ret;
+
+    if (optn_show_version) {
+        g_print("Manifold version: %s\n", mf_version_string());
+        return MFC_EXIT_SUCCESS;
+    }
+
+    if (argc < 2) {
+        g_printerr(_("%s\n"), "You need to specify a command.");
+        mfc_print_help_hint(NULL, NULL);
+        return MFC_EXIT_INVALID_CMD;
+    }
+
+    ctx->verbose = optn_verbose;
+    ctx->socket_path = g_strdup(optn_socket_path);
+    if (ctx->verbose)
+        g_log_set_debug_enabled(TRUE);
+
+    cmd = mfc_context_find_command(ctx, argv[1]);
+    if (cmd == NULL) {
+        g_printerr("Command '%s' is unknown.\n", argv[1]);
+        mfc_print_help_hint(NULL, NULL);
+        return MFC_EXIT_INVALID_CMD;
+    }
+
+    /* run the command function */
+    return cmd->func(ctx, cmd, argc - 1, argv + 1);
+}

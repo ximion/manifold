@@ -7,3 +7,12 @@ option('maintainer',
        value : false,
        description : 'Enable maintainer mode (use strict compiler flags, e.g. -Werror)'
 )
+
+#
+# Documentation
+#
+option('docs',
+       type : 'boolean',
+       value : true,
+       description : 'Build the documentation (needs Sphinx)'
+)

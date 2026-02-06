@@ -1,0 +1,27 @@
+/*
+ * Copyright (C) 2024-2026 Matthias Klumpp <matthias@tenstral.net>
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
+#pragma once
+
+#if !defined(__MANIFOLD_H_INSIDE__) && !defined(MF_COMPILATION)
+#error "Only <manifold.h> can be included directly."
+#endif
+
+#include <glib.h>
+
+G_BEGIN_DECLS
+
+#define MF_MAJOR_VERSION @MF_MAJOR_VERSION_CONF@
+#define MF_MINOR_VERSION @MF_MINOR_VERSION_CONF@
+#define MF_MICRO_VERSION @MF_MICRO_VERSION_CONF@
+
+#define MF_CHECK_VERSION(major, minor, micro)                                                                  \
+    (MF_MAJOR_VERSION > (major) || (MF_MAJOR_VERSION == (major) && MF_MINOR_VERSION > (minor)) ||              \
+     (MF_MAJOR_VERSION == (major) && MF_MINOR_VERSION == (minor) && MF_MICRO_VERSION >= (micro)))
+
+const gchar *mf_version_string(void);
+
+G_END_DECLS
