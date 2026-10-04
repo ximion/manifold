@@ -328,7 +328,9 @@ mfr_bind_etc_files(const char *tree_path, const char *layer_dir, GError **error)
         g_autofree char *placeholder = g_build_filename(layer_dir, "etc", HOST_ETC_FILES[i], NULL);
         g_autofree char *target = g_build_filename(tree_path, "etc", HOST_ETC_FILES[i], NULL);
 
-        if (!g_file_test(placeholder, G_FILE_TEST_IS_REGULAR))
+        /* a link into /run needs no bind mount, and it would be followed outside of the tree */
+        if (g_file_test(placeholder, G_FILE_TEST_IS_SYMLINK) ||
+            !g_file_test(placeholder, G_FILE_TEST_IS_REGULAR))
             continue;
         if (!mfr_bind_mount(host_path, target, TRUE, error))
             return FALSE;
@@ -575,10 +577,10 @@ mfr_tree_assemble(MfrApp *app, MfrCapture *capture, const char *const *image_pat
     tree->environment = mfr_build_environment_vars(tree->capture);
 
     g_info("Assembling tree %s for %s %s", tree->key, app->component_id, app->version);
+    /* we keep the cache directory on failure, as an application launched before a
+     * restart may still use it, see mfr_tree_remove_unused() */
     if (!mfr_tree_assemble_internal(tree, image_paths, error)) {
         mfr_tree_teardown(tree);
-        /* the tree's cache is of no use without the tree */
-        glnx_shutil_rm_rf_at(AT_FDCWD, tree->cache_dir, NULL, NULL);
         return NULL;
     }
 

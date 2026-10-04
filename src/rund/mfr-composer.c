@@ -80,7 +80,7 @@ mfr_composer_drop_all_trees(MfrComposer *composer)
 
     g_hash_table_iter_init(&iter, composer->trees);
     while (g_hash_table_iter_next(&iter, NULL, &value)) {
-        g_hash_table_iter_steal(&iter);
+        g_hash_table_iter_remove(&iter);
         mfr_composer_drop_tree(composer, value);
     }
 }
@@ -189,8 +189,9 @@ mfr_composer_new(GError **error)
     if (!mfr_enter_mount_namespace(error))
         return NULL;
 
-    /* clean up captures in case anything has changed on our host */
+    /* clean up captures in case anything has changed on our host, and trees nothing uses anymore */
     mfr_capture_check_all();
+    mfr_tree_remove_unused();
 
     return g_object_new(MFR_TYPE_COMPOSER, NULL);
 }
@@ -296,7 +297,7 @@ mfr_composer_prepare(MfrComposer *composer, const char *component_id, GError **e
     }
     if (tree != NULL) {
         g_info("Dropping tree %s of %s, the component changed", mfr_tree_get_key(tree), component_id);
-        g_hash_table_steal(composer->trees, component_id);
+        g_hash_table_remove(composer->trees, component_id);
         mfr_composer_drop_tree(composer, tree);
     }
 

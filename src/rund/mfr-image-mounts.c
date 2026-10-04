@@ -281,7 +281,8 @@ mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrLayer *layer, GError *
         return NULL;
     if (mount(device_path, path, "erofs", MS_RDONLY | MS_NOSUID | MS_NODEV, NULL) != 0) {
         glnx_throw_errno_prefix(error, "Unable to mount %s at %s", device_path, path);
-        mfr_verity_deactivate(device_name, FALSE, NULL);
+        /* deferred, as a device that was reused may still be in use */
+        mfr_verity_deactivate(device_name, TRUE, NULL);
         return NULL;
     }
     g_info("Mounted %s %s at %s", layer->component_id, layer->version, path);
