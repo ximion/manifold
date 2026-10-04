@@ -313,6 +313,36 @@ mf_read_image_link(const char *version_dir, const char *link_name, GError **erro
 }
 
 /**
+ * mf_read_manifest_at:
+ *
+ * Returns: (transfer full): the manifest of a version directory, if it is
+ *   the manifest of that component and version, or %NULL on error
+ */
+static MfManifest *
+mf_read_manifest_at(const char *version_dir, const char *component_id, const char *version, GError **error)
+{
+    g_autofree char *manifest_path = g_build_filename(version_dir, MF_STORE_MANIFEST_NAME, NULL);
+    g_autoptr(MfManifest) manifest = NULL;
+
+    manifest = mf_manifest_new_from_file(manifest_path, error);
+    if (manifest == NULL)
+        return NULL;
+    if (g_strcmp0(mf_manifest_get_component_id(manifest), component_id) != 0 ||
+        g_strcmp0(mf_manifest_get_version(manifest), version) != 0) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_FAILED,
+                    "%s says it is something else (expected: %s/%s)",
+                    manifest_path,
+                    component_id,
+                    version);
+        return NULL;
+    }
+
+    return g_steal_pointer(&manifest);
+}
+
+/**
  * mf_read_version_dir_at:
  *
  * Read the component of one version directory, from its links, markers and manifest.
@@ -327,7 +357,6 @@ mf_read_version_dir_at(const char *root,
     g_autofree char *component_dir = g_build_filename(root, subdir, component_id, NULL);
     g_autofree char *version_dir = g_build_filename(component_dir, version_name, NULL);
     g_autofree char *current_path = g_build_filename(component_dir, MF_STORE_CURRENT_NAME, NULL);
-    g_autofree char *manifest_path = g_build_filename(version_dir, MF_STORE_MANIFEST_NAME, NULL);
     g_autofree char *current_target = NULL;
     g_autofree char *version = NULL;
     g_autofree char *verity_hash = NULL;
@@ -344,20 +373,9 @@ mf_read_version_dir_at(const char *root,
     verity_hash = mf_read_image_link(version_dir, mf_store_image_link_for_subdir(subdir), error);
     if (verity_hash == NULL)
         return NULL;
-    manifest = mf_manifest_new_from_file(manifest_path, error);
+    manifest = mf_read_manifest_at(version_dir, component_id, version, error);
     if (manifest == NULL)
         return NULL;
-    if (g_strcmp0(mf_manifest_get_component_id(manifest), component_id) != 0 ||
-        g_strcmp0(mf_manifest_get_version(manifest), version) != 0) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_FAILED,
-                    "%s says it is something else (expected: %s/%s)",
-                    manifest_path,
-                    component_id,
-                    version);
-        return NULL;
-    }
 
     current_target = g_file_read_link(current_path, NULL);
     mode = mf_read_marker_file(version_dir, MF_STORE_MODE_NAME);
@@ -943,6 +961,43 @@ mf_store_get_image_path(MfStore *store, MfComponent *component)
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
 
     return mf_store_image_path_at(GET_PRIVATE(store)->path, mf_component_get_verity_hash(component));
+}
+
+/**
+ * mf_store_get_manifest:
+ * @store: an #MfStore
+ * @component: an installed component of @store
+ * @error: a #GError
+ *
+ * Get the manifest a component was installed with, which describes it in
+ * full. A component read from the store carries it already; for any
+ * other, such as one the install daemon reported, it is read from the
+ * component's version directory.
+ *
+ * Returns: (transfer full): the manifest, or %NULL on error
+ */
+MfManifest *
+mf_store_get_manifest(MfStore *store, MfComponent *component, GError **error)
+{
+    g_autofree char *version_dir = NULL;
+    MfManifest *manifest;
+
+    g_return_val_if_fail(MF_IS_STORE(store), NULL);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
+
+    manifest = mf_component_peek_manifest(component);
+    if (manifest != NULL)
+        return g_object_ref(manifest);
+
+    version_dir = mf_component_dir_at(GET_PRIVATE(store)->path, component);
+    manifest = mf_read_manifest_at(version_dir,
+                                   mf_component_get_id(component),
+                                   mf_component_get_version(component),
+                                   error);
+    if (manifest == NULL)
+        return NULL;
+    mf_component_set_manifest(component, manifest);
+    return manifest;
 }
 
 /**

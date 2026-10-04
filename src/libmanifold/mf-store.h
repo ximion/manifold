@@ -49,5 +49,8 @@ char        *mf_store_get_component_dir(MfStore     *store,
                                         MfComponent *component);
 char        *mf_store_get_image_path(MfStore     *store,
                                      MfComponent *component);
+MfManifest  *mf_store_get_manifest(MfStore     *store,
+                                   MfComponent *component,
+                                   GError     **error);
 
 G_END_DECLS

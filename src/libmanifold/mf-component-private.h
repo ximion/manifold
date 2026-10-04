@@ -14,6 +14,7 @@
 
 MF_BEGIN_PRIVATE_DECLS
 
+MF_INTERNAL_VISIBLE
 MfComponent *mf_component_new(const char     *component_id,
                               MfComponentKind kind,
                               const char     *version,
