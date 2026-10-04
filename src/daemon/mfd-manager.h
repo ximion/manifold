@@ -84,4 +84,11 @@ MfResult       *mfd_manager_remove(MfdManager     *manager,
                                    MfdErrorDetail *ret_detail,
                                    GError        **error);
 
+GPtrArray      *mfd_manager_mark(MfdManager     *manager,
+                                 const char     *component_id,
+                                 const char     *version,
+                                 MfInstallMode   mode,
+                                 MfdErrorDetail *ret_detail,
+                                 GError        **error);
+
 G_END_DECLS

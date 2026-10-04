@@ -443,6 +443,24 @@ mfd_store_writer_remove_version_dir(MfdStoreWriter *writer, const char *version_
 }
 
 /**
+ * mfd_store_writer_set_mode:
+ * @writer: the #MfdStoreWriter
+ * @version_dir: the version directory of a component
+ * @mode: the install mode to record
+ *
+ * Record whether a version is kept until it is removed explicitly, or
+ * removed once it is not needed anymore.
+ */
+gboolean
+mfd_store_writer_set_mode(MfdStoreWriter *writer, const char *version_dir, MfInstallMode mode, GError **error)
+{
+    if (!mfd_write_word(version_dir, MF_STORE_MODE_NAME, mf_install_mode_to_string(mode), error))
+        return FALSE;
+    mf_store_invalidate(writer->store);
+    return TRUE;
+}
+
+/**
  * mfd_store_writer_remove_cruft:
  *
  * Remove what interrupted installations and removals left in the component

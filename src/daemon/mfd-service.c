@@ -548,6 +548,84 @@ mfd_varlink_method_cleanup(sd_varlink *link,
 }
 
 /**
+ * mfd_varlink_method_mark_component:
+ */
+static int
+mfd_varlink_method_mark_component(sd_varlink *link,
+                                  sd_json_variant *parameters,
+                                  sd_varlink_method_flags_t flags,
+                                  void *userdata)
+{
+    MfdService *service = userdata;
+    struct {
+        const char *component_id;
+        const char *version;
+        const char *mode;
+        MfTransactionFlags flags;
+    } p = {};
+    static const sd_json_dispatch_field dispatch_table[] = {
+        {"componentId",
+         SD_JSON_VARIANT_STRING, sd_json_dispatch_const_string,
+         offsetof(typeof(p), component_id),
+         SD_JSON_MANDATORY},
+        {"version", SD_JSON_VARIANT_STRING, sd_json_dispatch_const_string, offsetof(typeof(p), version), 0},
+        {"mode",
+         SD_JSON_VARIANT_STRING, sd_json_dispatch_const_string,
+         offsetof(typeof(p), mode),
+         SD_JSON_MANDATORY},
+        {"flags",
+         _SD_JSON_VARIANT_TYPE_INVALID, mfd_json_dispatch_transaction_flags,
+         offsetof(typeof(p), flags),
+         0},
+        {},
+    };
+    g_auto(MfdErrorDetail) detail = {};
+    g_autoptr(GPtrArray) marked = NULL;
+    g_autoptr(sd_json_variant) components = NULL;
+    g_autoptr(GError) error = NULL;
+    MfInstallMode mode;
+    uid_t peer_uid;
+    int r;
+
+    /* the flags say whether polkit may ask, so they are needed first */
+    r = sd_varlink_dispatch(link, parameters, dispatch_table, &p);
+    if (r != 0)
+        return r;
+
+    r = mfd_policy_check_authorized(link,
+                                    MF_VARLINK_METHOD_MARK_COMPONENT,
+                                    MFD_POLKIT_ACTION_MARK,
+                                    p.flags,
+                                    &peer_uid);
+    if (r != 0)
+        return r;
+    if (!mf_component_id_is_valid(p.component_id))
+        return sd_varlink_error_invalid_parameter_name(link, "componentId");
+    if (p.version != NULL && !mf_version_is_valid(p.version))
+        return sd_varlink_error_invalid_parameter_name(link, "version");
+    mode = mf_install_mode_from_string(p.mode);
+    if (mode == MF_INSTALL_MODE_UNKNOWN)
+        return sd_varlink_error_invalid_parameter_name(link, "mode");
+
+    g_info("User %u requested to mark %s %s as %s",
+           (unsigned int) peer_uid,
+           p.component_id,
+           p.version ? p.version : "",
+           p.mode);
+
+    marked = mfd_manager_mark(service->manager, p.component_id, p.version, mode, &detail, &error);
+    if (marked == NULL)
+        return mfd_service_reply_error(link, error, &detail);
+    if ((r = mfd_varlink_build_components_array(marked, &components)) < 0)
+        return r;
+
+    return sd_varlink_replybo(
+        link,
+        SD_JSON_BUILD_PAIR("done",
+                           SD_JSON_BUILD_OBJECT(SD_JSON_BUILD_PAIR_VARIANT("components", components))));
+}
+
+/**
  * mfd_service_new:
  * @event: The event loop to run the service in.
  * @error: A #GError
@@ -578,7 +656,9 @@ mfd_service_new(sd_event *event, GError **error)
                                            MF_VARLINK_METHOD_REMOVE_COMPONENT,
                                            mfd_varlink_method_remove_component,
                                            MF_VARLINK_METHOD_CLEANUP,
-                                           mfd_varlink_method_cleanup);
+                                           mfd_varlink_method_cleanup,
+                                           MF_VARLINK_METHOD_MARK_COMPONENT,
+                                           mfd_varlink_method_mark_component);
     if (r < 0) {
         mf_set_error_from_errno(error, r, "Unable to bind Varlink methods");
         return NULL;

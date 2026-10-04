@@ -29,6 +29,17 @@
     </defaults>
   </action>
 
+  <!-- Marking removes nothing itself, but decides what later operations remove -->
+  <action id="org.freedesktop.manifold.mark">
+    <description>Mark software components to be kept or removed automatically</description>
+    <message>Authentication is required to change whether a software component is kept</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+
   <action id="org.freedesktop.manifold.remove">
     <description>Remove software components</description>
     <message>Authentication is required to remove a software component</message>

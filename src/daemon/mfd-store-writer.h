@@ -49,5 +49,9 @@ gboolean        mfd_store_writer_remove_version_dir(MfdStoreWriter *writer,
                                                     GError        **error);
 gboolean        mfd_store_writer_remove_cruft(MfdStoreWriter *writer,
                                               GError        **error);
+gboolean        mfd_store_writer_set_mode(MfdStoreWriter *writer,
+                                          const char     *version_dir,
+                                          MfInstallMode   mode,
+                                          GError        **error);
 
 G_END_DECLS

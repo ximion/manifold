@@ -1075,3 +1075,127 @@ mf_manager_cleanup(MfManager *manager,
     mf_manager_cleanup_async(manager, progress_func, progress_data, cancellable, mf_on_sync_call_done, &sync);
     return mf_manager_cleanup_finish(manager, mf_sync_call_wait(&sync), error);
 }
+
+/**
+ * mf_manager_mark_component_async:
+ * @manager: an #MfManager
+ * @component_id: identifier of the component to mark
+ * @version: (nullable): the version to mark, with all of its revisions, or %NULL for the current one
+ * @mode: %MF_INSTALL_MODE_MANUAL to keep the version until it is removed explicitly,
+ *   or %MF_INSTALL_MODE_AUTO to remove it once it is not needed anymore
+ * @cancellable: (nullable): a #GCancellable
+ * @callback: called when the versions are marked, or marking failed
+ * @user_data: passed to @callback
+ *
+ * Mark versions of a component as kept, or as removed automatically. Nothing
+ * is removed right away, but by the next installation, removal or cleanup.
+ */
+void
+mf_manager_mark_component_async(MfManager *manager,
+                                const char *component_id,
+                                const char *version,
+                                MfInstallMode mode,
+                                GCancellable *cancellable,
+                                GAsyncReadyCallback callback,
+                                gpointer user_data)
+{
+    sd_json_variant *parameters = NULL;
+
+    g_return_if_fail(MF_IS_MANAGER(manager));
+    g_return_if_fail(component_id != NULL);
+    g_return_if_fail(mode == MF_INSTALL_MODE_MANUAL || mode == MF_INSTALL_MODE_AUTO);
+
+    int r = sd_json_buildo(
+        &parameters,
+        SD_JSON_BUILD_PAIR_STRING("componentId", component_id),
+        SD_JSON_BUILD_PAIR_CONDITION(version != NULL, "version", SD_JSON_BUILD_STRING(version)),
+        SD_JSON_BUILD_PAIR_STRING("mode", mf_install_mode_to_string(mode)));
+    if (r >= 0)
+        r = mf_manager_add_transaction_flags(manager, &parameters);
+    if (r < 0) {
+        GError *error = NULL;
+
+        mf_set_build_parameters_error(&error, r);
+        sd_json_variant_unref(parameters);
+        mf_manager_return_error_async(manager,
+                                      cancellable,
+                                      callback,
+                                      user_data,
+                                      mf_manager_mark_component_async,
+                                      error);
+        return;
+    }
+
+    mf_manager_call_async(manager,
+                          MF_VARLINK_METHOD_MARK_COMPONENT,
+                          parameters,
+                          -1,
+                          NULL,
+                          NULL,
+                          cancellable,
+                          callback,
+                          user_data,
+                          mf_manager_mark_component_async);
+    sd_json_variant_unref(parameters);
+}
+
+/**
+ * mf_manager_mark_component_finish:
+ * @manager: an #MfManager
+ * @result: the result passed to the callback
+ * @error: a #GError
+ *
+ * Returns: (transfer full) (element-type MfComponent): the marked versions, or %NULL on failure
+ */
+GPtrArray *
+mf_manager_mark_component_finish(MfManager *manager, GAsyncResult *result, GError **error)
+{
+    sd_json_variant *reply = mf_manager_call_finish(manager, result, mf_manager_mark_component_async, error);
+    GPtrArray *components;
+
+    if (reply == NULL)
+        return NULL;
+    components = mf_component_array_from_reply(
+        sd_json_variant_by_key(sd_json_variant_by_key(reply, "done"), "components"),
+        error);
+    sd_json_variant_unref(reply);
+    return components;
+}
+
+/**
+ * mf_manager_mark_component:
+ * @manager: an #MfManager
+ * @component_id: identifier of the component to mark
+ * @version: (nullable): the version to mark, with all of its revisions, or %NULL for the current one
+ * @mode: the install mode to record
+ * @cancellable: (nullable): a #GCancellable
+ * @error: a #GError
+ *
+ * Mark versions of a component, see mf_manager_mark_component_async().
+ * This blocks until they are marked, or marking failed.
+ *
+ * Returns: (transfer full) (element-type MfComponent): the marked versions, or %NULL on failure
+ */
+GPtrArray *
+mf_manager_mark_component(MfManager *manager,
+                          const char *component_id,
+                          const char *version,
+                          MfInstallMode mode,
+                          GCancellable *cancellable,
+                          GError **error)
+{
+    g_auto(MfSyncCall) sync = {};
+
+    g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
+    g_return_val_if_fail(component_id != NULL, NULL);
+
+    mf_sync_call_begin(&sync);
+    mf_manager_mark_component_async(manager,
+                                    component_id,
+                                    version,
+                                    mode,
+                                    cancellable,
+                                    mf_on_sync_call_done,
+                                    &sync);
+    return mf_manager_mark_component_finish(manager, mf_sync_call_wait(&sync), error);
+}

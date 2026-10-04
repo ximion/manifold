@@ -1229,3 +1229,97 @@ mfd_manager_remove(MfdManager *manager,
 
     return g_steal_pointer(&result);
 }
+
+/**
+ * mfd_manager_mark_selects:
+ *
+ * Whether marking @version of a component, or its current version if
+ * @version is %NULL, marks @component.
+ */
+static gboolean
+mfd_manager_mark_selects(MfComponent *component, const char *version)
+{
+    if (version == NULL)
+        return mf_component_is_current(component);
+    return g_str_equal(mf_component_get_version(component), version);
+}
+
+/**
+ * mfd_manager_mark:
+ * @manager: an #MfdManager
+ * @component_id: the component to mark
+ * @version: (nullable): the version to mark, with all of its revisions, or %NULL for the current one
+ * @mode: the install mode to record
+ * @ret_detail: (out caller-allocates) (optional): more about a failure
+ * @error: a #GError
+ *
+ * Mark versions of a component as kept until they are removed explicitly
+ * (%MF_INSTALL_MODE_MANUAL), or as removed once they are not needed anymore
+ * (%MF_INSTALL_MODE_AUTO). Nothing is removed right away, but by the next
+ * installation, removal or cleanup.
+ *
+ * Returns: (transfer full) (element-type MfComponent): the marked versions, or %NULL on error
+ */
+GPtrArray *
+mfd_manager_mark(MfdManager *manager,
+                 const char *component_id,
+                 const char *version,
+                 MfInstallMode mode,
+                 MfdErrorDetail *ret_detail,
+                 GError **error)
+{
+    g_autoptr(GPtrArray) components = NULL;
+    g_autoptr(GPtrArray) marked = g_ptr_array_new_with_free_func(g_object_unref);
+    guint n_marked = 0;
+
+    g_return_val_if_fail(MFD_IS_MANAGER(manager), NULL);
+    g_return_val_if_fail(mode == MF_INSTALL_MODE_MANUAL || mode == MF_INSTALL_MODE_AUTO, NULL);
+
+    if (!mf_store_load(manager->store, error))
+        return NULL;
+    components = mf_store_list_components(manager->store, component_id, MF_COMPONENT_KIND_UNKNOWN, error);
+    if (components == NULL)
+        return NULL;
+
+    for (guint i = 0; i < components->len; i++) {
+        MfComponent *component = g_ptr_array_index(components, i);
+        g_autofree char *version_dir = NULL;
+
+        if (!mfd_manager_mark_selects(component, version))
+            continue;
+        version_dir = mf_store_get_component_dir(manager->store, component);
+        if (!mfd_store_writer_set_mode(manager->writer, version_dir, mode, error))
+            return NULL;
+        g_info("Marked %s as %s", version_dir, mf_install_mode_to_string(mode));
+        n_marked++;
+    }
+    if (n_marked == 0) {
+        if (ret_detail != NULL) {
+            mfd_error_detail_clear(ret_detail);
+            ret_detail->component_id = g_strdup(component_id);
+            ret_detail->version = g_strdup(version);
+        }
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    "%s%s%s is not installed",
+                    component_id,
+                    version != NULL ? " " : "",
+                    version != NULL ? version : "");
+        return NULL;
+    }
+
+    /* what was marked, as it is now */
+    g_clear_pointer(&components, g_ptr_array_unref);
+    components = mf_store_list_components(manager->store, component_id, MF_COMPONENT_KIND_UNKNOWN, error);
+    if (components == NULL)
+        return NULL;
+    for (guint i = 0; i < components->len; i++) {
+        MfComponent *component = g_ptr_array_index(components, i);
+
+        if (mfd_manager_mark_selects(component, version))
+            g_ptr_array_add(marked, g_object_ref(component));
+    }
+
+    return g_steal_pointer(&marked);
+}

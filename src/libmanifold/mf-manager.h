@@ -107,4 +107,21 @@ MfResult          *mf_manager_cleanup(MfManager     *manager,
                                       GCancellable  *cancellable,
                                       GError       **error);
 
+void               mf_manager_mark_component_async(MfManager          *manager,
+                                                   const char         *component_id,
+                                                   const char         *version,
+                                                   MfInstallMode       mode,
+                                                   GCancellable       *cancellable,
+                                                   GAsyncReadyCallback callback,
+                                                   gpointer            user_data);
+GPtrArray         *mf_manager_mark_component_finish(MfManager    *manager,
+                                                    GAsyncResult *result,
+                                                    GError      **error);
+GPtrArray         *mf_manager_mark_component(MfManager    *manager,
+                                             const char   *component_id,
+                                             const char   *version,
+                                             MfInstallMode mode,
+                                             GCancellable *cancellable,
+                                             GError      **error);
+
 G_END_DECLS

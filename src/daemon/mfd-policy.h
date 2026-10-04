@@ -16,6 +16,7 @@ G_BEGIN_DECLS
 #define MFD_POLKIT_ACTION_INSTALL           "org.freedesktop.manifold.install"
 #define MFD_POLKIT_ACTION_INSTALL_UNTRUSTED "org.freedesktop.manifold.install-untrusted"
 #define MFD_POLKIT_ACTION_REMOVE            "org.freedesktop.manifold.remove"
+#define MFD_POLKIT_ACTION_MARK              "org.freedesktop.manifold.mark"
 
 int mfd_policy_check_authorized(sd_varlink        *link,
                                 const char        *method,

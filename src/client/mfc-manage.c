@@ -309,6 +309,63 @@ mfc_run_cleanup_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
 }
 
 /**
+ * mfc_run_mark_command:
+ *
+ * Mark a version of a component as kept until it is removed (manual), or
+ * as removed once it is not needed anymore (auto).
+ */
+static int
+mfc_run_mark_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
+{
+    g_autoptr(GOptionContext) context = NULL;
+    g_autoptr(GPtrArray) marked = NULL;
+    g_autoptr(GError) error = NULL;
+    const char *component_id;
+    MfInstallMode mode;
+    int ret;
+
+    context = mfc_option_context_for_command(cmd, NULL);
+    ret = mfc_parse_command_options(context, cmd, &argc, &argv);
+    if (ret != MFC_EXIT_SUCCESS)
+        return ret;
+
+    if (argc < 3) {
+        g_printerr("You need to specify 'manual' or 'auto', and the component to mark.\n");
+        return MFC_EXIT_INVALID_CMD;
+    }
+    if (argc > 4) {
+        mfc_print_help_hint(cmd->name, argv[4]);
+        return MFC_EXIT_INVALID_CMD;
+    }
+    mode = mf_install_mode_from_string(argv[1]);
+    if (mode == MF_INSTALL_MODE_UNKNOWN) {
+        g_printerr("'%s' is not a mode, it has to be 'manual' or 'auto'.\n", argv[1]);
+        return MFC_EXIT_INVALID_CMD;
+    }
+    component_id = argv[2];
+    if (!mf_component_id_is_valid(component_id)) {
+        g_printerr("'%s' is not a valid component identifier.\n", component_id);
+        return MFC_EXIT_INVALID_CMD;
+    }
+
+    marked = mf_manager_mark_component(mfc_context_get_manager(ctx),
+                                       component_id,
+                                       argc > 3 ? argv[3] : NULL,
+                                       mode,
+                                       NULL,
+                                       &error);
+    if (marked == NULL) {
+        g_printerr("Unable to mark %s: %s\n", component_id, error->message);
+        return MFC_EXIT_FAILURE;
+    }
+
+    g_print("Marked as %s:\n", mf_install_mode_to_string(mode));
+    mfc_print_components(marked, FALSE);
+
+    return MFC_EXIT_SUCCESS;
+}
+
+/**
  * mfc_register_manage_commands:
  */
 void
@@ -329,4 +386,10 @@ mfc_register_manage_commands(MfcContext *ctx)
                                  NULL,
                                  "Remove what nothing needs anymore: unused dependencies and images.",
                                  mfc_run_cleanup_command);
+    mfc_context_register_command(
+        ctx,
+        "mark",
+        "MODE COMPONENT-ID [VERSION]",
+        "Mark a version to keep (manual), or to remove once nothing needs it (auto).",
+        mfc_run_mark_command);
 }

@@ -120,6 +120,9 @@ class InstallerTest(unittest.TestCase):
         self.manifold('install', expect=3)
         self.manifold('list', '--kind', 'bogus', expect=2)
         self.manifold('cleanup', 'extra', expect=2)
+        self.manifold('mark', 'manual', expect=2)
+        self.assertIn("'bogus' is not a mode", self.manifold('mark', 'bogus', APP_ID, expect=2))
+        self.manifold('mark', 'manual', APP_ID, '0.1.0', 'extra', expect=2)
         self.manifold('install', '/nonexistent.manifold', expect=3)
 
     def test_not_a_bundle(self):
@@ -412,6 +415,42 @@ class InstallerTest(unittest.TestCase):
         self.assertIn(f'app      {APP_ID} 0.1.0', self.manifold('cleanup'))
         self.assertIn((APP_ID, '0.2.0', 'auto'), self.installed())
         self.assertNotIn((APP_ID, '0.1.0', 'auto'), self.installed())
+
+    # marking
+
+    def test_marked_version_stays(self):
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+        # without a version, the current one is marked
+        self.assertIn(f'app      {APP_ID} 0.1.0', self.manifold('mark', 'manual', APP_ID))
+        self.assertIn((APP_ID, '0.1.0', 'manual'), self.installed())
+        self.assertIn('current manual', self.manifold('list', APP_ID))
+
+        # a newer version supersedes nothing that is marked manual
+        self.assertNotIn('Removed', self.manifold('install', self.app2_bundle))
+        self.assertEqual(self.manifold('list', APP_ID).count(APP_ID), 2)
+
+        # marked auto again, a cleanup removes it, as it is not the newest version
+        reply = self.daemon.call(
+            'org.freedesktop.manifold.MarkComponent',
+            {'componentId': APP_ID, 'version': '0.1.0', 'mode': 'auto'},
+        )
+        self.assertEqual(
+            [(c['version'], c['installMode']) for c in reply['done']['components']],
+            [('0.1.0', 'auto')],
+        )
+        self.assertIn(f'app      {APP_ID} 0.1.0', self.manifold('cleanup'))
+        self.assertEqual(self.version_dirs('apps', APP_ID), [f'0.2.0-{self.app2.revision}'])
+
+    def test_mark_what_is_not_installed(self):
+        self.manifold('install', self.core_bundle)
+        self.assertIn(
+            f'{APP_ID} is not installed', self.manifold('mark', 'manual', APP_ID, expect=1)
+        )
+        self.assertIn(
+            f'{CORE_ID} 9.9 is not installed',
+            self.manifold('mark', 'auto', CORE_ID, '9.9', expect=1),
+        )
 
     def test_cleanup(self):
         self.manifold('install', self.core_bundle)
