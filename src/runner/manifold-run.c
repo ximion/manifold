@@ -268,6 +268,38 @@ mfx_write_proc_file(const char *path, const char *content)
 }
 
 /**
+ * mfx_print_userns_hint:
+ *
+ * Explain a failure to use the capabilities of our user namespace, if
+ * AppArmor restricts them on this host. Unconfined programs creating a user
+ * namespace are moved to a profile denying all capabilities there.
+ */
+static void
+mfx_print_userns_hint(int negative_errno)
+{
+    char value = '\0';
+    int fd;
+
+    if (negative_errno != -EPERM && negative_errno != -EACCES)
+        return;
+
+    fd = open("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return;
+    if (read(fd, &value, 1) != 1)
+        value = '\0';
+    close(fd);
+    if (value != '1')
+        return;
+
+    fprintf(stderr,
+            "%s: AppArmor restricts unprivileged user namespaces on this host, and does not permit\n"
+            "%s to use them. Make sure its AppArmor profile is installed and loaded.\n",
+            PROGRAM_NAME,
+            PROGRAM_NAME);
+}
+
+/**
  * mfx_map_self:
  *
  * Map our uid and gid to themselves in the new user namespace; no other
@@ -327,6 +359,7 @@ mfx_enter_tree(int mount_fd, bool user_namespace)
                     "%s: Unable to map our user into the user namespace: %s\n",
                     PROGRAM_NAME,
                     strerror(-r));
+            mfx_print_userns_hint(r);
             return r;
         }
     }
@@ -335,6 +368,8 @@ mfx_enter_tree(int mount_fd, bool user_namespace)
     if (mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) != 0) {
         r = -errno;
         fprintf(stderr, "%s: Unable to make mounts private: %s\n", PROGRAM_NAME, strerror(-r));
+        if (user_namespace)
+            mfx_print_userns_hint(r);
         return r;
     }
     if (move_mount(mount_fd, "", AT_FDCWD, "/", MOVE_MOUNT_F_EMPTY_PATH) != 0) {

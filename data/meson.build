@@ -42,3 +42,24 @@ configure_file(
     install: true,
     install_dir: udev_rules_dir,
 )
+
+#
+# AppArmor profile
+#
+apparmor_parser_exe = find_program('apparmor_parser',
+                               dirs: ['/usr/sbin', '/sbin'],
+                               version: '>= 4.0',
+                               required: get_option('apparmor'),
+)
+if apparmor_parser_exe.found()
+    apparmor_conf = configuration_data()
+    apparmor_conf.set('MF_BINDIR', mf_bindir)
+
+    configure_file(
+        input: 'manifold-run.apparmor.in',
+        output: 'manifold-run',
+        configuration: apparmor_conf,
+        install: true,
+        install_dir: get_option('apparmor_dir'),
+    )
+endif

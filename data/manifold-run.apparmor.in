@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# manifold-run creates an unprivileged user namespace to move into the mount
+# tree of a component. Hosts restricting those only permit it to
+# programs whose profile grants the "userns" permission.
+#
+# /!\ All apps launched by manifold-run inherit this, so the userns restriction
+# is effectively lifted! Maybe we can do something better in future?
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile manifold-run @MF_BINDIR@/manifold-run flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/manifold-run>
+}

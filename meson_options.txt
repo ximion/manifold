@@ -6,6 +6,16 @@ option('gir',
        value : 'auto',
        description : 'Generate GObject introspection data for libmanifold'
 )
+option('apparmor',
+       type : 'feature',
+       value : 'auto',
+       description : 'Install the AppArmor profile permitting manifold-run to use user namespaces (needs AppArmor >= 4.0)'
+)
+option('apparmor_dir',
+       type : 'string',
+       value : '/etc/apparmor.d',
+       description : 'Directory to install AppArmor profiles to'
+)
 
 #
 # For development
