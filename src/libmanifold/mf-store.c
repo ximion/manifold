@@ -548,10 +548,22 @@ mf_store_read_base_link_at(const char *root, MfComponent *component, GError **er
     g_autofree char *link_path = g_build_filename(version_dir, MF_STORE_BASE_LINK, NULL);
     g_autofree char *target = NULL;
     g_auto(GStrv) parts = NULL;
+    g_autoptr(GError) local_error = NULL;
 
-    target = g_file_read_link(link_path, error);
-    if (target == NULL)
+    target = g_file_read_link(link_path, &local_error);
+    if (g_error_matches(local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    "%s %s has no base",
+                    mf_component_get_id(component),
+                    mf_component_get_version(component));
         return NULL;
+    }
+    if (target == NULL) {
+        g_propagate_error(error, g_steal_pointer(&local_error));
+        return NULL;
+    }
 
     /* ../../../<dir>/<component>/<current or version> */
     if (!g_str_has_prefix(target, COMPONENT_TO_ROOT_PREFIX)) {
@@ -990,6 +1002,15 @@ mf_store_get_manifest(MfStore *store, MfComponent *component, GError **error)
         return g_object_ref(manifest);
 
     version_dir = mf_component_dir_at(GET_PRIVATE(store)->path, component);
+    if (!g_file_test(version_dir, G_FILE_TEST_IS_DIR)) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    "%s %s is not installed",
+                    mf_component_get_id(component),
+                    mf_component_get_version(component));
+        return NULL;
+    }
     manifest = mf_read_manifest_at(version_dir,
                                    mf_component_get_id(component),
                                    mf_component_get_version(component),
