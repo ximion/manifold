@@ -1,5 +1,5 @@
 project('Manifold', 'c',
-  meson_version: '>=0.62',
+  meson_version: '>=1.6',
   default_options: ['c_std=gnu23', 'b_pie=true'],
 
   license: 'LGPL-2.1-or-later',
