@@ -598,6 +598,43 @@ test_old_dependency_goes(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * test_dependency_chain_removal:
+ *
+ * What a cleanup removes may be the only thing that kept something else: an
+ * old version of an app is removed in one cleanup, together with the kit that
+ * only it used.
+ */
+static void
+test_dependency_chain_removal(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *old_kit_hash = mft_fake_hash("old-kit");
+    g_autofree char *old_app_hash = mft_fake_hash("old-app");
+    g_autoptr(MfdRemovalPlan) cleanup = NULL;
+    g_autoptr(GError) error = NULL;
+
+    mft_install_usual(f);
+    mft_add_image(old_kit_hash, 2048);
+    mft_add_image(old_app_hash, 1024);
+    mft_install_runtime(TEST_CORE_ID ".0123456789abcdef",
+                        "kit",
+                        "20251201T0000",
+                        old_kit_hash,
+                        TEST_CORE_ID,
+                        NULL,
+                        MF_INSTALL_MODE_AUTO);
+    mft_install_app(TEST_APP_ID, "0.0.1", old_app_hash, TEST_CORE_ID ".0123456789abcdef");
+
+    cleanup = mfd_manager_plan_removal(manager, NULL, NULL, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(cleanup->dirs->len, ==, 2);
+    g_assert_cmpstr(g_ptr_array_index(cleanup->dirs, 0), ==, APPS "/" TEST_APP_ID "/0.0.1-1");
+    g_assert_cmpstr(g_ptr_array_index(cleanup->dirs, 1),
+                    ==,
+                    RUNTIMES "/" TEST_CORE_ID ".0123456789abcdef/20251201T0000-1");
+    g_assert_cmpuint(cleanup->images->len, ==, 2);
+}
+
+/**
  * test_newest_app_stays:
  *
  * An application is always installed as auto, so a removal or cleanup removes
@@ -712,6 +749,7 @@ main(int argc, char **argv)
     add_test("exact-base-stays", test_exact_base_stays);
     add_test("shared-dependency-stays", test_shared_dependency_stays);
     add_test("old-dependency-goes", test_old_dependency_goes);
+    add_test("dependency-chain-goes", test_dependency_chain_removal);
     add_test("newest-app-stays", test_newest_app_stays);
     add_test("remove", test_remove);
 #undef add_test

@@ -738,7 +738,6 @@ mfd_manager_list_installed(MfdManager *manager, GPtrArray **ret_version_dirs, GE
  * @components: (element-type MfComponent): what is installed
  * @version_dirs: the version directory of each of @components
  * @rm_pending: the version directories @rmplan removes so far
- * @used: what the `base` links of the components that stay refer to
  *
  * Add every dependency nothing builds on once the planned components are
  * gone to a removal, and then every image no remaining component links to.
@@ -749,29 +748,37 @@ mfd_manager_complete_removal_plan(MfdManager *manager,
                                   GPtrArray *components,
                                   GPtrArray *version_dirs,
                                   GHashTable *rm_pending,
-                                  GHashTable *used,
                                   GError **error)
 {
     g_autoptr(GHashTable) newest_apps = NULL;
     g_autoptr(GHashTable) images_used = NULL;
     g_autoptr(GDir) images = NULL;
     g_autofree char *images_dir = NULL;
+    gboolean added;
     const char *name;
 
     /* check for any cruft that we can drop now that nothing would depend on it anymore,
-     * but keep the newest version of every application and plugin */
+     * but keep the newest version of every application and plugin. What goes may have
+     * been all that kept something else, so this is repeated until nothing more goes */
     newest_apps = mfd_find_newest_apps(components, version_dirs, rm_pending);
-    for (guint i = 0; i < components->len; i++) {
-        MfComponent *component = g_ptr_array_index(components, i);
-        const char *version_dir = g_ptr_array_index(version_dirs, i);
+    do {
+        g_autoptr(GHashTable)
+            used = mfd_manager_find_dependent_dirs_for(manager, components, version_dirs, rm_pending);
 
-        if (mf_component_get_install_mode(component) != MF_INSTALL_MODE_AUTO ||
-            g_hash_table_contains(rm_pending, version_dir) || g_hash_table_contains(used, version_dir) ||
-            g_hash_table_contains(newest_apps, version_dir))
-            continue;
-        g_info("%s is not needed anymore", version_dir);
-        mfd_removal_plan_add_version_dir(rmplan, rm_pending, component, version_dir);
-    }
+        added = FALSE;
+        for (guint i = 0; i < components->len; i++) {
+            MfComponent *component = g_ptr_array_index(components, i);
+            const char *version_dir = g_ptr_array_index(version_dirs, i);
+
+            if (mf_component_get_install_mode(component) != MF_INSTALL_MODE_AUTO ||
+                g_hash_table_contains(rm_pending, version_dir) || g_hash_table_contains(used, version_dir) ||
+                g_hash_table_contains(newest_apps, version_dir))
+                continue;
+            g_info("%s is not needed anymore", version_dir);
+            mfd_removal_plan_add_version_dir(rmplan, rm_pending, component, version_dir);
+            added = TRUE;
+        }
+    } while (added);
 
     /* the images nothing links to, once the components are gone */
     images_used = mfd_find_used_images(components, version_dirs, rm_pending);
@@ -875,17 +882,9 @@ mfd_manager_plan_removal(MfdManager *manager,
                 return NULL;
             }
         }
-    } else {
-        used = mfd_manager_find_dependent_dirs_for(manager, components, version_dirs, rm_pending);
     }
 
-    if (!mfd_manager_complete_removal_plan(manager,
-                                           rmplan,
-                                           components,
-                                           version_dirs,
-                                           rm_pending,
-                                           used,
-                                           error))
+    if (!mfd_manager_complete_removal_plan(manager, rmplan, components, version_dirs, rm_pending, error))
         return NULL;
     return g_steal_pointer(&rmplan);
 }
@@ -970,13 +969,8 @@ mfd_manager_plan_supersede(MfdManager *manager, GPtrArray *images, GArray *plans
     }
 
     /* an installation that supersedes nothing removes nothing else either */
-    if (rmplan->dirs->len > 0 && !mfd_manager_complete_removal_plan(manager,
-                                                                    rmplan,
-                                                                    components,
-                                                                    version_dirs,
-                                                                    rm_pending,
-                                                                    used,
-                                                                    error))
+    if (rmplan->dirs->len > 0 &&
+        !mfd_manager_complete_removal_plan(manager, rmplan, components, version_dirs, rm_pending, error))
         return NULL;
     return g_steal_pointer(&rmplan);
 }
