@@ -552,6 +552,48 @@ test_no_index(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * test_metadata_limit:
+ *
+ * A bundle can not make us read more than 64 MiB of metadata, even if each
+ * file is small enough on its own.
+ */
+static void
+test_metadata_limit(Fixture *f, gconstpointer user_data)
+{
+    const gsize filler_size = 16 * 1024 * 1024;
+    g_autofree char *path = g_build_filename(f->dir, "large.manifold", NULL);
+    g_autofree guint8 *filler = g_malloc0(filler_size);
+    g_autofree char *sha256 = g_compute_checksum_for_data(G_CHECKSUM_SHA256, filler, filler_size);
+    g_autofree char *blake3 = mft_blake3_of(filler, filler_size);
+    g_autoptr(GString) index = g_string_new("{\"format\": 1, \"files\": [");
+    zip_t *zip = zip_open(path, ZIP_CREATE | ZIP_TRUNCATE, NULL);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = NULL;
+
+    /* with the index, the fourth file is too much */
+    for (guint i = 0; i < 4; i++) {
+        g_autofree char *name = g_strdup_printf("filler-%u", i);
+
+        g_string_append_printf(index,
+                               "%s{\"name\": \"%s\", \"size\": %zu, \"sha256\": \"%s\", \"blake3\": \"%s\"}",
+                               i == 0 ? "" : ", ",
+                               name,
+                               filler_size,
+                               sha256,
+                               blake3);
+        mft_bundle_add(zip, name, filler, filler_size);
+    }
+    g_string_append(index, "]}");
+    mft_bundle_add(zip, "index.json", index->str, index->len);
+    g_assert_cmpint(zip_close(zip), ==, 0);
+    bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message, ==, "The metadata of the bundle is larger than 64 MiB altogether");
+}
+
+/**
  * main:
  */
 int
@@ -571,6 +613,7 @@ main(int argc, char **argv)
     add_test("kit-without-base", test_kit_without_base);
     add_test("not-a-bundle", test_not_a_bundle);
     add_test("no-index", test_no_index);
+    add_test("metadata-limit", test_metadata_limit);
 #undef add_test
 
     return g_test_run();

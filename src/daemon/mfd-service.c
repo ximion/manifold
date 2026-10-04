@@ -324,18 +324,12 @@ mfd_service_on_progress(const MfProgress *progress, gpointer user_data)
  * Install everything a bundle contains, and reply to the call.
  */
 static int
-mfd_service_install_bundle(MfdService *service,
-                           sd_varlink *link,
-                           int fd,
-                           MfTransactionFlags flags,
-                           gboolean report_progress_wanted)
+mfd_service_install_bundle(MfdService *service, sd_varlink *link, int fd, gboolean report_progress_wanted)
 {
     g_auto(MfdErrorDetail) detail = {};
     g_autoptr(MfBundle) bundle = NULL;
     g_autoptr(MfResult) result = NULL;
     g_autoptr(GError) error = NULL;
-    uid_t peer_uid;
-    int r;
 
     bundle = mf_bundle_new_from_fd(fd, &error);
     if (bundle == NULL)
@@ -347,19 +341,6 @@ mfd_service_install_bundle(MfdService *service,
             "The bundle is signed, but the signature was not verified: trusted keys are not supported yet");
     else
         g_warning("The bundle is not signed");
-
-    /*
-     * Whether the bundle is trusted decides which authorization its
-     * installation needs, so the bundle is opened first. Until signatures
-     * are verified, no bundle is trusted.
-     */
-    r = mfd_policy_check_authorized(link,
-                                    MF_VARLINK_METHOD_INSTALL_FILE,
-                                    MFD_POLKIT_ACTION_INSTALL_UNTRUSTED,
-                                    flags,
-                                    &peer_uid);
-    if (r != 0)
-        return r;
 
     result = mfd_manager_install_bundle(service->manager,
                                         bundle,
@@ -403,12 +384,23 @@ mfd_varlink_method_install_file(sd_varlink *link,
     int fd;
     int r;
 
-    /* the authorization depends on the bundle, see mfd_service_install_bundle() */
-    r = mf_varlink_get_peer_uid(link, &peer_uid);
-    if (r < 0)
+    /* the flags say whether polkit may ask, so they are needed first */
+    r = sd_varlink_dispatch(link, parameters, dispatch_table, &p);
+    if (r != 0)
         return r;
 
-    r = sd_varlink_dispatch(link, parameters, dispatch_table, &p);
+    /*
+     * The bundle is opened only once the caller may install it, as reading it
+     * as root is work an unauthorized caller should not be able to cause.
+     * TODO: Once there is a store of trusted keys, verify the signature of the
+     * index against it before this (reading only the index and its signature),
+     * so that a trusted bundle needs only the less strict action.
+     */
+    r = mfd_policy_check_authorized(link,
+                                    MF_VARLINK_METHOD_INSTALL_FILE,
+                                    MFD_POLKIT_ACTION_INSTALL_UNTRUSTED,
+                                    p.flags,
+                                    &peer_uid);
     if (r != 0)
         return r;
 
@@ -423,7 +415,7 @@ mfd_varlink_method_install_file(sd_varlink *link,
     }
 
     g_info("User %u requested to install a bundle", (unsigned int) peer_uid);
-    r = mfd_service_install_bundle(service, link, fd, p.flags, (flags & SD_VARLINK_METHOD_MORE) != 0);
+    r = mfd_service_install_bundle(service, link, fd, (flags & SD_VARLINK_METHOD_MORE) != 0);
     close(fd);
 
     return r;

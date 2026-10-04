@@ -43,6 +43,8 @@ constexpr int BUNDLE_FORMAT = 1;
 
 /* the index and manifests are small, anything larger is rejected */
 constexpr guint64 METADATA_SIZE_MAX = 16 * 1024 * 1024;
+/* ... and so is a bundle that makes us read more than this into memory altogether */
+constexpr guint64 METADATA_TOTAL_SIZE_MAX = 64 * 1024 * 1024;
 
 constexpr size_t COPY_BUFFER_SIZE = 1024 * 1024;
 
@@ -226,11 +228,17 @@ mf_set_zip_error(GError **error, MfError code, zip_error_t *zerr, const char *me
 
 /**
  * mf_zip_read_entry:
+ * @budget: (inout): how much metadata we may still read, which we lower by the size of the file
  *
  * Read a small file of the bundle into memory, with a terminating NUL.
  */
 static char *
-mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, gsize *ret_size, GError **error)
+mf_zip_read_entry(zip_t *zip,
+                  guint64 index,
+                  const char *name,
+                  guint64 *budget,
+                  gsize *ret_size,
+                  GError **error)
 {
     g_autofree char *data = NULL;
     zip_stat_t st;
@@ -251,6 +259,15 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, gsize *ret_size, 
                     (guint64) st.size);
         return NULL;
     }
+    if (st.size > *budget) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    "The metadata of the bundle is larger than %" G_GUINT64_FORMAT " MiB altogether",
+                    METADATA_TOTAL_SIZE_MAX / (1024 * 1024));
+        return NULL;
+    }
+    *budget -= st.size;
 
     file = zip_fopen_index(zip, index, 0);
     if (file == NULL) {
@@ -345,11 +362,13 @@ mf_bundle_parse_manifest(MfBundle *bundle,
  *
  * Check a file that the index lists against its size and hashes in the
  * index, and return its contents.
+ * Its size is taken from the metadata @budget.
  */
 static char *
 mf_bundle_verify_indexed_file(MfBundle *bundle,
                               sd_json_variant *entry,
                               GHashTable *entries,
+                              guint64 *budget,
                               char **ret_name,
                               gsize *ret_size,
                               GError **error)
@@ -395,7 +414,7 @@ mf_bundle_verify_indexed_file(MfBundle *bundle,
         return NULL;
     }
 
-    data = mf_zip_read_entry(priv->zip, GPOINTER_TO_SIZE(index_ptr), name, &actual_size, error);
+    data = mf_zip_read_entry(priv->zip, GPOINTER_TO_SIZE(index_ptr), name, budget, &actual_size, error);
     if (data == NULL)
         return NULL;
 
@@ -492,6 +511,7 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
     gpointer index_ptr;
     gsize index_size;
     guint64 format;
+    guint64 budget = METADATA_TOTAL_SIZE_MAX;
     gboolean ret = FALSE;
 
     contents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
@@ -500,7 +520,12 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
         return FALSE;
     }
 
-    index_data = mf_zip_read_entry(priv->zip, GPOINTER_TO_SIZE(index_ptr), INDEX_NAME, &index_size, error);
+    index_data = mf_zip_read_entry(priv->zip,
+                                   GPOINTER_TO_SIZE(index_ptr),
+                                   INDEX_NAME,
+                                   &budget,
+                                   &index_size,
+                                   error);
     if (index_data == NULL)
         return FALSE;
     index = mf_json_parse_object(index_data, INDEX_NAME, MF_ERROR_INVALID_BUNDLE, error);
@@ -538,6 +563,7 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
         data = mf_bundle_verify_indexed_file(bundle,
                                              sd_json_variant_by_index(files, i),
                                              entries,
+                                             &budget,
                                              &name,
                                              &size,
                                              error);
