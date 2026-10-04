@@ -218,21 +218,19 @@ mfr_composer_lookup_capture(MfrComposer *composer, const MfrApp *app)
 }
 
 /**
- * mfr_composer_ensure_capture:
+ * mfr_composer_load_capture:
  *
- * The host-capture for the core of an application, which is mounted at @core_mount,
- * made now if there is none, or if the host changed.
+ * Load the capture for the core of an application, which is mounted at
+ * @core_mount: the one in the cache, or a new one if there is none, or if
+ * the host has changed.
  *
  * Returns: (transfer none): the capture, owned by the composer
  */
 static MfrCapture *
-mfr_composer_ensure_capture(MfrComposer *composer, const MfrApp *app, const char *core_mount, GError **error)
+mfr_composer_load_capture(MfrComposer *composer, const MfrApp *app, const char *core_mount, GError **error)
 {
     const char *core_hash = app->layers[MFR_LAYER_CORE].verity_hash;
-
-    auto capture = mfr_composer_lookup_capture(composer, app);
-    if (capture != NULL)
-        return capture;
+    MfrCapture *capture;
 
     capture = mfr_capture_ensure(core_hash, core_mount, app->tuple, error);
     if (capture == NULL)
@@ -283,20 +281,19 @@ mfr_composer_prepare(MfrComposer *composer, const char *component_id, GError **e
             return NULL;
         }
     }
-    capture = mfr_composer_ensure_capture(composer, app, image_paths[MFR_LAYER_CORE], error);
     if (capture == NULL) {
-        mfr_composer_release_images(composer, app, MFR_LAYER_COUNT);
-        return NULL;
+        capture = mfr_composer_load_capture(composer, app, image_paths[MFR_LAYER_CORE], error);
+        if (capture == NULL) {
+            mfr_composer_release_images(composer, app, MFR_LAYER_COUNT);
+            return NULL;
+        }
     }
 
-    if (tree != NULL && mfr_tree_matches(tree, app, capture)) {
-        /* captured again, but to the same result. We release our temporary acquisition,
-         * the tree has its own reference. */
-        mfr_composer_release_images(composer, app, MFR_LAYER_COUNT);
-        return g_object_ref(tree);
-    }
+    /* the old tree is dropped only now, so that the images it shares with the new one stay mounted */
     if (tree != NULL) {
-        g_info("Dropping tree %s of %s, the component changed", mfr_tree_get_key(tree), component_id);
+        g_info("Dropping tree %s of %s, the application or the host changed",
+               mfr_tree_get_key(tree),
+               component_id);
         g_hash_table_remove(composer->trees, component_id);
         mfr_composer_drop_tree(composer, tree);
     }
