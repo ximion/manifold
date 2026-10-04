@@ -295,6 +295,12 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "architecture", "?"),
                     mf_parameter_string(parameters, "hostArchitecture", "?"));
+    } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_DISCONNECTED) == 0) {
+        /* sd-varlink reports a connection closed during the call as a reply */
+        g_set_error_literal(error,
+                            MF_ERROR,
+                            MF_ERROR_NO_SERVICE,
+                            "Lost the Manifold service: the connection was closed");
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_PERMISSION_DENIED) == 0) {
         g_set_error_literal(error,
                             MF_ERROR,
@@ -981,7 +987,7 @@ mf_manager_remove_component(MfManager *manager,
  * @user_data: passed to @callback
  *
  * Remove obsolete data: Dependencies no installed component builds on,
- * unused component versions, and any cruft from interrupted installations or updates.
+ * images no component links to, and any cruft from interrupted installations or updates.
  */
 void
 mf_manager_cleanup_async(MfManager *manager,

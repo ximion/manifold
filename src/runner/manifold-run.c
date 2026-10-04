@@ -419,7 +419,8 @@ mfx_change_directory(const char *cwd)
 /**
  * mfx_apply_environment:
  *
- * Apply the environment variables from the caller.
+ * Apply the environment the compose service sent: set each variable, and
+ * unset the ones with an empty value.
  */
 static void
 mfx_apply_environment(char **environment)

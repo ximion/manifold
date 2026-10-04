@@ -942,13 +942,13 @@ mfd_manager_remove(MfdManager *manager,
     for (guint i = 0; i < rmplan->dirs->len; i++) {
         MfComponent *component = g_ptr_array_index(rmplan->components, i);
 
-        if (!mfd_store_writer_remove_version_dir(manager->writer, g_ptr_array_index(rmplan->dirs, i), error))
-            return NULL;
         mfd_progress_begin_item(&tracker,
                                 MF_ACTION_REMOVE,
                                 mf_component_get_id(component),
                                 mf_component_get_version(component),
                                 0);
+        if (!mfd_store_writer_remove_version_dir(manager->writer, g_ptr_array_index(rmplan->dirs, i), error))
+            return NULL;
         mfd_progress_end_item(&tracker);
         mf_result_add_removed(result, component);
     }
@@ -956,9 +956,9 @@ mfd_manager_remove(MfdManager *manager,
     for (guint i = 0; i < rmplan->images->len; i++) {
         const char *hash = g_ptr_array_index(rmplan->images, i);
 
+        mfd_progress_begin_item(&tracker, MF_ACTION_CLEANUP, hash, NULL, 0);
         if (!mfd_store_writer_remove_image(manager->writer, hash, error))
             return NULL;
-        mfd_progress_begin_item(&tracker, MF_ACTION_CLEANUP, hash, NULL, 0);
         mfd_progress_end_item(&tracker);
         mf_result_add_removed_image(result, hash);
     }

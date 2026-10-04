@@ -117,7 +117,7 @@ main(int argc, char **argv)
     }
 
     if (argc < 2) {
-        g_printerr(_("%s\n"), "You need to specify a command.");
+        g_printerr("%s\n", _("You need to specify a command."));
         mfc_print_help_hint(NULL, NULL);
         return MFC_EXIT_INVALID_CMD;
     }

@@ -622,8 +622,8 @@ mfd_on_disconnect(sd_varlink_server *server, sd_varlink *link, void *userdata)
 {
     MfdService *service = userdata;
 
-    /* the closing connection is still included in the count */
-    if (sd_varlink_server_current_connections(server) > 1)
+    /* the closing connection is not included in the count anymore */
+    if (sd_varlink_server_current_connections(server) > 0)
         return;
     sd_event_source_set_time_relative(service->idle_timer, IDLE_TIMEOUT_USEC);
     sd_event_source_set_enabled(service->idle_timer, SD_EVENT_ONESHOT);

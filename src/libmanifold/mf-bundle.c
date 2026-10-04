@@ -665,7 +665,11 @@ mf_bundle_new_from_fd(int fd, GError **error)
         return NULL;
     }
 
-    /* every image a manifest refers to is accounted for by that manifest */
+    priv->is_signed = g_hash_table_contains(entries, SIGNATURE_NAME);
+    g_hash_table_add(verified, g_strdup(INDEX_NAME));
+    g_hash_table_add(verified, g_strdup(SIGNATURE_NAME));
+
+    /* every image a manifest refers to is accounted for by that manifest, and is nothing else */
     for (guint i = 0; i < priv->images->len; i++) {
         MfBundleImage *image = g_ptr_array_index(priv->images, i);
         const char *image_name = mf_manifest_get_image_file(image->manifest);
@@ -674,18 +678,15 @@ mf_bundle_new_from_fd(int fd, GError **error)
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_INVALID_BUNDLE,
-                        "Image %s is referred to by more than one manifest",
-                        image_name);
+                        "Image %s of %s is used for something else already",
+                        image_name,
+                        image->manifest_name);
             return NULL;
         }
         g_hash_table_add(verified, g_strdup(image_name));
     }
 
     /* nothing may be in the bundle that nothing vouches for */
-    priv->is_signed = g_hash_table_contains(entries, SIGNATURE_NAME);
-    g_hash_table_add(verified, g_strdup(INDEX_NAME));
-    g_hash_table_add(verified, g_strdup(SIGNATURE_NAME));
-
     g_hash_table_iter_init(&iter, entries);
     while (g_hash_table_iter_next(&iter, &entry_name, NULL)) {
         if (!g_hash_table_contains(verified, entry_name)) {

@@ -143,7 +143,8 @@ mf_item_progress_get_action(const MfItemProgress *item)
  * mf_item_progress_get_subject:
  * @item: an #MfItemProgress
  *
- * Returns: the identifier of the component that is acted on
+ * Returns: the identifier of the component that is acted on, or the root hash
+ *   of the image for %MF_ACTION_CLEANUP
  */
 const char *
 mf_item_progress_get_subject(const MfItemProgress *item)

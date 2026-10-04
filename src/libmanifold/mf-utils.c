@@ -200,7 +200,7 @@ mf_write_all(int fd, const char *buffer, gsize size, GError **error)
 }
 
 /**
- * mf_version_dir_name:
+ * mf_build_full_version:
  * @version: a version
  * @revision: its revision
  *
