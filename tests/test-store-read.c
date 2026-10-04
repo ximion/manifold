@@ -284,17 +284,29 @@ test_list(Fixture *f, gconstpointer user_data)
     g_autoptr(GError) error = NULL;
     g_autofree char *junk = g_build_filename(f->dir, "apps", TEST_APP_ID, "2.0-1", NULL);
     g_autoptr(GPtrArray) components = NULL;
-    guint current = 0;
+    const struct {
+        const char *component_id;
+        const char *version;
+        gboolean current;
+    } expected[] = {
+        {TEST_APP_ID,      "0.1.0", TRUE },
+        {TEST_PLATFORM_ID, "13.8",  TRUE },
+        {TEST_CORE_ID,     "13.4",  FALSE},
+        {TEST_CORE_ID,     "13.8",  TRUE },
+        {TEST_SDK_ID,      "13.4",  TRUE },
+    };
 
     g_assert_cmpint(g_mkdir(junk, 0755), ==, 0); /* a version without image or manifest is skipped */
     components = mf_store_list_components(f->store, NULL, MF_COMPONENT_KIND_UNKNOWN, &error);
     g_assert_no_error(error);
-    g_assert_cmpuint(components->len, ==, 5);
+    g_assert_cmpuint(components->len, ==, G_N_ELEMENTS(expected));
     for (guint i = 0; i < components->len; i++) {
-        if (mf_component_is_current(g_ptr_array_index(components, i)))
-            current++;
+        MfComponent *component = g_ptr_array_index(components, i);
+
+        g_assert_cmpstr(mf_component_get_id(component), ==, expected[i].component_id);
+        g_assert_cmpstr(mf_component_get_version(component), ==, expected[i].version);
+        g_assert_cmpint(mf_component_is_current(component), ==, expected[i].current);
     }
-    g_assert_cmpuint(current, ==, 4);
 
     /* the filters */
     g_clear_pointer(&components, g_ptr_array_unref);
