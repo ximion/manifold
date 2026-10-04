@@ -121,8 +121,8 @@ mfc_print_components(GPtrArray *components, gboolean with_header)
             g_string_append(flags, "sdk ");
         if (mf_component_is_current(component))
             g_string_append(flags, "current ");
-        if (mf_component_get_install_mode(component) == MF_INSTALL_MODE_AUTO)
-            g_string_append(flags, "dependency ");
+        if (mf_component_get_install_mode(component) == MF_INSTALL_MODE_MANUAL)
+            g_string_append(flags, "manual ");
         if (flags->len > 0)
             g_string_truncate(flags, flags->len - 1);
 

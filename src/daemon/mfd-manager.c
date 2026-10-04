@@ -9,6 +9,7 @@
 
 #include <sys/stat.h>
 
+#include "mf-component-private.h"
 #include "mf-result-private.h"
 #include "mf-store-private.h"
 #include "mf-progress-private.h"
@@ -408,6 +409,7 @@ mfd_manager_plan_image_install(MfdManager *manager,
     const char *base_id = mf_manifest_get_base_id(manifest);
     MfComponentKind kind = mf_manifest_get_kind(manifest);
     gboolean sdk = mf_manifest_is_sdk(manifest);
+    gboolean dependency = mfd_bundle_is_dependency_of_app(bundle, manifest);
     g_autoptr(MfComponent) existing = NULL;
 
     if (!g_str_equal(mf_manifest_get_architecture(manifest), mf_get_host_architecture())) {
@@ -418,8 +420,8 @@ mfd_manager_plan_image_install(MfdManager *manager,
         return FALSE;
     }
 
-    iplan->mode = mfd_bundle_is_dependency_of_app(bundle, manifest) ? MF_INSTALL_MODE_AUTO
-                                                                    : MF_INSTALL_MODE_MANUAL;
+    iplan->mode = dependency || mf_component_kind_is_always_auto(kind, sdk) ? MF_INSTALL_MODE_AUTO
+                                                                            : MF_INSTALL_MODE_MANUAL;
     iplan->subdir = mf_store_subdir_for_kind(kind, sdk);
 
     existing = mf_store_get_component(manager->store, component_id, version, NULL);
@@ -433,12 +435,14 @@ mfd_manager_plan_image_install(MfdManager *manager,
             mfd_set_already_installed_error(error, ret_detail, component_id, version);
             return FALSE;
         }
-        if (iplan->mode == MF_INSTALL_MODE_AUTO) {
+        if (dependency) {
             /* already installed (how it got there doesn't matter) */
             iplan->skip = TRUE;
             return TRUE;
         }
-        if (mf_component_get_install_mode(existing) != MF_INSTALL_MODE_AUTO) {
+        /* only a runtime that came along as a dependency can be installed on purpose again */
+        if (mf_component_kind_is_always_auto(kind, sdk) ||
+            mf_component_get_install_mode(existing) != MF_INSTALL_MODE_AUTO) {
             mfd_set_already_installed_error(error, ret_detail, component_id, version);
             return FALSE;
         }
@@ -757,6 +761,52 @@ mfd_find_used_images(GPtrArray *components, GPtrArray *dirs, GHashTable *rm_pend
 }
 
 /**
+ * mfd_find_newest_apps:
+ * @components: (element-type MfComponent): what is installed
+ * @dirs: the version directory of each of @components
+ * @rm_pending: version directories that go
+ *
+ * Find the newest version of every application and plugin that stays,
+ * which is kept whatever its install mode is.
+ *
+ * Returns: a set of their version directories
+ */
+static GHashTable *
+mfd_find_newest_apps(GPtrArray *components, GPtrArray *dirs, GHashTable *rm_pending)
+{
+    g_autoptr(GHashTable) newest = g_hash_table_new(g_str_hash, g_str_equal);
+    GHashTable *kept = g_hash_table_new(g_str_hash, g_str_equal);
+    GHashTableIter iter;
+    gpointer index;
+
+    /* the component-ID mapped to the index of its newest version, plus one */
+    for (guint i = 0; i < components->len; i++) {
+        MfComponent *component = g_ptr_array_index(components, i);
+        MfComponent *other = NULL;
+        gpointer found;
+
+        if (!mf_component_kind_is_always_auto(mf_component_get_kind(component),
+                                              mf_component_is_sdk(component)) ||
+            g_hash_table_contains(rm_pending, g_ptr_array_index(dirs, i)))
+            continue;
+        found = g_hash_table_lookup(newest, mf_component_get_id(component));
+        if (found != NULL)
+            other = g_ptr_array_index(components, GPOINTER_TO_UINT(found) - 1);
+        if (other == NULL || mf_version_compare_with_rev(mf_component_get_version(component),
+                                                         mf_component_get_revision(component),
+                                                         mf_component_get_version(other),
+                                                         mf_component_get_revision(other)) > 0)
+            g_hash_table_insert(newest, (gpointer) mf_component_get_id(component), GUINT_TO_POINTER(i + 1));
+    }
+
+    g_hash_table_iter_init(&iter, newest);
+    while (g_hash_table_iter_next(&iter, NULL, &index))
+        g_hash_table_add(kept, g_ptr_array_index(dirs, GPOINTER_TO_UINT(index) - 1));
+
+    return kept;
+}
+
+/**
  * mfd_manager_plan_removal:
  * @manager: an #MfdManager
  * @component_id: (nullable): a component to remove, or %NULL to only clean up cruft
@@ -782,6 +832,7 @@ mfd_manager_plan_removal(MfdManager *manager,
     g_autoptr(GPtrArray) rm_dirs = g_ptr_array_new_with_free_func(g_free);
     g_autoptr(GHashTable) rm_pending = g_hash_table_new(g_str_hash, g_str_equal);
     g_autoptr(GHashTable) used = NULL;
+    g_autoptr(GHashTable) newest_apps = NULL;
     g_autoptr(GHashTable) images_used = NULL;
     g_autoptr(GDir) images = NULL;
     g_autofree char *images_dir = NULL;
@@ -852,13 +903,16 @@ mfd_manager_plan_removal(MfdManager *manager,
         used = mfd_manager_find_dependent_dirs_for(manager, components, rm_dirs, rm_pending);
     }
 
-    /* check for any cruft that we can drop now that nothing would depend on it anymore */
+    /* check for any cruft that we can drop now that nothing would depend on it anymore,
+     * but keep the newest version of every application and plugin */
+    newest_apps = mfd_find_newest_apps(components, rm_dirs, rm_pending);
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
         const char *version_dir = g_ptr_array_index(rm_dirs, i);
 
         if (mf_component_get_install_mode(component) != MF_INSTALL_MODE_AUTO ||
-            g_hash_table_contains(rm_pending, version_dir) || g_hash_table_contains(used, version_dir))
+            g_hash_table_contains(rm_pending, version_dir) || g_hash_table_contains(used, version_dir) ||
+            g_hash_table_contains(newest_apps, version_dir))
             continue;
         g_info("%s is not needed anymore", version_dir);
         mfd_removal_plan_add_version_dir(rmplan, rm_pending, component, version_dir);

@@ -91,14 +91,9 @@ class InstallerTest(unittest.TestCase):
                     version_dir = f'{STORE}/{subdir}/{component_id}/{name}'
                     if name.startswith('.') or os.path.islink(version_dir):
                         continue
-                    mode = 'manual'
-                    if os.path.exists(f'{version_dir}/mode'):
-                        with open(f'{version_dir}/mode', encoding='utf-8') as f:
-                            mode = f.read().strip()
-                    version = name.rsplit('-', 1)[0]
-                    found.append(
-                        (component_id, version, 'dependency' if mode == 'auto' else 'manual')
-                    )
+                    with open(f'{version_dir}/mode', encoding='utf-8') as f:
+                        mode = f.read().strip()
+                    found.append((component_id, name.rsplit('-', 1)[0], mode))
         return sorted(found)
 
     def stored_images(self):
@@ -137,7 +132,7 @@ class InstallerTest(unittest.TestCase):
 
         out = self.manifold('list')
         self.assertIn(f'core     {CORE_ID} ', out)
-        self.assertIn('sdk current', out)
+        self.assertIn('sdk current manual', out)
         self.assertIn('Nothing is installed', self.manifold('list', '--kind', 'app'))
 
     def test_app_needs_its_core(self):
@@ -149,9 +144,11 @@ class InstallerTest(unittest.TestCase):
     def test_app_brings_its_kit(self):
         self.manifold('install', self.core_bundle)
         self.assertIn(f'app      {APP_ID} ', self.manifold('install', self.app_bundle))
-        self.assertIn((self.kit.component, self.kit.version, 'dependency'), self.installed())
-        self.assertIn((APP_ID, '0.1.0', 'manual'), self.installed())
-        self.assertIn('dependency', self.manifold('list', '--kind', 'kit'))
+        self.assertIn((self.kit.component, self.kit.version, 'auto'), self.installed())
+        # an app is always auto, though it was installed explicitly
+        self.assertIn((APP_ID, '0.1.0', 'auto'), self.installed())
+        self.assertNotIn('manual', self.manifold('list', '--kind', 'kit'))
+        self.assertNotIn('manual', self.manifold('list', '--kind', 'app'))
 
     def test_wrong_architecture_is_refused(self):
         other = 'aarch64' if host_architecture() == 'x86_64' else 'x86_64'
@@ -184,7 +181,7 @@ class InstallerTest(unittest.TestCase):
 
         self.assertIn('installed already', self.manifold('install', other_bundle, expect=1))
         self.assertNotIn(other_kit.verity_hash, self.stored_images())
-        self.assertNotIn((APP_ID, '0.1.0', 'manual'), self.installed())
+        self.assertNotIn((APP_ID, '0.1.0', 'auto'), self.installed())
 
     def test_base_is_what_provides_the_identity(self):
         # a kit with another ID, but the same identity as the kit the app needs
@@ -306,16 +303,27 @@ class InstallerTest(unittest.TestCase):
         )
 
     def test_several_versions(self):
+        # an older version installed after a newer one replaces nothing
         self.manifold('install', self.core_bundle)
-        self.manifold('install', self.app_bundle)
         self.manifold('install', self.app2_bundle)
+        self.manifold('install', self.app_bundle)
         self.assertEqual(self.manifold('list', APP_ID).count(APP_ID), 2)
 
         # without a terminal, a removal of one of several versions has to name it
         self.assertIn('Several versions', self.manifold('remove', APP_ID, expect=1))
+        # the version that is newest then stays, though it is auto
         self.manifold('remove', APP_ID, '0.2.0')
         self.assertEqual(self.manifold('list', APP_ID).count(APP_ID), 1)
-        self.assertIn((APP_ID, '0.1.0', 'manual'), self.installed())
+        self.assertIn((APP_ID, '0.1.0', 'auto'), self.installed())
+
+    def test_cleanup_keeps_the_newest_app_version(self):
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app2_bundle)
+        self.manifold('install', self.app_bundle)
+
+        self.assertIn(f'app      {APP_ID} 0.1.0', self.manifold('cleanup'))
+        self.assertIn((APP_ID, '0.2.0', 'auto'), self.installed())
+        self.assertNotIn((APP_ID, '0.1.0', 'auto'), self.installed())
 
     def test_cleanup(self):
         self.manifold('install', self.core_bundle)

@@ -27,9 +27,9 @@ static SD_VARLINK_DEFINE_ENUM_TYPE(
 
 static SD_VARLINK_DEFINE_ENUM_TYPE(
     InstallMode,
-    SD_VARLINK_FIELD_COMMENT("The component was installed explicitly."),
+    SD_VARLINK_FIELD_COMMENT("The component is kept until it is removed explicitly."),
     SD_VARLINK_DEFINE_ENUM_VALUE(manual),
-    SD_VARLINK_FIELD_COMMENT("The component came along as a dependency."),
+    SD_VARLINK_FIELD_COMMENT("The component is removed once it is not needed anymore."),
     SD_VARLINK_DEFINE_ENUM_VALUE(auto));
 
 static SD_VARLINK_DEFINE_STRUCT_TYPE(
@@ -50,7 +50,7 @@ static SD_VARLINK_DEFINE_STRUCT_TYPE(
     SD_VARLINK_DEFINE_FIELD(verityHash, SD_VARLINK_STRING, 0),
     SD_VARLINK_FIELD_COMMENT("Whether this is the active version of the component, the one that is launched."),
     SD_VARLINK_DEFINE_FIELD(current, SD_VARLINK_BOOL, 0),
-    SD_VARLINK_FIELD_COMMENT("Why the component is installed: explicitly, or because something else depends on it."),
+    SD_VARLINK_FIELD_COMMENT("Whether the component is a potential target for automatic removal."),
     SD_VARLINK_DEFINE_FIELD_BY_TYPE(installMode, InstallMode, 0),
     SD_VARLINK_FIELD_COMMENT("Where the trust in the component came from: the name of a repository, or \"local\"."),
     SD_VARLINK_DEFINE_FIELD(origin, SD_VARLINK_STRING, 0));
@@ -201,7 +201,7 @@ SD_VARLINK_DEFINE_INTERFACE(
 
     SD_VARLINK_SYMBOL_COMMENT("The kind of a component."),
     &vl_type_ComponentKind,
-    SD_VARLINK_SYMBOL_COMMENT("Why a component is installed."),
+    SD_VARLINK_SYMBOL_COMMENT("Whether a component is a potential target for automatic removal."),
     &vl_type_InstallMode,
     SD_VARLINK_SYMBOL_COMMENT("An installed component."),
     &vl_type_Component,

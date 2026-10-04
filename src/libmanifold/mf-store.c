@@ -389,7 +389,7 @@ mf_read_version_dir_at(const char *root,
                                  mf_manifest_get_identity(manifest),
                                  verity_hash,
                                  g_strcmp0(current_target, version_name) == 0,
-                                 mode != NULL ? mf_install_mode_from_string(mode) : MF_INSTALL_MODE_MANUAL,
+                                 mode != NULL ? mf_install_mode_from_string(mode) : MF_INSTALL_MODE_AUTO,
                                  origin != NULL ? origin : MF_STORE_LOCAL_ORIGIN);
     mf_component_set_manifest(component, manifest);
     return component;

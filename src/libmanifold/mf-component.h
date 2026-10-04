@@ -44,11 +44,13 @@ gboolean        mf_component_id_is_valid(const char *component_id);
 /**
  * MfInstallMode:
  * @MF_INSTALL_MODE_UNKNOWN: Not a known mode.
- * @MF_INSTALL_MODE_MANUAL: The component was installed explicitly.
- * @MF_INSTALL_MODE_AUTO: The component came along as a dependency.
+ * @MF_INSTALL_MODE_MANUAL: The component is kept until it is removed explicitly.
+ * @MF_INSTALL_MODE_AUTO: The component is removed once it is not needed anymore.
  *
- * Why a component is installed, which decides whether it is a target
- * for automatic removal.
+ * Whether a component is a target for automatic removal. A runtime is
+ * installed as auto if it came along as a dependency, and as manual if it
+ * was installed explicitly. An application or plugin is always installed
+ * as auto, but its newest version is kept regardless.
  */
 typedef enum {
     MF_INSTALL_MODE_UNKNOWN,

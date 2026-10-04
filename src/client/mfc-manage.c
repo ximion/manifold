@@ -271,7 +271,8 @@ mfc_run_remove_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
  * mfc_run_cleanup_command:
  *
  * Remove what nothing needs anymore: dependencies that nothing builds on,
- * and images that no component uses.
+ * older versions of applications that are not kept, and images that no
+ * component uses.
  */
 static int
 mfc_run_cleanup_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)

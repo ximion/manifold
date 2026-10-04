@@ -282,17 +282,17 @@ mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_di
  * @base_revision: the revision of that exact version
  * @manifest: the manifest of the component, as it was in the bundle
  * @metainfo: the MetaInfo of the component, sanitized
- * @mode: why the component is installed: explicitly, or as dependency
+ * @mode: whether the component is a potential target for automatic removal
  *
  * Record an installed version of a component: a directory with links to its
- * image and its base, its manifest and MetaInfo, where it came from, and the
- * install mode of a runtime. We write the directory under a temporary name,
- * and rename it once it is complete, so it appears as a whole.
+ * image and its base, its manifest and MetaInfo, where it came from, and its
+ * install mode. We write the directory under a temporary name, and rename it
+ * once it is complete, so it appears as a whole.
  *
  * Then we point the `current` link of the component at its newest version.
  *
- * A version that is installed already stays as it is, except that we mark a
- * runtime as "manual" if @mode is "manual" now.
+ * A version that is installed already stays as it is, except that we mark it
+ * as "manual" if @mode is "manual" now.
  *
  * This method assumes all checks and validation have already happened on the caller's side!
  * It just executes the write operation.
@@ -320,13 +320,12 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     g_autofree char *tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
     g_autofree char *final_dir = g_build_filename(component_dir, version_name, NULL);
     g_autoptr(GError) cleanup_error = NULL;
-    gboolean is_runtime = g_str_equal(subdir, MF_STORE_RUNTIMES_SUBDIR);
     gconstpointer manifest_data;
     gsize manifest_size;
     gboolean ret = FALSE;
 
     if (mfd_is_directory(final_dir)) {
-        if (mode != MF_INSTALL_MODE_MANUAL || !is_runtime)
+        if (mode != MF_INSTALL_MODE_MANUAL)
             return TRUE;
         if (!mfd_write_word(final_dir, MF_STORE_MODE_NAME, mf_install_mode_to_string(mode), error))
             return FALSE;
@@ -378,7 +377,7 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     /* TODO: every installation is local until repository support is ported from Intrafold */
     if (!mfd_write_word(tmp_dir, MF_STORE_ORIGIN_NAME, MF_STORE_LOCAL_ORIGIN, error))
         goto out;
-    if (is_runtime && !mfd_write_word(tmp_dir, MF_STORE_MODE_NAME, mf_install_mode_to_string(mode), error))
+    if (!mfd_write_word(tmp_dir, MF_STORE_MODE_NAME, mf_install_mode_to_string(mode), error))
         goto out;
 
     if (rename(tmp_dir, final_dir) < 0) {

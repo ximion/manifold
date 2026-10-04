@@ -118,7 +118,7 @@ mft_install_app_revision(const char *component_id,
                                                      0,
                                                      manifest,
                                                      metainfo,
-                                                     MF_INSTALL_MODE_MANUAL,
+                                                     MF_INSTALL_MODE_AUTO,
                                                      &error));
     g_assert_no_error(error);
 }
@@ -308,8 +308,10 @@ test_install_app_with_dependency(Fixture *f, gconstpointer user_data)
     mft_assert_link(RUNTIMES "/" TEST_KIT_ID "/20260112T0238-1/base",
                     "../../../runtimes/" TEST_CORE_ID "/current");
     mft_assert_link(RUNTIMES "/" TEST_SDK_ID "/13.4-1/base", "../../../runtimes/" TEST_CORE_ID "/13.4-1");
-    /* only runtimes record their install mode: an app is always installed on purpose */
-    g_assert_false(g_file_test(APPS "/" TEST_APP_ID "/0.1.0-1/mode", G_FILE_TEST_EXISTS));
+    /* every version records its install mode, and an app is always auto */
+    mode = mft_read_file(APPS "/" TEST_APP_ID "/0.1.0-1/mode");
+    g_assert_cmpstr(mode, ==, "auto\n");
+    g_clear_pointer(&mode, g_free);
     mode = mft_read_file(RUNTIMES "/" TEST_KIT_ID "/20260112T0238-1/mode");
     g_assert_cmpstr(mode, ==, "auto\n");
 
@@ -321,7 +323,7 @@ test_install_app_with_dependency(Fixture *f, gconstpointer user_data)
     g_assert_cmpint(mf_component_get_install_mode(kit), ==, MF_INSTALL_MODE_AUTO);
     app = mf_store_get_component(store, TEST_APP_ID, "0.1.0", NULL);
     g_assert_cmpstr(mf_component_get_verity_hash(app), ==, f->app_hash);
-    g_assert_cmpint(mf_component_get_install_mode(app), ==, MF_INSTALL_MODE_MANUAL);
+    g_assert_cmpint(mf_component_get_install_mode(app), ==, MF_INSTALL_MODE_AUTO);
     g_assert_true(mf_component_is_sdk(mft_find_component(components, TEST_SDK_ID, "13.4")));
 }
 
@@ -596,6 +598,43 @@ test_old_dependency_goes(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * test_newest_app_stays:
+ *
+ * An application is always installed as auto, so a removal or cleanup removes
+ * its older versions, unless they are marked manual, but it always keeps the
+ * newest version that stays.
+ */
+static void
+test_newest_app_stays(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *v2_hash = mft_fake_hash("app2");
+    g_autofree char *v3_hash = mft_fake_hash("app3");
+    g_autoptr(MfdRemovalPlan) cleanup = NULL;
+    g_autoptr(MfdRemovalPlan) removal = NULL;
+    g_autoptr(GError) error = NULL;
+
+    mft_install_usual(f);
+    mft_add_image(v2_hash, 1024);
+    mft_add_image(v3_hash, 1024);
+    mft_install_app(TEST_APP_ID, "0.2.0", v2_hash, TEST_KIT_ID);
+    mft_install_app(TEST_APP_ID, "0.3.0", v3_hash, TEST_KIT_ID);
+    mft_write_file(APPS "/" TEST_APP_ID "/0.1.0-1/mode", "manual\n");
+    g_assert_true(mf_store_load(store, &error));
+    g_assert_no_error(error);
+
+    cleanup = mfd_manager_plan_removal(manager, NULL, NULL, NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(cleanup->dirs->len, ==, 1);
+    g_assert_cmpstr(g_ptr_array_index(cleanup->dirs, 0), ==, APPS "/" TEST_APP_ID "/0.2.0-1");
+
+    /* without 0.3.0, 0.2.0 is the newest version, and stays */
+    removal = mfd_manager_plan_removal(manager, TEST_APP_ID, "0.3.0", NULL, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(removal->dirs->len, ==, 1);
+    g_assert_cmpstr(g_ptr_array_index(removal->dirs, 0), ==, APPS "/" TEST_APP_ID "/0.3.0-1");
+}
+
+/**
  * mft_count_removed:
  */
 static void
@@ -673,6 +712,7 @@ main(int argc, char **argv)
     add_test("exact-base-stays", test_exact_base_stays);
     add_test("shared-dependency-stays", test_shared_dependency_stays);
     add_test("old-dependency-goes", test_old_dependency_goes);
+    add_test("newest-app-stays", test_newest_app_stays);
     add_test("remove", test_remove);
 #undef add_test
 
