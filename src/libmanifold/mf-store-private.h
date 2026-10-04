@@ -1,0 +1,85 @@
+/*
+ * Copyright (C) 2025-2026 Matthias Klumpp <matthias@tenstral.net>
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
+#pragma once
+
+#include "config.h"
+
+#include <glib.h>
+
+#include "mf-store.h"
+#include "mf-macros-private.h"
+
+MF_BEGIN_PRIVATE_DECLS
+
+#define MF_STORE_IMAGES_SUBDIR   "images/by-verity"
+#define MF_STORE_APPS_SUBDIR     "apps"
+#define MF_STORE_PLUGINS_SUBDIR  "plugins"
+#define MF_STORE_RUNTIMES_SUBDIR "runtimes"
+
+#define MF_STORE_IMAGES_DIR   MF_STORAGE_DIR "/" MF_STORE_IMAGES_SUBDIR
+#define MF_STORE_APPS_DIR     MF_STORAGE_DIR "/" MF_STORE_APPS_SUBDIR
+#define MF_STORE_RUNTIMES_DIR MF_STORAGE_DIR "/" MF_STORE_RUNTIMES_SUBDIR
+
+#define MF_STORE_LOCAL_METAINFO_SUBDIR "origins/local/metainfo"
+#define MF_STORE_LOCAL_METAINFO_DIR    MF_STORAGE_DIR "/" MF_STORE_LOCAL_METAINFO_SUBDIR
+
+#define MF_STORE_COMPONENT_TO_ROOT      "../../.."
+#define MF_STORE_LOCAL_METAINFO_TO_ROOT "../../.."
+#define MF_STORE_COMPONENT_TO_IMAGES    MF_STORE_COMPONENT_TO_ROOT "/images/by-verity"
+
+#define MF_STORE_IMAGE_SUFFIX       ".raw"
+#define MF_STORE_APP_IMAGE_LINK     "app.raw"
+#define MF_STORE_RUNTIME_IMAGE_LINK "runtime.raw"
+#define MF_STORE_BASE_LINK          "base"
+#define MF_STORE_MANIFEST_NAME      "manifest.json"
+#define MF_STORE_CURRENT_NAME       "current"
+#define MF_STORE_ORIGIN_NAME        "origin"
+#define MF_STORE_MODE_NAME          "mode"
+#define MF_STORE_LOCAL_ORIGIN       "local"
+
+/* the length of a hex encoded 256 bit hash, as used for image file names */
+#define MF_HEX_HASH_LENGTH 64
+
+#define MF_COMPONENT_ID_LENGTH_MAX 255
+
+/* the layout of the store */
+MF_INTERNAL_VISIBLE
+const char *mf_store_subdir_for_kind(MfComponentKind kind,
+                                     gboolean        sdk);
+MF_INTERNAL_VISIBLE
+const char *mf_store_image_link_for_subdir(const char *subdir);
+MF_INTERNAL_VISIBLE
+char *mf_store_hash_from_image_name(const char *name);
+MF_INTERNAL_VISIBLE
+void mf_store_invalidate(MfStore *store);
+MF_INTERNAL_VISIBLE
+gboolean mf_store_has_image(MfStore    *store,
+                            const char *verity_hash);
+MF_INTERNAL_VISIBLE
+MfComponent *mf_store_find_identity(MfStore    *store,
+                                    const char *identity,
+                                    GError    **error);
+
+/* direct access to one store root, without loading it */
+MF_INTERNAL_VISIBLE
+MfComponent *mf_store_read_component_at(const char *root,
+                                        const char *component_id,
+                                        const char *version,
+                                        GError    **error);
+MF_INTERNAL_VISIBLE
+MfComponent *mf_store_read_base_at(const char  *root,
+                                   MfComponent *component,
+                                   GError     **error);
+MF_INTERNAL_VISIBLE
+char **mf_store_read_base_link_at(const char  *root,
+                                  MfComponent *component,
+                                  GError     **error);
+MF_INTERNAL_VISIBLE
+char *mf_store_image_path_at(const char *root,
+                             const char *verity_hash);
+
+MF_END_PRIVATE_DECLS

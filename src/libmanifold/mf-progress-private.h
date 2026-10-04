@@ -15,4 +15,9 @@ MF_BEGIN_PRIVATE_DECLS
 
 MfProgress *mf_progress_new_from_reply(sd_json_variant *variant);
 
+MF_INTERNAL_VISIBLE
+MfItemProgress *mf_item_progress_new(MfAction    action,
+                                     const char *subject,
+                                     const char *version);
+
 MF_END_PRIVATE_DECLS

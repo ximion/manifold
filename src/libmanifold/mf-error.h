@@ -19,13 +19,16 @@ G_BEGIN_DECLS
  * @MF_ERROR_FAILED: Generic failure.
  * @MF_ERROR_NO_SERVICE: The Manifold service could not be reached.
  * @MF_ERROR_NOT_IMPLEMENTED: The requested operation is not implemented.
+ * @MF_ERROR_NOT_FOUND: The entity was not found.
  * @MF_ERROR_PERMISSION_DENIED: The caller is not allowed to do this.
  * @MF_ERROR_INVALID_BUNDLE: The file is not a Manifold bundle.
+ * @MF_ERROR_WRONG_ARCHITECTURE: The component was built for another architecture than this system's.
  * @MF_ERROR_VERIFICATION_FAILED: The bundle does not match what its index says.
- * @MF_ERROR_MISSING_DEPENDENCY: A core, platform or kit the application needs is not installable.
+ * @MF_ERROR_MISSING_BASE: The base a component builds on is not installed.
  * @MF_ERROR_ALREADY_INSTALLED: This version of the component is installed already.
- * @MF_ERROR_NO_SUCH_COMPONENT: The component is not installed.
  * @MF_ERROR_COMPONENT_IN_USE: An installed component builds on this component.
+ * @MF_ERROR_INVALID_MANIFEST: The data is not a manifest, or not one that could be installed.
+ * @MF_ERROR_REVOKED: The component was revoked and must not be used anymore.
  *
  * Errors that can happen when managing the Manifold installation of a host.
  */
@@ -33,13 +36,16 @@ typedef enum {
     MF_ERROR_FAILED,
     MF_ERROR_NO_SERVICE,
     MF_ERROR_NOT_IMPLEMENTED,
+    MF_ERROR_NOT_FOUND,
     MF_ERROR_PERMISSION_DENIED,
     MF_ERROR_INVALID_BUNDLE,
+    MF_ERROR_WRONG_ARCHITECTURE,
     MF_ERROR_VERIFICATION_FAILED,
-    MF_ERROR_MISSING_DEPENDENCY,
+    MF_ERROR_MISSING_BASE,
     MF_ERROR_ALREADY_INSTALLED,
-    MF_ERROR_NO_SUCH_COMPONENT,
     MF_ERROR_COMPONENT_IN_USE,
+    MF_ERROR_INVALID_MANIFEST,
+    MF_ERROR_REVOKED,
     /*< private >*/
     MF_ERROR_LAST
 } MfError;

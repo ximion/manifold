@@ -16,4 +16,8 @@ MF_BEGIN_PRIVATE_DECLS
 MfResult *mf_result_new_from_reply(sd_json_variant *reply,
                                    GError         **error);
 
+MF_INTERNAL_VISIBLE
+void mf_result_add_removed_image(MfResult   *result,
+                                 const char *verity_hash);
+
 MF_END_PRIVATE_DECLS

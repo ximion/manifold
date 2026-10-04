@@ -11,10 +11,14 @@
 
 #include <mf-version.h>
 #include <mf-error.h>
+#include <mf-utils.h>
 #include <mf-component.h>
+#include <mf-manifest.h>
+#include <mf-bundle.h>
+#include <mf-store.h>
 #include <mf-progress.h>
 #include <mf-result.h>
-#include <mf-client.h>
+#include <mf-manager.h>
 
 #undef __MANIFOLD_H_INSIDE__
 

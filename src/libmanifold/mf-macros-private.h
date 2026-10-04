@@ -18,4 +18,19 @@ G_BEGIN_DECLS
 
 #define MF_INTERNAL_VISIBLE __attribute__((visibility("default")))
 
+/* convenience functions for bitwise operations */
+#define mf_flags_add(bitfield, flag) \
+    do {                             \
+        ((bitfield) |= (flag));      \
+    } while (0)
+#define mf_flags_remove(bitfield, flag) \
+    do {                                \
+        ((bitfield) &= ~(flag));        \
+    } while (0)
+#define mf_flags_invert(bitfield, flag) \
+    do {                                \
+        ((bitfield) ^= (flag));         \
+    } while (0)
+#define mf_flags_contains(bitfield, flag) (((bitfield) & (flag)) > 0)
+
 G_END_DECLS

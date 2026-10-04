@@ -36,30 +36,43 @@ typedef enum {
     MF_COMPONENT_KIND_LAST
 } MfComponentKind;
 
-const char                 *mf_component_kind_to_string(MfComponentKind kind);
-MfComponentKind             mf_component_kind_from_string(const char *kind_str);
+const char     *mf_component_kind_to_string(MfComponentKind kind);
+MfComponentKind mf_component_kind_from_string(const char *kind_str);
 
-gboolean                    mf_component_id_is_valid(const char *component_id);
+gboolean        mf_component_id_is_valid(const char *component_id);
 
-typedef struct _MfComponent MfComponent;
+/**
+ * MfInstallMode:
+ * @MF_INSTALL_MODE_UNKNOWN: Not a known mode.
+ * @MF_INSTALL_MODE_MANUAL: The component was installed explicitly.
+ * @MF_INSTALL_MODE_AUTO: The component came along as a dependency.
+ *
+ * Why a component is installed, which decides whether it is a target
+ * for automatic removal.
+ */
+typedef enum {
+    MF_INSTALL_MODE_UNKNOWN,
+    MF_INSTALL_MODE_MANUAL,
+    MF_INSTALL_MODE_AUTO,
+    /*< private >*/
+    MF_INSTALL_MODE_LAST
+} MfInstallMode;
+
+const char   *mf_install_mode_to_string(MfInstallMode mode);
+MfInstallMode mf_install_mode_from_string(const char *mode_str);
 
 #define MF_TYPE_COMPONENT (mf_component_get_type())
-GType        mf_component_get_type(void);
+G_DECLARE_FINAL_TYPE(MfComponent, mf_component, MF, COMPONENT, GObject)
 
-MfComponent *mf_component_copy(const MfComponent *component);
-void         mf_component_free(MfComponent *component);
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(MfComponent,
-                              mf_component_free)
-
-const char     *mf_component_get_id(const MfComponent *component);
-MfComponentKind mf_component_get_kind(const MfComponent *component);
-const char     *mf_component_get_version(const MfComponent *component);
-guint64         mf_component_get_revision(const MfComponent *component);
-gboolean        mf_component_is_sdk(const MfComponent *component);
-const char     *mf_component_get_identity(const MfComponent *component);
-const char     *mf_component_get_verity_hash(const MfComponent *component);
-gboolean        mf_component_is_current(const MfComponent *component);
-gboolean        mf_component_is_dependency(const MfComponent *component);
-const char     *mf_component_get_origin(const MfComponent *component);
+const char     *mf_component_get_id(MfComponent *component);
+MfComponentKind mf_component_get_kind(MfComponent *component);
+const char     *mf_component_get_version(MfComponent *component);
+guint64         mf_component_get_revision(MfComponent *component);
+gboolean        mf_component_is_sdk(MfComponent *component);
+const char     *mf_component_get_identity(MfComponent *component);
+const char     *mf_component_get_verity_hash(MfComponent *component);
+gboolean        mf_component_is_current(MfComponent *component);
+MfInstallMode   mf_component_get_install_mode(MfComponent *component);
+const char     *mf_component_get_origin(MfComponent *component);
 
 G_END_DECLS

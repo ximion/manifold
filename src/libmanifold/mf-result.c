@@ -53,8 +53,8 @@ mf_result_init(MfResult *result)
 {
     MfResultPrivate *priv = GET_PRIVATE(result);
 
-    priv->installed = g_ptr_array_new_with_free_func((GDestroyNotify) mf_component_free);
-    priv->removed = g_ptr_array_new_with_free_func((GDestroyNotify) mf_component_free);
+    priv->installed = g_ptr_array_new_with_free_func(g_object_unref);
+    priv->removed = g_ptr_array_new_with_free_func(g_object_unref);
     priv->removed_images = g_ptr_array_new_with_free_func(g_free);
 }
 
@@ -124,6 +124,89 @@ mf_result_get_bytes_freed(MfResult *result)
 }
 
 /**
+ * mf_result_new:
+ *
+ * Creates a new, empty #MfResult.
+ *
+ * Returns: (transfer full): a new #MfResult
+ */
+MfResult *
+mf_result_new(void)
+{
+    return g_object_new(MF_TYPE_RESULT, NULL);
+}
+
+/**
+ * mf_result_add_installed:
+ * @result: an #MfResult
+ * @component: (transfer none): a component that was installed
+ *
+ * Add a component to the ones the operation installed.
+ */
+void
+mf_result_add_installed(MfResult *result, MfComponent *component)
+{
+    g_return_if_fail(MF_IS_RESULT(result));
+    g_return_if_fail(MF_IS_COMPONENT(component));
+    g_ptr_array_add(GET_PRIVATE(result)->installed, g_object_ref(component));
+}
+
+/**
+ * mf_result_add_removed:
+ * @result: an #MfResult
+ * @component: (transfer none): a component that was removed
+ *
+ * Add a component to the ones the operation removed.
+ */
+void
+mf_result_add_removed(MfResult *result, MfComponent *component)
+{
+    g_return_if_fail(MF_IS_RESULT(result));
+    g_return_if_fail(MF_IS_COMPONENT(component));
+    g_ptr_array_add(GET_PRIVATE(result)->removed, g_object_ref(component));
+}
+
+/**
+ * mf_result_add_removed_image:
+ * @result: an #MfResult
+ * @verity_hash: the root hash of an image that was removed
+ */
+void
+mf_result_add_removed_image(MfResult *result, const char *verity_hash)
+{
+    g_return_if_fail(MF_IS_RESULT(result));
+    g_ptr_array_add(GET_PRIVATE(result)->removed_images, g_strdup(verity_hash));
+}
+
+/**
+ * mf_result_set_bytes_added:
+ * @result: an #MfResult
+ * @bytes: how much disk space the operation took up
+ *
+ * Set how many bytes the operation added to the store.
+ */
+void
+mf_result_set_bytes_added(MfResult *result, guint64 bytes)
+{
+    g_return_if_fail(MF_IS_RESULT(result));
+    GET_PRIVATE(result)->bytes_added = bytes;
+}
+
+/**
+ * mf_result_set_bytes_freed:
+ * @result: an #MfResult
+ * @bytes: how much disk space the operation freed
+ *
+ * Set how many bytes the operation freed in the store.
+ */
+void
+mf_result_set_bytes_freed(MfResult *result, guint64 bytes)
+{
+    g_return_if_fail(MF_IS_RESULT(result));
+    GET_PRIVATE(result)->bytes_freed = bytes;
+}
+
+/**
  * mf_result_new_from_reply:
  * @reply: the final reply of an operation
  *
@@ -165,7 +248,7 @@ mf_result_new_from_reply(sd_json_variant *reply, GError **error)
         return NULL;
     }
 
-    result = g_object_new(MF_TYPE_RESULT, NULL);
+    result = mf_result_new();
     MfResultPrivate *priv = GET_PRIVATE(result);
     priv->bytes_added = fields.bytes_added;
     priv->bytes_freed = fields.bytes_freed;

@@ -5,7 +5,7 @@
  */
 
 #include "config.h"
-#include "mf-client.h"
+#include "mf-manager.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -20,93 +20,216 @@
 #include "mf-result-private.h"
 
 /**
- * MfClient:
+ * MfManager:
  *
- * Interface to the Manifold service, to manage the local Manifold installation.
+ * Interface to the Manifold service, to manage the local Manifold storage.
  *
- * Every call connects to the system Manifold service, so a client does not hold a
+ * Every call connects to the system Manifold service, so a manager does not hold a
  * connection while it is not used, and the service may exit in between.
+ * See also #MfStore to read the data storage, #MfManager is for manipulating it.
  */
 
-/* installing a bundle takes as long as it takes */
-constexpr uint64_t CALL_TIMEOUT_USEC = UINT64_MAX;
+/* installing a large bundle can take a long time */
+constexpr uint64_t CALL_TIMEOUT_USEC = 30 * 60 * 1000 * 1000;
 
 typedef struct {
     char *socket_path;
-} MfClientPrivate;
+    MfTransactionFlags txn_flags;
+} MfManagerPrivate;
 
-G_DEFINE_TYPE_WITH_PRIVATE(MfClient, mf_client, G_TYPE_OBJECT)
+G_DEFINE_TYPE_WITH_PRIVATE(MfManager, mf_manager, G_TYPE_OBJECT)
 
-#define GET_PRIVATE(o) ((MfClientPrivate *) mf_client_get_instance_private(o))
+#define GET_PRIVATE(o) ((MfManagerPrivate *) mf_manager_get_instance_private(o))
+
+G_DEFINE_FLAGS_TYPE(MfTransactionFlags,
+                    mf_transaction_flags,
+                    G_DEFINE_ENUM_VALUE(MF_TRANSACTION_FLAG_NONE, "none"),
+                    G_DEFINE_ENUM_VALUE(MF_TRANSACTION_FLAG_INTERACTIVE, "interactive"))
+
+enum {
+    PROP_0,
+    PROP_TRANSACTION_FLAGS,
+    N_PROPERTIES
+};
+
+static GParamSpec *obj_properties[N_PROPERTIES] = {};
 
 static void
-mf_client_finalize(GObject *object)
+mf_manager_finalize(GObject *object)
 {
-    MfClientPrivate *priv = GET_PRIVATE(MF_CLIENT(object));
+    MfManagerPrivate *priv = GET_PRIVATE(MF_MANAGER(object));
 
     g_free(priv->socket_path);
 
-    G_OBJECT_CLASS(mf_client_parent_class)->finalize(object);
+    G_OBJECT_CLASS(mf_manager_parent_class)->finalize(object);
 }
 
 static void
-mf_client_class_init(MfClientClass *klass)
+mf_manager_get_property(GObject *object, guint property_id, GValue *value, GParamSpec *pspec)
+{
+    MfManager *manager = MF_MANAGER(object);
+
+    switch (property_id) {
+    case PROP_TRANSACTION_FLAGS:
+        g_value_set_flags(value, mf_manager_get_transaction_flags(manager));
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+        break;
+    }
+}
+
+static void
+mf_manager_set_property(GObject *object, guint property_id, const GValue *value, GParamSpec *pspec)
+{
+    MfManager *manager = MF_MANAGER(object);
+
+    switch (property_id) {
+    case PROP_TRANSACTION_FLAGS:
+        mf_manager_set_transaction_flags(manager, g_value_get_flags(value));
+        break;
+    default:
+        G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
+        break;
+    }
+}
+
+static void
+mf_manager_class_init(MfManagerClass *klass)
 {
     GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
-    object_class->finalize = mf_client_finalize;
+    object_class->finalize = mf_manager_finalize;
+    object_class->get_property = mf_manager_get_property;
+    object_class->set_property = mf_manager_set_property;
+
+    /**
+     * MfManager:transaction-flags:
+     *
+     * Flags that change how operations are executed.
+     */
+    obj_properties[PROP_TRANSACTION_FLAGS] = g_param_spec_flags("transaction-flags",
+                                                                NULL,
+                                                                NULL,
+                                                                MF_TYPE_TRANSACTION_FLAGS,
+                                                                MF_TRANSACTION_FLAG_INTERACTIVE,
+                                                                G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY |
+                                                                    G_PARAM_STATIC_STRINGS);
+
+    g_object_class_install_properties(object_class, N_PROPERTIES, obj_properties);
 }
 
 static void
-mf_client_init(MfClient *client)
+mf_manager_init(MfManager *manager)
 {
-    GET_PRIVATE(client)->socket_path = g_strdup(MF_SOCKET_PATH);
+    MfManagerPrivate *priv = GET_PRIVATE(manager);
+
+    priv->socket_path = g_strdup(MF_SOCKET_PATH);
+    priv->txn_flags = MF_TRANSACTION_FLAG_INTERACTIVE;
 }
 
 /**
- * mf_client_new:
+ * mf_manager_new:
  *
- * Create a client of the Manifold service.
+ * Create a manager of the Manifold installation.
  *
- * Returns: (transfer full): a new #MfClient
+ * Returns: (transfer full): a new #MfManager
  */
-MfClient *
-mf_client_new(void)
+MfManager *
+mf_manager_new(void)
 {
-    return g_object_new(MF_TYPE_CLIENT, NULL);
+    return g_object_new(MF_TYPE_MANAGER, NULL);
 }
 
 /**
- * mf_client_get_socket_path:
- * @client: an #MfClient
+ * mf_manager_get_socket_path:
+ * @manager: an #MfManager
  *
  * Returns: the path of the socket the service is reached at
  */
 const char *
-mf_client_get_socket_path(MfClient *client)
+mf_manager_get_socket_path(MfManager *manager)
 {
-    g_return_val_if_fail(MF_IS_CLIENT(client), NULL);
-    return GET_PRIVATE(client)->socket_path;
+    g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
+    return GET_PRIVATE(manager)->socket_path;
 }
 
 /**
- * mf_client_set_socket_path:
- * @client: an #MfClient
+ * mf_manager_set_socket_path:
+ * @manager: an #MfManager
  * @socket_path: path of a socket
  *
  * Reach the service at a different socket than the default one.
  */
 void
-mf_client_set_socket_path(MfClient *client, const char *socket_path)
+mf_manager_set_socket_path(MfManager *manager, const char *socket_path)
 {
-    MfClientPrivate *priv;
+    MfManagerPrivate *priv;
 
-    g_return_if_fail(MF_IS_CLIENT(client));
+    g_return_if_fail(MF_IS_MANAGER(manager));
     g_return_if_fail(socket_path != NULL);
 
-    priv = GET_PRIVATE(client);
+    priv = GET_PRIVATE(manager);
     g_free(priv->socket_path);
     priv->socket_path = g_strdup(socket_path);
+}
+
+/**
+ * mf_manager_get_transaction_flags:
+ * @manager: an #MfManager
+ *
+ * Returns: the transaction flags
+ */
+MfTransactionFlags
+mf_manager_get_transaction_flags(MfManager *manager)
+{
+    g_return_val_if_fail(MF_IS_MANAGER(manager), MF_TRANSACTION_FLAG_NONE);
+    return GET_PRIVATE(manager)->txn_flags;
+}
+
+/**
+ * mf_manager_set_transaction_flags:
+ * @manager: an #MfManager
+ * @flags: the #MfTransactionFlags
+ *
+ * Set the transaction flags, e.g. clear %MF_TRANSACTION_FLAG_INTERACTIVE
+ * if nobody could answer a password prompt.
+ */
+void
+mf_manager_set_transaction_flags(MfManager *manager, MfTransactionFlags flags)
+{
+    MfManagerPrivate *priv;
+
+    g_return_if_fail(MF_IS_MANAGER(manager));
+
+    priv = GET_PRIVATE(manager);
+    if (priv->txn_flags == flags)
+        return;
+    priv->txn_flags = flags;
+    g_object_notify_by_pspec(G_OBJECT(manager), obj_properties[PROP_TRANSACTION_FLAGS]);
+}
+
+/**
+ * mf_manager_add_transaction_flags:
+ *
+ * Add the transaction flags of the manager to the parameters of a call.
+ *
+ * Returns: 0, or a negative errno
+ */
+static int
+mf_manager_add_transaction_flags(MfManager *manager, sd_json_variant **parameters)
+{
+    MfTransactionFlags flags = GET_PRIVATE(manager)->txn_flags;
+    const char *names[2] = {};
+    size_t n = 0;
+
+    if (mf_flags_contains(flags, MF_TRANSACTION_FLAG_INTERACTIVE))
+        names[n++] = MF_VARLINK_TRANSACTION_FLAG_ALLOW_INTERACTIVE;
+
+    /* without flags, the field is left out, so older services understand the call */
+    if (n == 0)
+        return 0;
+    return sd_json_variant_set_field_strv(parameters, "flags", (char **) names);
 }
 
 static const gchar *
@@ -136,15 +259,14 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
                     MF_ERROR_VERIFICATION_FAILED,
                     "The bundle could not be verified: %s",
                     message);
-    } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_MISSING_DEPENDENCY) == 0) {
+    } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_MISSING_BASE) == 0) {
         g_set_error(error,
                     MF_ERROR,
-                    MF_ERROR_MISSING_DEPENDENCY,
-                    "Component %s needs the %s %s %s, which is not installed",
+                    MF_ERROR_MISSING_BASE,
+                    "Component %s needs base %s %s, which is not installed",
                     mf_parameter_string(parameters, "componentId", "?"),
-                    mf_parameter_string(parameters, "kind", "component"),
-                    mf_parameter_string(parameters, "dependencyId", "?"),
-                    mf_parameter_string(parameters, "dependencyVersion", "?"));
+                    mf_parameter_string(parameters, "baseId", "?"),
+                    mf_parameter_string(parameters, "baseVersion", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_ALREADY_INSTALLED) == 0) {
         g_set_error(error,
                     MF_ERROR,
@@ -155,7 +277,7 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_NO_SUCH_COMPONENT) == 0) {
         g_set_error(error,
                     MF_ERROR,
-                    MF_ERROR_NO_SUCH_COMPONENT,
+                    MF_ERROR_NOT_FOUND,
                     "Component %s is not installed",
                     mf_parameter_string(parameters, "componentId", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_COMPONENT_IN_USE) == 0) {
@@ -165,6 +287,14 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
                     "Component %s is used by the installed component %s",
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "usedBy", "?"));
+    } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_WRONG_ARCHITECTURE) == 0) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_WRONG_ARCHITECTURE,
+                    "Component %s is built for %s, but this system is %s",
+                    mf_parameter_string(parameters, "componentId", "?"),
+                    mf_parameter_string(parameters, "architecture", "?"),
+                    mf_parameter_string(parameters, "hostArchitecture", "?"));
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_PERMISSION_DENIED) == 0) {
         g_set_error_literal(error,
                             MF_ERROR,
@@ -393,27 +523,26 @@ static GSourceFuncs mf_call_source_funcs = {
 };
 
 /**
- * mf_client_call_async:
+ * mf_manager_call_async:
  * @fd: a file descriptor to pass along with the call, or -1
- * @more: whether the method reports progress in replies before the final one
  *
- * Connect to the service and call a method. The task completes with the
- * final reply, as an sd_json_variant.
+ * Connect to the service and call a method with the 'more' flag, as every
+ * method of the service reports its progress before the final reply. The
+ * task completes with the final reply, as an sd_json_variant.
  */
 static void
-mf_client_call_async(MfClient *client,
-                     const char *method,
-                     sd_json_variant *parameters,
-                     int fd,
-                     gboolean more,
-                     MfProgressFunc progress_func,
-                     gpointer progress_data,
-                     GCancellable *cancellable,
-                     GAsyncReadyCallback callback,
-                     gpointer user_data,
-                     gpointer source_tag)
+mf_manager_call_async(MfManager *manager,
+                      const char *method,
+                      sd_json_variant *parameters,
+                      int fd,
+                      MfProgressFunc progress_func,
+                      gpointer progress_data,
+                      GCancellable *cancellable,
+                      GAsyncReadyCallback callback,
+                      gpointer user_data,
+                      gpointer source_tag)
 {
-    g_autoptr(GTask) task = g_task_new(client, cancellable, callback, user_data);
+    g_autoptr(GTask) task = g_task_new(manager, cancellable, callback, user_data);
     MfCallSource *call_source;
 
     g_task_set_source_tag(task, source_tag);
@@ -423,13 +552,13 @@ mf_client_call_async(MfClient *client,
     call->progress_data = progress_data;
     g_task_set_task_data(task, call, (GDestroyNotify) mf_call_free);
 
-    int r = sd_varlink_connect_address(&call->link, GET_PRIVATE(client)->socket_path);
+    int r = sd_varlink_connect_address(&call->link, GET_PRIVATE(manager)->socket_path);
     if (r < 0) {
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_NO_SERVICE,
                                 "Unable to reach the Manifold service at %s: %s",
-                                GET_PRIVATE(client)->socket_path,
+                                GET_PRIVATE(manager)->socket_path,
                                 g_strerror(-r));
         return;
     }
@@ -472,8 +601,7 @@ mf_client_call_async(MfClient *client,
         }
     }
 
-    r = more ? sd_varlink_observe(call->link, method, parameters)
-             : sd_varlink_invoke(call->link, method, parameters);
+    r = sd_varlink_observe(call->link, method, parameters);
     if (r < 0) {
         g_task_return_new_error(task,
                                 MF_ERROR,
@@ -502,28 +630,28 @@ mf_client_call_async(MfClient *client,
 }
 
 /**
- * mf_client_call_finish:
+ * mf_manager_call_finish:
  *
  * Returns: (transfer full): the final reply of a call, or %NULL on failure
  */
 static sd_json_variant *
-mf_client_call_finish(MfClient *client, GAsyncResult *result, gpointer source_tag, GError **error)
+mf_manager_call_finish(MfManager *manager, GAsyncResult *result, gpointer source_tag, GError **error)
 {
-    g_return_val_if_fail(g_task_is_valid(result, client), NULL);
+    g_return_val_if_fail(g_task_is_valid(result, manager), NULL);
     g_return_val_if_fail(g_async_result_is_tagged(result, source_tag), NULL);
 
     return g_task_propagate_pointer(G_TASK(result), error);
 }
 
 /**
- * mf_client_result_finish:
+ * mf_manager_result_finish:
  *
  * Returns: (transfer full): what the operation did, or %NULL on error
  */
 static MfResult *
-mf_client_result_finish(MfClient *client, GAsyncResult *result, gpointer source_tag, GError **error)
+mf_manager_result_finish(MfManager *manager, GAsyncResult *result, gpointer source_tag, GError **error)
 {
-    sd_json_variant *reply = mf_client_call_finish(client, result, source_tag, error);
+    sd_json_variant *reply = mf_manager_call_finish(manager, result, source_tag, error);
     if (reply == NULL)
         return NULL;
 
@@ -543,19 +671,19 @@ mf_set_build_parameters_error(GError **error, int negative_errno)
 }
 
 /**
- * mf_client_return_error_async:
+ * mf_manager_return_error_async:
  *
  * Fail a call before it was made.
  */
 static void
-mf_client_return_error_async(MfClient *client,
-                             GCancellable *cancellable,
-                             GAsyncReadyCallback callback,
-                             gpointer user_data,
-                             gpointer source_tag,
-                             GError *error)
+mf_manager_return_error_async(MfManager *manager,
+                              GCancellable *cancellable,
+                              GAsyncReadyCallback callback,
+                              gpointer user_data,
+                              gpointer source_tag,
+                              GError *error)
 {
-    g_autoptr(GTask) task = g_task_new(client, cancellable, callback, user_data);
+    g_autoptr(GTask) task = g_task_new(manager, cancellable, callback, user_data);
 
     g_task_set_source_tag(task, source_tag);
     g_task_return_error(task, error);
@@ -618,8 +746,8 @@ mf_sync_call_end(MfSyncCall *sync)
 G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfSyncCall, mf_sync_call_end)
 
 /**
- * mf_client_install_file_async:
- * @client: an #MfClient
+ * mf_manager_install_file_async:
+ * @manager: an #MfManager
  * @fd: file descriptor of a bundle, opened for reading
  * @progress_func: (nullable) (scope notified): called whenever the service reports progress
  * @progress_data: passed to @progress_func
@@ -631,100 +759,105 @@ G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfSyncCall, mf_sync_call_end)
  * the file descriptor, so it installs exactly the file the caller opened.
  */
 void
-mf_client_install_file_async(MfClient *client,
-                             int fd,
-                             MfProgressFunc progress_func,
-                             gpointer progress_data,
-                             GCancellable *cancellable,
-                             GAsyncReadyCallback callback,
-                             gpointer user_data)
+mf_manager_install_file_async(MfManager *manager,
+                              int fd,
+                              MfProgressFunc progress_func,
+                              gpointer progress_data,
+                              GCancellable *cancellable,
+                              GAsyncReadyCallback callback,
+                              gpointer user_data)
 {
     sd_json_variant *parameters = NULL;
 
-    g_return_if_fail(MF_IS_CLIENT(client));
+    g_return_if_fail(MF_IS_MANAGER(manager));
     g_return_if_fail(fd >= 0);
 
     /* the descriptor is the first and only one passed along */
     int r = sd_json_buildo(&parameters, SD_JSON_BUILD_PAIR_INTEGER("bundleFileDescriptor", 0));
+    if (r >= 0)
+        r = mf_manager_add_transaction_flags(manager, &parameters);
     if (r < 0) {
         GError *error = NULL;
 
         mf_set_build_parameters_error(&error, r);
-        mf_client_return_error_async(client,
-                                     cancellable,
-                                     callback,
-                                     user_data,
-                                     mf_client_install_file_async,
-                                     error);
+        sd_json_variant_unref(parameters);
+        mf_manager_return_error_async(manager,
+                                      cancellable,
+                                      callback,
+                                      user_data,
+                                      mf_manager_install_file_async,
+                                      error);
         return;
     }
 
-    mf_client_call_async(client,
-                         MF_VARLINK_METHOD_INSTALL_FILE,
-                         parameters,
-                         fd,
-                         TRUE,
-                         progress_func,
-                         progress_data,
-                         cancellable,
-                         callback,
-                         user_data,
-                         mf_client_install_file_async);
+    mf_manager_call_async(manager,
+                          MF_VARLINK_METHOD_INSTALL_FILE,
+                          parameters,
+                          fd,
+                          progress_func,
+                          progress_data,
+                          cancellable,
+                          callback,
+                          user_data,
+                          mf_manager_install_file_async);
     sd_json_variant_unref(parameters);
 }
 
 /**
- * mf_client_install_fd_finish:
- * @client: an #MfClient
+ * mf_manager_install_file_finish:
+ * @manager: an #MfManager
  * @result: the result passed to the callback
  * @error: a #GError
  *
  * Returns: (transfer full): what was installed, or %NULL on failure
  */
 MfResult *
-mf_client_install_file_finish(MfClient *client, GAsyncResult *result, GError **error)
+mf_manager_install_file_finish(MfManager *manager, GAsyncResult *result, GError **error)
 {
-    return mf_client_result_finish(client, result, mf_client_install_file_async, error);
+    return mf_manager_result_finish(manager, result, mf_manager_install_file_async, error);
 }
 
 /**
- * mf_client_install_fd:
- * @client: an #MfClient
+ * mf_manager_install_file:
+ * @manager: an #MfManager
  * @fd: file descriptor of a bundle, opened for reading
  * @progress_func: (nullable) (scope call): called whenever the service reports progress
  * @progress_data: passed to @progress_func
  * @cancellable: (nullable): a #GCancellable
  * @error: a #GError
  *
- * Install the components of a bundle from a file descriptor. See mf_client_install_file_async().
+ * Install the components of a bundle from a file descriptor. See mf_manager_install_file_async().
  * This blocks until the installation is done, or failed.
  *
  * Returns: (transfer full): what was installed, or %NULL on failure
  */
 MfResult *
-mf_client_install_file(MfClient *client,
-                       int fd,
-                       MfProgressFunc progress_func,
-                       gpointer progress_data,
-                       GCancellable *cancellable,
-                       GError **error)
+mf_manager_install_file(MfManager *manager,
+                        int fd,
+                        MfProgressFunc progress_func,
+                        gpointer progress_data,
+                        GCancellable *cancellable,
+                        GError **error)
 {
     g_auto(MfSyncCall) sync = {};
 
+    g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
+    g_return_val_if_fail(fd >= 0, NULL);
+
     mf_sync_call_begin(&sync);
-    mf_client_install_file_async(client,
-                                 fd,
-                                 progress_func,
-                                 progress_data,
-                                 cancellable,
-                                 mf_on_sync_call_done,
-                                 &sync);
-    return mf_client_install_file_finish(client, mf_sync_call_wait(&sync), error);
+    mf_manager_install_file_async(manager,
+                                  fd,
+                                  progress_func,
+                                  progress_data,
+                                  cancellable,
+                                  mf_on_sync_call_done,
+                                  &sync);
+    return mf_manager_install_file_finish(manager, mf_sync_call_wait(&sync), error);
 }
 
 /**
- * mf_client_remove_component_async:
- * @client: an #MfClient
+ * mf_manager_remove_component_async:
+ * @manager: an #MfManager
  * @component_id: identifier of the component to remove
  * @version: (nullable): the version to remove, or %NULL for all versions
  * @progress_func: (nullable) (scope notified): called whenever the service reports progress
@@ -736,68 +869,70 @@ mf_client_install_file(MfClient *client,
  * Remove a component and clean up any cruft it leaves behind.
  */
 void
-mf_client_remove_component_async(MfClient *client,
-                                 const char *component_id,
-                                 const char *version,
-                                 MfProgressFunc progress_func,
-                                 gpointer progress_data,
-                                 GCancellable *cancellable,
-                                 GAsyncReadyCallback callback,
-                                 gpointer user_data)
+mf_manager_remove_component_async(MfManager *manager,
+                                  const char *component_id,
+                                  const char *version,
+                                  MfProgressFunc progress_func,
+                                  gpointer progress_data,
+                                  GCancellable *cancellable,
+                                  GAsyncReadyCallback callback,
+                                  gpointer user_data)
 {
     sd_json_variant *parameters = NULL;
 
-    g_return_if_fail(MF_IS_CLIENT(client));
+    g_return_if_fail(MF_IS_MANAGER(manager));
     g_return_if_fail(component_id != NULL);
 
     int r = sd_json_buildo(
         &parameters,
         SD_JSON_BUILD_PAIR_STRING("componentId", component_id),
         SD_JSON_BUILD_PAIR_CONDITION(version != NULL, "version", SD_JSON_BUILD_STRING(version)));
+    if (r >= 0)
+        r = mf_manager_add_transaction_flags(manager, &parameters);
     if (r < 0) {
         GError *error = NULL;
 
         mf_set_build_parameters_error(&error, r);
-        mf_client_return_error_async(client,
-                                     cancellable,
-                                     callback,
-                                     user_data,
-                                     mf_client_remove_component_async,
-                                     error);
+        sd_json_variant_unref(parameters);
+        mf_manager_return_error_async(manager,
+                                      cancellable,
+                                      callback,
+                                      user_data,
+                                      mf_manager_remove_component_async,
+                                      error);
         return;
     }
 
-    mf_client_call_async(client,
-                         MF_VARLINK_METHOD_REMOVE_COMPONENT,
-                         parameters,
-                         -1,
-                         TRUE,
-                         progress_func,
-                         progress_data,
-                         cancellable,
-                         callback,
-                         user_data,
-                         mf_client_remove_component_async);
+    mf_manager_call_async(manager,
+                          MF_VARLINK_METHOD_REMOVE_COMPONENT,
+                          parameters,
+                          -1,
+                          progress_func,
+                          progress_data,
+                          cancellable,
+                          callback,
+                          user_data,
+                          mf_manager_remove_component_async);
     sd_json_variant_unref(parameters);
 }
 
 /**
- * mf_client_remove_component_finish:
- * @client: an #MfClient
+ * mf_manager_remove_component_finish:
+ * @manager: an #MfManager
  * @result: the result passed to the callback
  * @error: a #GError
  *
  * Returns: (transfer full): what was removed, or %NULL on failure
  */
 MfResult *
-mf_client_remove_component_finish(MfClient *client, GAsyncResult *result, GError **error)
+mf_manager_remove_component_finish(MfManager *manager, GAsyncResult *result, GError **error)
 {
-    return mf_client_result_finish(client, result, mf_client_remove_component_async, error);
+    return mf_manager_result_finish(manager, result, mf_manager_remove_component_async, error);
 }
 
 /**
- * mf_client_remove_component:
- * @client: an #MfClient
+ * mf_manager_remove_component:
+ * @manager: an #MfManager
  * @component_id: identifier of the component to remove
  * @version: (nullable): the version to remove, or %NULL for all versions
  * @progress_func: (nullable) (scope call): called whenever the service reports progress
@@ -805,37 +940,40 @@ mf_client_remove_component_finish(MfClient *client, GAsyncResult *result, GError
  * @cancellable: (nullable): a #GCancellable
  * @error: a #GError
  *
- * Remove a component, see mf_client_remove_component_async(). This blocks
+ * Remove a component, see mf_manager_remove_component_async(). This blocks
  * until the removal is done, or failed.
  *
  * Returns: (transfer full): what was removed, or %NULL on failure
  */
 MfResult *
-mf_client_remove_component(MfClient *client,
-                           const char *component_id,
-                           const char *version,
-                           MfProgressFunc progress_func,
-                           gpointer progress_data,
-                           GCancellable *cancellable,
-                           GError **error)
+mf_manager_remove_component(MfManager *manager,
+                            const char *component_id,
+                            const char *version,
+                            MfProgressFunc progress_func,
+                            gpointer progress_data,
+                            GCancellable *cancellable,
+                            GError **error)
 {
     g_auto(MfSyncCall) sync = {};
 
+    g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
+    g_return_val_if_fail(component_id != NULL, NULL);
+
     mf_sync_call_begin(&sync);
-    mf_client_remove_component_async(client,
-                                     component_id,
-                                     version,
-                                     progress_func,
-                                     progress_data,
-                                     cancellable,
-                                     mf_on_sync_call_done,
-                                     &sync);
-    return mf_client_remove_component_finish(client, mf_sync_call_wait(&sync), error);
+    mf_manager_remove_component_async(manager,
+                                      component_id,
+                                      version,
+                                      progress_func,
+                                      progress_data,
+                                      cancellable,
+                                      mf_on_sync_call_done,
+                                      &sync);
+    return mf_manager_remove_component_finish(manager, mf_sync_call_wait(&sync), error);
 }
 
 /**
- * mf_client_cleanup_async:
- * @client: an #MfClient
+ * mf_manager_cleanup_async:
+ * @manager: an #MfManager
  * @progress_func: (nullable) (scope notified): called whenever the service reports progress
  * @progress_data: passed to @progress_func
  * @cancellable: (nullable): a #GCancellable
@@ -846,170 +984,84 @@ mf_client_remove_component(MfClient *client,
  * unused component versions, and any cruft from interrupted installations or updates.
  */
 void
-mf_client_cleanup_async(MfClient *client,
-                        MfProgressFunc progress_func,
-                        gpointer progress_data,
-                        GCancellable *cancellable,
-                        GAsyncReadyCallback callback,
-                        gpointer user_data)
+mf_manager_cleanup_async(MfManager *manager,
+                         MfProgressFunc progress_func,
+                         gpointer progress_data,
+                         GCancellable *cancellable,
+                         GAsyncReadyCallback callback,
+                         gpointer user_data)
 {
-    g_return_if_fail(MF_IS_CLIENT(client));
+    sd_json_variant *parameters = NULL;
 
-    mf_client_call_async(client,
-                         MF_VARLINK_METHOD_CLEANUP,
-                         NULL,
-                         -1,
-                         TRUE,
-                         progress_func,
-                         progress_data,
-                         cancellable,
-                         callback,
-                         user_data,
-                         mf_client_cleanup_async);
+    g_return_if_fail(MF_IS_MANAGER(manager));
+
+    int r = mf_manager_add_transaction_flags(manager, &parameters);
+    if (r < 0) {
+        GError *error = NULL;
+
+        mf_set_build_parameters_error(&error, r);
+        sd_json_variant_unref(parameters);
+        mf_manager_return_error_async(manager,
+                                      cancellable,
+                                      callback,
+                                      user_data,
+                                      mf_manager_cleanup_async,
+                                      error);
+        return;
+    }
+
+    mf_manager_call_async(manager,
+                          MF_VARLINK_METHOD_CLEANUP,
+                          parameters,
+                          -1,
+                          progress_func,
+                          progress_data,
+                          cancellable,
+                          callback,
+                          user_data,
+                          mf_manager_cleanup_async);
+    sd_json_variant_unref(parameters);
 }
 
 /**
- * mf_client_cleanup_finish:
- * @client: an #MfClient
+ * mf_manager_cleanup_finish:
+ * @manager: an #MfManager
  * @result: the result passed to the callback
  * @error: a #GError
  *
  * Returns: (transfer full): what was removed, or %NULL on failure
  */
 MfResult *
-mf_client_cleanup_finish(MfClient *client, GAsyncResult *result, GError **error)
+mf_manager_cleanup_finish(MfManager *manager, GAsyncResult *result, GError **error)
 {
-    return mf_client_result_finish(client, result, mf_client_cleanup_async, error);
+    return mf_manager_result_finish(manager, result, mf_manager_cleanup_async, error);
 }
 
 /**
- * mf_client_cleanup:
- * @client: an #MfClient
+ * mf_manager_cleanup:
+ * @manager: an #MfManager
  * @progress_func: (nullable) (scope call): called whenever the service reports progress
  * @progress_data: passed to @progress_func
  * @cancellable: (nullable): a #GCancellable
  * @error: a #GError
  *
- * Remove obsolete data, see mf_client_cleanup_async().
+ * Remove obsolete data, see mf_manager_cleanup_async().
  * This blocks until the cleanup is done, or failed.
  *
  * Returns: (transfer full): what was removed, or %NULL on failure
  */
 MfResult *
-mf_client_cleanup(MfClient *client,
-                  MfProgressFunc progress_func,
-                  gpointer progress_data,
-                  GCancellable *cancellable,
-                  GError **error)
+mf_manager_cleanup(MfManager *manager,
+                   MfProgressFunc progress_func,
+                   gpointer progress_data,
+                   GCancellable *cancellable,
+                   GError **error)
 {
     g_auto(MfSyncCall) sync = {};
 
-    mf_sync_call_begin(&sync);
-    mf_client_cleanup_async(client, progress_func, progress_data, cancellable, mf_on_sync_call_done, &sync);
-    return mf_client_cleanup_finish(client, mf_sync_call_wait(&sync), error);
-}
-
-/**
- * mf_client_list_components_async:
- * @client: an #MfClient
- * @component_id: (nullable): only list the versions of this component
- * @kind: only list components of this kind, or %MF_COMPONENT_KIND_UNKNOWN for all
- * @cancellable: (nullable): a #GCancellable
- * @callback: called when the list arrived, or the call failed
- * @user_data: passed to @callback
- *
- * List installed components (apps/kits/platforms/cores) and their versions
- * and revisions. Can be filtered by kind.
- */
-void
-mf_client_list_components_async(MfClient *client,
-                                const char *component_id,
-                                MfComponentKind kind,
-                                GCancellable *cancellable,
-                                GAsyncReadyCallback callback,
-                                gpointer user_data)
-{
-    sd_json_variant *parameters = NULL;
-
-    g_return_if_fail(MF_IS_CLIENT(client));
-
-    int r = sd_json_buildo(
-        &parameters,
-        SD_JSON_BUILD_PAIR_CONDITION(component_id != NULL, "componentId", SD_JSON_BUILD_STRING(component_id)),
-        SD_JSON_BUILD_PAIR_CONDITION(kind != MF_COMPONENT_KIND_UNKNOWN,
-                                     "kind",
-                                     SD_JSON_BUILD_STRING(mf_component_kind_to_string(kind))));
-    if (r < 0) {
-        GError *error = NULL;
-
-        mf_set_build_parameters_error(&error, r);
-        mf_client_return_error_async(client,
-                                     cancellable,
-                                     callback,
-                                     user_data,
-                                     mf_client_list_components_async,
-                                     error);
-        return;
-    }
-
-    mf_client_call_async(client,
-                         MF_VARLINK_METHOD_LIST_COMPONENTS,
-                         parameters,
-                         -1,
-                         FALSE,
-                         NULL,
-                         NULL,
-                         cancellable,
-                         callback,
-                         user_data,
-                         mf_client_list_components_async);
-    sd_json_variant_unref(parameters);
-}
-
-/**
- * mf_client_list_components_finish:
- * @client: an #MfClient
- * @result: the result passed to the callback
- * @error: a #GError
- *
- * Returns: (transfer full) (element-type MfComponent): the components, or %NULL on error
- */
-GPtrArray *
-mf_client_list_components_finish(MfClient *client, GAsyncResult *result, GError **error)
-{
-    sd_json_variant *reply = mf_client_call_finish(client, result, mf_client_list_components_async, error);
-    GPtrArray *components;
-
-    if (reply == NULL)
-        return NULL;
-    components = mf_component_array_from_reply(sd_json_variant_by_key(reply, "components"), error);
-    sd_json_variant_unref(reply);
-    return components;
-}
-
-/**
- * mf_client_list_components:
- * @client: an #MfClient
- * @component_id: (nullable): only list the versions of this component
- * @kind: only list components of this kind, or %MF_COMPONENT_KIND_UNKNOWN for all
- * @cancellable: (nullable): a #GCancellable
- * @error: a #GError
- *
- * List what is installed, see mf_client_list_components_async(). This
- * blocks until the list arrived.
- *
- * Returns: (transfer full) (element-type MfComponent): the components, or %NULL on error
- */
-GPtrArray *
-mf_client_list_components(MfClient *client,
-                          const char *component_id,
-                          MfComponentKind kind,
-                          GCancellable *cancellable,
-                          GError **error)
-{
-    g_auto(MfSyncCall) sync = {};
+    g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
 
     mf_sync_call_begin(&sync);
-    mf_client_list_components_async(client, component_id, kind, cancellable, mf_on_sync_call_done, &sync);
-    return mf_client_list_components_finish(client, mf_sync_call_wait(&sync), error);
+    mf_manager_cleanup_async(manager, progress_func, progress_data, cancellable, mf_on_sync_call_done, &sync);
+    return mf_manager_cleanup_finish(manager, mf_sync_call_wait(&sync), error);
 }

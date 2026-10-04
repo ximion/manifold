@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# Loop devices that Manifold attaches images to.
+#
+# The images are mounted in a mount namespace of manifold-rund only, but the
+# block devices are visible to the whole system. They are not disks the user
+# should see or be offered to mount: below dm-verity, the data is unverified.
+# Hide them from UDisks and from systemd.
+
+ACTION=="remove", GOTO="manifold_end"
+SUBSYSTEM!="block", GOTO="manifold_end"
+KERNEL!="loop[0-9]*", GOTO="manifold_end"
+
+ATTR{loop/backing_file}=="@MF_STORAGE_DIR@/images/*", ENV{UDISKS_IGNORE}="1", ENV{SYSTEMD_READY}="0"
+
+LABEL="manifold_end"

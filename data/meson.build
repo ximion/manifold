@@ -28,3 +28,17 @@ endforeach
 install_data('org.freedesktop.manifold.policy',
     install_dir: get_option('datadir') / 'polkit-1' / 'actions',
 )
+
+#
+# udev rules
+#
+udev_conf = configuration_data()
+udev_conf.set('MF_STORAGE_DIR', mf_storage_dir)
+
+configure_file(
+    input: '60-manifold.rules.in',
+    output: '60-manifold.rules',
+    configuration: udev_conf,
+    install: true,
+    install_dir: udev_rules_dir,
+)

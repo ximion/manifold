@@ -35,11 +35,6 @@ typedef enum {
 const char                    *mf_action_to_string(MfAction action);
 MfAction                       mf_action_from_string(const char *action_str);
 
-/**
- * MfItemProgress:
- *
- * How far one item of an operation is.
- */
 typedef struct _MfItemProgress MfItemProgress;
 
 #define MF_TYPE_ITEM_PROGRESS (mf_item_progress_get_type())
@@ -57,12 +52,13 @@ double                     mf_item_progress_get_percent(const MfItemProgress *it
 guint64                    mf_item_progress_get_bytes_done(const MfItemProgress *item);
 guint64                    mf_item_progress_get_bytes_total(const MfItemProgress *item);
 
+void                       mf_item_progress_set_percent(MfItemProgress *item,
+                                                        double          percent);
+void                       mf_item_progress_set_bytes_done(MfItemProgress *item,
+                                                           guint64         bytes_done);
+void                       mf_item_progress_set_bytes_total(MfItemProgress *item,
+                                                            guint64         bytes_total);
 
-/**
- * MfProgress:
- *
- * How far an operation of the Manifold service is.
- */
 typedef struct _MfProgress MfProgress;
 
 #define MF_TYPE_PROGRESS (mf_progress_get_type())
@@ -73,8 +69,14 @@ void        mf_progress_free(MfProgress *progress);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(MfProgress,
                               mf_progress_free)
 
+MfProgress           *mf_progress_new(void);
 double                mf_progress_get_percent(const MfProgress *progress);
 const MfItemProgress *mf_progress_get_item(const MfProgress *progress);
+
+void                  mf_progress_set_percent(MfProgress *progress,
+                                              double      percent);
+void                  mf_progress_take_item(MfProgress     *progress,
+                                            MfItemProgress *item);
 
 /**
  * MfProgressFunc:

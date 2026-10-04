@@ -9,8 +9,11 @@
 #include <glib.h>
 #include <systemd/sd-event.h>
 #include <systemd/sd-json.h>
+#include <systemd/sd-varlink.h>
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_event,
                               sd_event_unref)
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_json_variant,
                               sd_json_variant_unref)
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(sd_varlink_server,
+                              sd_varlink_server_unref)

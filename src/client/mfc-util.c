@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "mf-utils-private.h"
+
 #define BIN_NAME "manifold"
 
 void
@@ -92,15 +94,10 @@ mfc_print_components(GPtrArray *components, gboolean with_header)
 
     /* the columns are as wide as what they contain */
     for (guint i = 0; i < components->len; i++) {
-        const MfComponent *component = g_ptr_array_index(components, i);
-        char *version;
+        MfComponent *component = g_ptr_array_index(components, i);
+        char *version = mf_build_full_version(mf_component_get_version(component),
+                                              mf_component_get_revision(component));
 
-        if (mf_component_is_dependency(component))
-            version = g_strdup(mf_component_get_version(component));
-        else
-            version = g_strdup_printf("%s-%" G_GUINT64_FORMAT,
-                                      mf_component_get_version(component),
-                                      mf_component_get_revision(component));
         g_ptr_array_add(versions, version);
 
         id_width = MAX(id_width, strlen(mf_component_get_id(component)));
@@ -117,14 +114,14 @@ mfc_print_components(GPtrArray *components, gboolean with_header)
                 "FLAGS");
 
     for (guint i = 0; i < components->len; i++) {
-        const MfComponent *component = g_ptr_array_index(components, i);
+        MfComponent *component = g_ptr_array_index(components, i);
         g_autoptr(GString) flags = g_string_new(NULL);
 
         if (mf_component_is_sdk(component))
             g_string_append(flags, "sdk ");
         if (mf_component_is_current(component))
             g_string_append(flags, "current ");
-        if (mf_component_is_dependency(component))
+        if (mf_component_get_install_mode(component) == MF_INSTALL_MODE_AUTO)
             g_string_append(flags, "dependency ");
         if (flags->len > 0)
             g_string_truncate(flags, flags->len - 1);

@@ -20,14 +20,19 @@
 static gboolean optn_show_version = FALSE;
 static gboolean optn_verbose = FALSE;
 static char *optn_socket_path = NULL;
+static gboolean optn_no_ask_password = FALSE;
 
 static const GOptionEntry mfc_global_options[] = {
-    {"version", 0, 0, G_OPTION_ARG_NONE, &optn_show_version, "Show the program version.",         NULL  },
-    {"verbose", 0, 0, G_OPTION_ARG_NONE, &optn_verbose,      "Show extra debugging information.", NULL  },
+    {"version",         0, 0, G_OPTION_ARG_NONE, &optn_show_version,    "Show the program version.",         NULL  },
+    {"verbose",         0, 0, G_OPTION_ARG_NONE, &optn_verbose,         "Show extra debugging information.", NULL  },
     {"socket",
-     0,            0,
-     G_OPTION_ARG_FILENAME,              &optn_socket_path,
-     "Reach the Manifold service at this socket.",                                                "PATH"},
+     0,                    0,
+     G_OPTION_ARG_FILENAME,                      &optn_socket_path,
+     "Reach the Manifold service at this socket.",                                                           "PATH"},
+    {"no-ask-password",
+     0,                    0,
+     G_OPTION_ARG_NONE,                          &optn_no_ask_password,
+     "Do not ask for a password to authorize an operation.",                                                 NULL  },
     G_OPTION_ENTRY_NULL,
 };
 
@@ -119,6 +124,7 @@ main(int argc, char **argv)
 
     ctx->verbose = optn_verbose;
     ctx->socket_path = g_strdup(optn_socket_path);
+    ctx->ask_password = !optn_no_ask_password;
     if (ctx->verbose)
         g_log_set_debug_enabled(TRUE);
 

@@ -4,19 +4,6 @@
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
 
-/*
- * manifold-run - user-facing runner, asks the compose service for the mount
- * tree of a component, and launches the component in it.
- *
- * This tool is unprivileged and runs as the invoking user. It moves its own
- * process into the mount tree and executes the application in place.
- *
- * Changing the mount namespace of a process needs CAP_SYS_ADMIN. If we
- * already have that (e.g. if we were executed by a systemd service), we just
- * move into the tree directly, and keep everything we started with. If we
- * don't have capabilities, we create a user namespace first.
- */
-
 #define _GNU_SOURCE
 
 #include "config.h"
@@ -37,28 +24,40 @@
 #include <systemd/sd-json.h>
 #include <systemd/sd-varlink.h>
 
+#include "mfr-run-interface.h"
+
+/*
+ * manifold-run is the runner that users call. It asks the compose service
+ * for the mount tree of a component, and launches the component in it.
+ *
+ * This tool is unprivileged and runs as the invoking user. It moves its own
+ * process into the mount tree and executes the application in place.
+ *
+ * Changing the mount namespace of a process needs CAP_SYS_ADMIN. If we
+ * already have that (e.g. if we were executed by a systemd service), we just
+ * move into the tree directly, and keep everything we started with. If we
+ * don't have capabilities, we create a user namespace first.
+ */
+
 #define PROGRAM_NAME "manifold-run"
-
-#define RUN_METHOD_PREPARE_LAUNCH MF_RUN_INTERFACE ".PrepareLaunch"
-
-#define RUN_ERROR_NO_SUCH_COMPONENT  MF_RUN_INTERFACE ".NoSuchComponent"
-#define RUN_ERROR_COMPONENT_REVOKED  MF_RUN_INTERFACE ".ComponentRevoked"
-#define RUN_ERROR_COMPOSITION_FAILED MF_RUN_INTERFACE ".CompositionFailed"
 
 typedef struct {
     int mount_fd;
     char *executable;   /* absolute path within the tree */
     char **environment; /* NAME=VALUE, an empty value means unset */
-} LaunchData;
+} MfxLaunchData;
 
 typedef struct {
     unsigned int mount_fd_index;
     char *executable;
     char **environment;
-} PrepareLaunchReply;
+} MfxPrepareLaunchReply;
 
+/**
+ * mfx_print_usage:
+ */
 static void
-print_usage(FILE *stream)
+mfx_print_usage(FILE *stream)
 {
     fprintf(stream,
             "Usage: %s [OPTIONS] <component-id> [args...]\n"
@@ -74,8 +73,11 @@ print_usage(FILE *stream)
             MF_RUN_SOCKET_PATH);
 }
 
+/**
+ * mfx_print_connection_error:
+ */
 static void
-print_connection_error(const char *socket_path, int negative_errno)
+mfx_print_connection_error(const char *socket_path, int negative_errno)
 {
     fprintf(stderr,
             "%s: Unable to reach the Manifold compose service at %s: %s\n",
@@ -84,14 +86,17 @@ print_connection_error(const char *socket_path, int negative_errno)
             strerror(-negative_errno));
 }
 
+/**
+ * mfx_print_service_error:
+ */
 static void
-print_service_error(const char *component_id, const char *error_id, sd_json_variant *parameters)
+mfx_print_service_error(const char *component_id, const char *error_id, sd_json_variant *parameters)
 {
-    if (strcmp(error_id, RUN_ERROR_NO_SUCH_COMPONENT) == 0) {
+    if (strcmp(error_id, MF_RUN_ERROR_NO_SUCH_COMPONENT_ID) == 0) {
         fprintf(stderr, "%s: Component %s is not installed\n", PROGRAM_NAME, component_id);
-    } else if (strcmp(error_id, RUN_ERROR_COMPONENT_REVOKED) == 0) {
+    } else if (strcmp(error_id, MF_RUN_ERROR_COMPONENT_REVOKED_ID) == 0) {
         fprintf(stderr, "%s: Component %s was revoked and can not be launched\n", PROGRAM_NAME, component_id);
-    } else if (strcmp(error_id, RUN_ERROR_COMPOSITION_FAILED) == 0) {
+    } else if (strcmp(error_id, MF_RUN_ERROR_COMPOSITION_FAILED_ID) == 0) {
         sd_json_variant *message = sd_json_variant_by_key(parameters, "message");
 
         fprintf(stderr,
@@ -113,31 +118,31 @@ print_service_error(const char *component_id, const char *error_id, sd_json_vari
 }
 
 /**
- * prepare_launch:
+ * mfx_prepare_launch:
  *
  * Ask the compose service for everything we need to launch a component.
  *
  * Returns: 0 on success, or a negative value once we printed why we failed
  */
 static int
-prepare_launch(const char *socket_path, const char *component_id, LaunchData *launch_data)
+mfx_prepare_launch(const char *socket_path, const char *component_id, MfxLaunchData *launch_data)
 {
     static const sd_json_dispatch_field dispatch_table[] = {
         {"mountFileDescriptor",
          _SD_JSON_VARIANT_TYPE_INVALID, sd_json_dispatch_uint,
-         offsetof(PrepareLaunchReply, mount_fd_index),
+         offsetof(MfxPrepareLaunchReply, mount_fd_index),
          SD_JSON_MANDATORY},
         {"executable",
          SD_JSON_VARIANT_STRING, sd_json_dispatch_string,
-         offsetof(PrepareLaunchReply, executable),
+         offsetof(MfxPrepareLaunchReply, executable),
          SD_JSON_MANDATORY},
         {"environment",
          SD_JSON_VARIANT_ARRAY, sd_json_dispatch_strv,
-         offsetof(PrepareLaunchReply, environment),
+         offsetof(MfxPrepareLaunchReply, environment),
          0},
         {},
     };
-    PrepareLaunchReply reply = {};
+    MfxPrepareLaunchReply reply = {};
     sd_varlink *link = nullptr;
     sd_json_variant *parameters = nullptr;
     const char *error_id = nullptr;
@@ -146,7 +151,7 @@ prepare_launch(const char *socket_path, const char *component_id, LaunchData *la
 
     r = sd_varlink_connect_address(&link, socket_path);
     if (r < 0) {
-        print_connection_error(socket_path, r);
+        mfx_print_connection_error(socket_path, r);
         goto out;
     }
 
@@ -157,16 +162,16 @@ prepare_launch(const char *socket_path, const char *component_id, LaunchData *la
     }
 
     r = sd_varlink_callbo(link,
-                          RUN_METHOD_PREPARE_LAUNCH,
+                          MF_RUN_METHOD_PREPARE_LAUNCH,
                           &parameters,
                           &error_id,
                           SD_JSON_BUILD_PAIR_STRING("componentId", component_id));
     if (r < 0) {
-        print_connection_error(socket_path, r);
+        mfx_print_connection_error(socket_path, r);
         goto out;
     }
     if (error_id != nullptr) {
-        print_service_error(component_id, error_id, parameters);
+        mfx_print_service_error(component_id, error_id, parameters);
         r = -EIO;
         goto out;
     }
@@ -220,12 +225,12 @@ out:
 }
 
 /**
- * have_cap_sys_admin:
+ * mfx_have_cap_sys_admin:
  *
  * Check if our current process has CAP_SYS_ADMIn
  */
 static bool
-have_cap_sys_admin(void)
+mfx_have_cap_sys_admin(void)
 {
     struct __user_cap_header_struct header = {.version = _LINUX_CAPABILITY_VERSION_3};
     struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3] = {};
@@ -236,8 +241,13 @@ have_cap_sys_admin(void)
     return (data[CAP_TO_INDEX(CAP_SYS_ADMIN)].effective & CAP_TO_MASK(CAP_SYS_ADMIN)) != 0;
 }
 
+/**
+ * mfx_write_proc_file:
+ *
+ * Write a string to a file in /proc/self
+ */
 static int
-write_proc_file(const char *path, const char *content)
+mfx_write_proc_file(const char *path, const char *content)
 {
     int fd;
     ssize_t written;
@@ -258,41 +268,41 @@ write_proc_file(const char *path, const char *content)
 }
 
 /**
- * map_self:
+ * mfx_map_self:
  *
- * In the new user namespace, our uid and gid are what they are outside of
- * it, and nothing else exists.
+ * Map our uid and gid to themselves in the new user namespace; no other
+ * IDs are mapped.
  */
 static int
-map_self(uid_t uid, gid_t gid)
+mfx_map_self(uid_t uid, gid_t gid)
 {
     char mapping[64];
     int r;
 
-    r = write_proc_file("/proc/self/setgroups", "deny");
+    r = mfx_write_proc_file("/proc/self/setgroups", "deny");
     if (r < 0)
         return r;
     snprintf(mapping, sizeof(mapping), "%u %u 1", (unsigned int) uid, (unsigned int) uid);
-    r = write_proc_file("/proc/self/uid_map", mapping);
+    r = mfx_write_proc_file("/proc/self/uid_map", mapping);
     if (r < 0)
         return r;
     snprintf(mapping, sizeof(mapping), "%u %u 1", (unsigned int) gid, (unsigned int) gid);
-    return write_proc_file("/proc/self/gid_map", mapping);
+    return mfx_write_proc_file("/proc/self/gid_map", mapping);
 }
 
 /**
- * enter_tree:
+ * mfx_enter_tree:
  *
- * Make the mount tree the root of a new mount namespace of ours. With a
- * user namespace, the capability to do so is ours only in there.
+ * Make the mount tree the root of a new mount namespace of ours. In a user
+ * namespace, we have the capability to do so only inside it.
  *
  * Returns: 0 on success, a negative value on failure, with a message printed.
  */
 static int
-enter_tree(int mount_fd, bool user_namespace)
+mfx_enter_tree(int mount_fd, bool user_namespace)
 {
     int flags = CLONE_NEWNS | (user_namespace ? CLONE_NEWUSER : 0);
-    /* who we are, as seen from outside of the new namespace, where we are nobody until mapped */
+    /* our IDs outside of the new namespace; inside it, we are nobody until we map them */
     uid_t uid = getuid();
     gid_t gid = getgid();
     int r;
@@ -311,7 +321,7 @@ enter_tree(int mount_fd, bool user_namespace)
     }
 
     if (user_namespace) {
-        r = map_self(uid, gid);
+        r = mfx_map_self(uid, gid);
         if (r < 0) {
             fprintf(stderr,
                     "%s: Unable to map our user into the user namespace: %s\n",
@@ -353,13 +363,13 @@ enter_tree(int mount_fd, bool user_namespace)
 }
 
 /**
- * change_directory:
+ * mfx_change_directory:
  *
  * Stay where the caller was, if that exists in the tree; otherwise go to
  * the caller's home, or to the root of the tree.
  */
 static void
-change_directory(const char *cwd)
+mfx_change_directory(const char *cwd)
 {
     if (cwd != nullptr && chdir(cwd) == 0)
         return;
@@ -371,8 +381,13 @@ change_directory(const char *cwd)
         fprintf(stderr, "%s: Unable to change to the root of the tree: %s\n", PROGRAM_NAME, strerror(errno));
 }
 
+/**
+ * mfx_apply_environment:
+ *
+ * Apply the environment variables from the caller.
+ */
 static void
-apply_environment(char **environment)
+mfx_apply_environment(char **environment)
 {
     if (environment == nullptr)
         return;
@@ -390,13 +405,13 @@ apply_environment(char **environment)
 }
 
 /**
- * execute_command:
+ * mfx_execute_command:
  *
  * Execute a program the caller named, which is in the tree: by its path, or
  * by its name. We look in /app/bin first, and then in the caller's PATH.
  */
 static void
-execute_command(const char *command, char **args)
+mfx_execute_command(const char *command, char **args)
 {
     const char *path_env = getenv("PATH");
     char *search = nullptr;
@@ -434,6 +449,9 @@ execute_command(const char *command, char **args)
     free(search);
 }
 
+/**
+ * main:
+ */
 int
 main(int argc, char **argv)
 {
@@ -446,9 +464,8 @@ main(int argc, char **argv)
     };
     const char *socket_path = MF_RUN_SOCKET_PATH;
     const char *command = nullptr;
-    const char *component_id;
     char cwd[PATH_MAX];
-    LaunchData launch_data = {.mount_fd = -1};
+    MfxLaunchData launch_data = {.mount_fd = -1};
     int opt;
 
     /* the leading "+" stops parsing at the first non-option argument */
@@ -461,38 +478,38 @@ main(int argc, char **argv)
             command = optarg;
             break;
         case 'h':
-            print_usage(stdout);
+            mfx_print_usage(stdout);
             return EXIT_SUCCESS;
         case 'v':
             printf(PROGRAM_NAME " " MF_VERSION "\n");
             return EXIT_SUCCESS;
         default:
-            print_usage(stderr);
+            mfx_print_usage(stderr);
             return EXIT_FAILURE;
         }
     }
 
     if (argc - optind < 1) {
-        print_usage(stderr);
+        mfx_print_usage(stderr);
         return EXIT_FAILURE;
     }
 
     /* everything after the component identifier is an argument of the application */
-    component_id = argv[optind];
+    const char *component_id = argv[optind];
 
-    if (prepare_launch(socket_path, component_id, &launch_data) < 0)
+    if (mfx_prepare_launch(socket_path, component_id, &launch_data) < 0)
         return EXIT_FAILURE;
 
     if (getcwd(cwd, sizeof(cwd)) == nullptr)
         cwd[0] = '\0';
-    if (enter_tree(launch_data.mount_fd, !have_cap_sys_admin()) < 0)
+    if (mfx_enter_tree(launch_data.mount_fd, !mfx_have_cap_sys_admin()) < 0)
         return EXIT_FAILURE;
     close(launch_data.mount_fd);
 
-    change_directory(cwd[0] != '\0' ? cwd : nullptr);
-    apply_environment(launch_data.environment);
+    mfx_change_directory(cwd[0] != '\0' ? cwd : nullptr);
+    mfx_apply_environment(launch_data.environment);
 
     /* argv[optind] is replaced by the program, what follows are its arguments */
-    execute_command(command != nullptr ? command : launch_data.executable, &argv[optind]);
+    mfx_execute_command(command != nullptr ? command : launch_data.executable, &argv[optind]);
     return EXIT_FAILURE;
 }

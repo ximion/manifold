@@ -9,6 +9,8 @@
 
 #include <unistd.h>
 
+#include "mf-macros-private.h"
+
 MfcContext *
 mfc_context_new(void)
 {
@@ -27,7 +29,7 @@ mfc_context_free(MfcContext *ctx)
     if (ctx == NULL)
         return;
 
-    g_clear_object(&ctx->client);
+    g_clear_object(&ctx->manager);
     mfc_progress_bar_free(ctx->progress_bar);
     g_ptr_array_unref(ctx->commands);
     g_free(ctx->socket_path);
@@ -74,18 +76,24 @@ mfc_context_find_command(MfcContext *ctx, const char *name)
 }
 
 /**
- * mfc_context_get_client:
+ * mfc_context_get_manager:
  *
- * Returns: (transfer none): the client of the service, created on first use
+ * Returns: (transfer none): the manager of the service, created on first use
  */
-MfClient *
-mfc_context_get_client(MfcContext *ctx)
+MfManager *
+mfc_context_get_manager(MfcContext *ctx)
 {
-    if (ctx->client == NULL) {
-        ctx->client = mf_client_new();
+    if (ctx->manager == NULL) {
+        ctx->manager = mf_manager_new();
         if (ctx->socket_path != NULL)
-            mf_client_set_socket_path(ctx->client, ctx->socket_path);
+            mf_manager_set_socket_path(ctx->manager, ctx->socket_path);
+        if (!ctx->ask_password) {
+            MfTransactionFlags flags = mf_manager_get_transaction_flags(ctx->manager);
+
+            mf_flags_remove(flags, MF_TRANSACTION_FLAG_INTERACTIVE);
+            mf_manager_set_transaction_flags(ctx->manager, flags);
+        }
     }
 
-    return ctx->client;
+    return ctx->manager;
 }

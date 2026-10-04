@@ -105,7 +105,7 @@ mfc_install_bundle(MfcContext *ctx, const char *fname)
     }
 
     basename = g_path_get_basename(fname);
-    result = mf_client_install_file(mfc_context_get_client(ctx), fd, mfc_on_progress, ctx, NULL, &error);
+    result = mf_manager_install_file(mfc_context_get_manager(ctx), fd, mfc_on_progress, ctx, NULL, &error);
     mfc_progress_bar_finish(ctx->progress_bar);
     close(fd);
     if (result == NULL) {
@@ -160,17 +160,18 @@ mfc_run_install_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
 static int
 mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version)
 {
+    g_autoptr(MfStore) store = mf_store_new();
     g_autoptr(GPtrArray) versions = NULL;
     g_autoptr(GError) error = NULL;
     guint choice;
 
     *ret_version = NULL;
 
-    versions = mf_client_list_components(mfc_context_get_client(ctx),
-                                         component_id,
-                                         MF_COMPONENT_KIND_UNKNOWN,
-                                         NULL,
-                                         &error);
+    if (!mf_component_id_is_valid(component_id)) {
+        g_printerr("'%s' is not a valid component identifier.\n", component_id);
+        return MFC_EXIT_INVALID_CMD;
+    }
+    versions = mf_store_list_components(store, component_id, MF_COMPONENT_KIND_UNKNOWN, &error);
     if (versions == NULL) {
         g_printerr("Unable to look up %s: %s\n", component_id, error->message);
         return MFC_EXIT_FAILURE;
@@ -186,7 +187,7 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
 
     g_print("Several versions of %s are installed:\n", component_id);
     for (guint i = 0; i < versions->len; i++) {
-        const MfComponent *component = g_ptr_array_index(versions, i);
+        MfComponent *component = g_ptr_array_index(versions, i);
 
         g_print("  [%u] %s%s\n",
                 i + 1,
@@ -201,7 +202,7 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
         return MFC_EXIT_FAILURE;
     }
     if (choice <= versions->len) {
-        const MfComponent *component = g_ptr_array_index(versions, choice - 1);
+        MfComponent *component = g_ptr_array_index(versions, choice - 1);
 
         *ret_version = g_strdup(mf_component_get_version(component));
     }
@@ -248,13 +249,13 @@ mfc_run_remove_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         version = chosen_version;
     }
 
-    result = mf_client_remove_component(mfc_context_get_client(ctx),
-                                        component_id,
-                                        version,
-                                        mfc_on_progress,
-                                        ctx,
-                                        NULL,
-                                        &error);
+    result = mf_manager_remove_component(mfc_context_get_manager(ctx),
+                                         component_id,
+                                         version,
+                                         mfc_on_progress,
+                                         ctx,
+                                         NULL,
+                                         &error);
     mfc_progress_bar_finish(ctx->progress_bar);
     if (result == NULL) {
         g_printerr("Unable to remove %s: %s\n", component_id, error->message);
@@ -290,7 +291,7 @@ mfc_run_cleanup_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         return MFC_EXIT_INVALID_CMD;
     }
 
-    result = mf_client_cleanup(mfc_context_get_client(ctx), mfc_on_progress, ctx, NULL, &error);
+    result = mf_manager_cleanup(mfc_context_get_manager(ctx), mfc_on_progress, ctx, NULL, &error);
     mfc_progress_bar_finish(ctx->progress_bar);
     if (result == NULL) {
         g_printerr("Unable to clean up: %s\n", error->message);

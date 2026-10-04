@@ -25,13 +25,14 @@ typedef struct MfcCommand MfcCommand;
  * MfcContext:
  */
 typedef struct {
-    MfClient       *client;
+    MfManager      *manager;
     MfcProgressBar *progress_bar;
     GPtrArray      *commands; /* of MfcCommand */
 
     /* global options */
     char           *socket_path;
     gboolean        verbose;
+    gboolean        ask_password;
 
     gboolean        is_tty;
 } MfcContext;
@@ -75,6 +76,6 @@ void        mfc_context_register_command(MfcContext    *ctx,
 MfcCommand *mfc_context_find_command(MfcContext *ctx,
                                      const char *name);
 
-MfClient   *mfc_context_get_client(MfcContext *ctx);
+MfManager  *mfc_context_get_manager(MfcContext *ctx);
 
 G_END_DECLS

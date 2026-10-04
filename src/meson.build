@@ -1,5 +1,5 @@
-shared_inc_dir = include_directories('shared')
 
+subdir('shared')
 subdir('libmanifold')
 subdir('daemon')
 subdir('rund')

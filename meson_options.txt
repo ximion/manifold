@@ -1,3 +1,11 @@
+#
+# Features
+#
+option('gir',
+       type : 'feature',
+       value : 'auto',
+       description : 'Generate GObject introspection data for libmanifold'
+)
 
 #
 # For development

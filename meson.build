@@ -98,26 +98,29 @@ libsystemd_dep = dependency('libsystemd', version: '>= 257')
 glib_dep = dependency('glib-2.0', version: '>= 2.80')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.80')
 gio_dep = dependency('gio-2.0', version: '>= 2.80')
-systemd_dep = dependency('systemd')
+blake3_dep    = dependency('libblake3')
 libzip_dep = dependency('libzip', version: '>= 1.7')
 libglnx_dep = dependency('libglnx', default_options: ['tests=false'])
 libcryptsetup_dep = dependency('libcryptsetup', version: '>= 2.4')
+systemd_dep = dependency('systemd')
+udev_dep = dependency('udev')
 
 #
 # Modules
 #
-fs   = import('fs')
-pkgc = import('pkgconfig')
+fs    = import('fs')
+pkgc  = import('pkgconfig')
+gnome = import('gnome')
 
 #
 # Directories
 #
-mf_prefix     = get_option('prefix')
-mf_bindir     = mf_prefix / get_option('bindir')
-mf_libexecdir = mf_prefix / get_option('libexecdir')
-mf_runtimedir = '/run/manifold'
-mf_store_dir  = '/var/lib/manifold'
-mf_cache_dir  = '/var/cache/manifold'
+mf_prefix      = get_option('prefix')
+mf_bindir      = mf_prefix / get_option('bindir')
+mf_libexecdir  = mf_prefix / get_option('libexecdir')
+mf_runtimedir  = '/run/manifold'
+mf_storage_dir = '/var/lib/manifold'
+mf_cache_dir   = '/var/cache/manifold'
 
 # what manifold-rund mounts, in a mount namespace of its own, and what it caches
 mf_run_mount_dir = mf_runtimedir / 'rund'
@@ -128,6 +131,10 @@ systemd_system_unit_dir = systemd_dep.get_variable(
     pkgconfig: 'systemdsystemunitdir',
     pkgconfig_define: ['prefix', mf_prefix],
 )
+udev_rules_dir = udev_dep.get_variable(
+    pkgconfig: 'udevdir',
+    pkgconfig_define: ['prefix', mf_prefix],
+) / 'rules.d'
 
 #
 # Varlink
@@ -147,7 +154,7 @@ conf.set_quoted('MF_RUN_SOCKET_PATH', mf_run_socket)
 conf.set_quoted('MF_INTERFACE', mf_interface)
 conf.set_quoted('MF_SOCKET_PATH', mf_socket)
 conf.set_quoted('MF_RUNTIME_DIR', mf_runtimedir)
-conf.set_quoted('MF_STORE_DIR', mf_store_dir)
+conf.set_quoted('MF_STORAGE_DIR', mf_storage_dir)
 conf.set_quoted('MF_CACHE_DIR', mf_cache_dir)
 conf.set_quoted('MF_RUN_MOUNT_DIR', mf_run_mount_dir)
 conf.set_quoted('MF_RUN_CACHE_DIR', mf_run_cache_dir)

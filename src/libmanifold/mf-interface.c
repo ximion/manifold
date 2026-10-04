@@ -25,6 +25,13 @@ static SD_VARLINK_DEFINE_ENUM_TYPE(
     SD_VARLINK_FIELD_COMMENT("A plugin of an application."),
     SD_VARLINK_DEFINE_ENUM_VALUE(plugin));
 
+static SD_VARLINK_DEFINE_ENUM_TYPE(
+    InstallMode,
+    SD_VARLINK_FIELD_COMMENT("The component was installed explicitly."),
+    SD_VARLINK_DEFINE_ENUM_VALUE(manual),
+    SD_VARLINK_FIELD_COMMENT("The component came along as a dependency."),
+    SD_VARLINK_DEFINE_ENUM_VALUE(auto));
+
 static SD_VARLINK_DEFINE_STRUCT_TYPE(
     Component,
     SD_VARLINK_FIELD_COMMENT("Identifier of the component."),
@@ -41,10 +48,10 @@ static SD_VARLINK_DEFINE_STRUCT_TYPE(
     SD_VARLINK_DEFINE_FIELD(identity, SD_VARLINK_STRING, 0),
     SD_VARLINK_FIELD_COMMENT("The dm-verity root hash of the image, as a hex encoded string."),
     SD_VARLINK_DEFINE_FIELD(verityHash, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("Whether this is the latest version of this component."),
+    SD_VARLINK_FIELD_COMMENT("Whether this is the active version of the component, the one that is launched."),
     SD_VARLINK_DEFINE_FIELD(current, SD_VARLINK_BOOL, 0),
-    SD_VARLINK_FIELD_COMMENT("Whether the component only exists on the system because something else depends on it."),
-    SD_VARLINK_DEFINE_FIELD(dependency, SD_VARLINK_BOOL, 0),
+    SD_VARLINK_FIELD_COMMENT("Why the component is installed: explicitly, or because something else depends on it."),
+    SD_VARLINK_DEFINE_FIELD_BY_TYPE(installMode, InstallMode, 0),
     SD_VARLINK_FIELD_COMMENT("Where the trust in the component came from: the name of a repository, or \"local\"."),
     SD_VARLINK_DEFINE_FIELD(origin, SD_VARLINK_STRING, 0));
 
@@ -92,6 +99,15 @@ static SD_VARLINK_DEFINE_STRUCT_TYPE(
     SD_VARLINK_FIELD_COMMENT("Bytes of disk space the operation freed."),
     SD_VARLINK_DEFINE_FIELD(bytesFreed, SD_VARLINK_INT, 0));
 
+static SD_VARLINK_DEFINE_ENUM_TYPE(
+    TransactionFlag,
+    SD_VARLINK_FIELD_COMMENT("The service may ask the user things, e.g. to authorize an operation."),
+    SD_VARLINK_DEFINE_ENUM_VALUE(allowInteractive));
+
+#define MF_TRANSACTION_FLAGS_INPUT \
+    SD_VARLINK_FIELD_COMMENT("Flags that change how the operation is done."), \
+    SD_VARLINK_DEFINE_INPUT_BY_TYPE(flags, TransactionFlag, SD_VARLINK_ARRAY | SD_VARLINK_NULLABLE)
+
 #define MF_OPERATION_OUTPUT \
     SD_VARLINK_FIELD_COMMENT("How far the operation is. Only in the intermediate replies of a call with the 'more' flag."), \
     SD_VARLINK_DEFINE_OUTPUT_BY_TYPE(progress, Progress, SD_VARLINK_NULLABLE), \
@@ -103,6 +119,7 @@ static SD_VARLINK_DEFINE_METHOD_FULL(
     SD_VARLINK_SUPPORTS_MORE,
     SD_VARLINK_FIELD_COMMENT("Index of the file descriptor of the bundle that should be installed."),
     SD_VARLINK_DEFINE_INPUT(bundleFileDescriptor, SD_VARLINK_INT, 0),
+    MF_TRANSACTION_FLAGS_INPUT,
     MF_OPERATION_OUTPUT);
 
 static SD_VARLINK_DEFINE_METHOD_FULL(
@@ -112,21 +129,14 @@ static SD_VARLINK_DEFINE_METHOD_FULL(
     SD_VARLINK_DEFINE_INPUT(componentId, SD_VARLINK_STRING, 0),
     SD_VARLINK_FIELD_COMMENT("Version to remove. All versions are removed if this is not given."),
     SD_VARLINK_DEFINE_INPUT(version, SD_VARLINK_STRING, SD_VARLINK_NULLABLE),
+    MF_TRANSACTION_FLAGS_INPUT,
     MF_OPERATION_OUTPUT);
 
 static SD_VARLINK_DEFINE_METHOD_FULL(
     Cleanup,
     SD_VARLINK_SUPPORTS_MORE,
+    MF_TRANSACTION_FLAGS_INPUT,
     MF_OPERATION_OUTPUT);
-
-static SD_VARLINK_DEFINE_METHOD(
-    ListComponents,
-    SD_VARLINK_FIELD_COMMENT("Only list the versions of this component."),
-    SD_VARLINK_DEFINE_INPUT(componentId, SD_VARLINK_STRING, SD_VARLINK_NULLABLE),
-    SD_VARLINK_FIELD_COMMENT("Only list components of this kind."),
-    SD_VARLINK_DEFINE_INPUT_BY_TYPE(kind, ComponentKind, SD_VARLINK_NULLABLE),
-    SD_VARLINK_FIELD_COMMENT("The installed components, and the images that are only there as dependencies."),
-    SD_VARLINK_DEFINE_OUTPUT_BY_TYPE(components, Component, SD_VARLINK_ARRAY));
 
 static SD_VARLINK_DEFINE_ERROR(
     Failed,
@@ -144,16 +154,14 @@ static SD_VARLINK_DEFINE_ERROR(
     SD_VARLINK_DEFINE_FIELD(message, SD_VARLINK_STRING, 0));
 
 static SD_VARLINK_DEFINE_ERROR(
-    MissingDependency,
-    SD_VARLINK_FIELD_COMMENT("Identifier of the component that is missing a dependency."),
+    MissingBase,
+    SD_VARLINK_FIELD_COMMENT("Identifier of the component that is missing its base."),
     SD_VARLINK_DEFINE_FIELD(componentId, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("The kind of component that is missing."),
-    SD_VARLINK_DEFINE_FIELD_BY_TYPE(kind, ComponentKind, 0),
-    SD_VARLINK_FIELD_COMMENT("Identifier of the component that is missing."),
-    SD_VARLINK_DEFINE_FIELD(dependencyId, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("Version of the component that is missing."),
-    SD_VARLINK_DEFINE_FIELD(dependencyVersion, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("The identity hash an image would have to have to satisfy the dependency."),
+    SD_VARLINK_FIELD_COMMENT("Identifier of the base that is missing."),
+    SD_VARLINK_DEFINE_FIELD(baseId, SD_VARLINK_STRING, 0),
+    SD_VARLINK_FIELD_COMMENT("Version of the base that is missing."),
+    SD_VARLINK_DEFINE_FIELD(baseVersion, SD_VARLINK_STRING, 0),
+    SD_VARLINK_FIELD_COMMENT("The identity hash an image would have to have to be the base."),
     SD_VARLINK_DEFINE_FIELD(identity, SD_VARLINK_STRING, 0));
 
 static SD_VARLINK_DEFINE_ERROR(
@@ -175,6 +183,15 @@ static SD_VARLINK_DEFINE_ERROR(
     SD_VARLINK_FIELD_COMMENT("Identifier of an installed component that builds on it."),
     SD_VARLINK_DEFINE_FIELD(usedBy, SD_VARLINK_STRING, 0));
 
+static SD_VARLINK_DEFINE_ERROR(
+    WrongArchitecture,
+    SD_VARLINK_FIELD_COMMENT("Identifier of the component that was built for another architecture."),
+    SD_VARLINK_DEFINE_FIELD(componentId, SD_VARLINK_STRING, 0),
+    SD_VARLINK_FIELD_COMMENT("The architecture the component was built for."),
+    SD_VARLINK_DEFINE_FIELD(architecture, SD_VARLINK_STRING, 0),
+    SD_VARLINK_FIELD_COMMENT("The architecture of this system."),
+    SD_VARLINK_DEFINE_FIELD(hostArchitecture, SD_VARLINK_STRING, 0));
+
 SD_VARLINK_DEFINE_INTERFACE(
     org_freedesktop_manifold,
     MF_INTERFACE,
@@ -182,6 +199,8 @@ SD_VARLINK_DEFINE_INTERFACE(
 
     SD_VARLINK_SYMBOL_COMMENT("The kind of a component."),
     &vl_type_ComponentKind,
+    SD_VARLINK_SYMBOL_COMMENT("Why a component is installed."),
+    &vl_type_InstallMode,
     SD_VARLINK_SYMBOL_COMMENT("An installed component."),
     &vl_type_Component,
     SD_VARLINK_SYMBOL_COMMENT("What is done to a component or an image."),
@@ -192,6 +211,8 @@ SD_VARLINK_DEFINE_INTERFACE(
     &vl_type_Progress,
     SD_VARLINK_SYMBOL_COMMENT("What an operation did."),
     &vl_type_Result,
+    SD_VARLINK_SYMBOL_COMMENT("A general flag that changes how operations are performed."),
+    &vl_type_TransactionFlag,
 
     SD_VARLINK_SYMBOL_COMMENT("Install the components of a bundle, which is passed as a file descriptor. "
                               "Called with the 'more' flag, reports its progress. Privileged."),
@@ -203,8 +224,6 @@ SD_VARLINK_DEFINE_INTERFACE(
                               "images no component links to, and what interrupted installations left. "
                               "Called with the 'more' flag, reports its progress. Privileged."),
     &vl_method_Cleanup,
-    SD_VARLINK_SYMBOL_COMMENT("List what is installed."),
-    &vl_method_ListComponents,
 
     SD_VARLINK_SYMBOL_COMMENT("The operation failed."),
     &vl_error_Failed,
@@ -212,13 +231,15 @@ SD_VARLINK_DEFINE_INTERFACE(
     &vl_error_InvalidBundle,
     SD_VARLINK_SYMBOL_COMMENT("The contents of the bundle do not match what its index and manifests say."),
     &vl_error_VerificationFailed,
-    SD_VARLINK_SYMBOL_COMMENT("A core, platform or kit an application needs is not installable."),
-    &vl_error_MissingDependency,
-    SD_VARLINK_SYMBOL_COMMENT("This version of the application is installed already."),
+    SD_VARLINK_SYMBOL_COMMENT("The base a component builds on is not installed."),
+    &vl_error_MissingBase,
+    SD_VARLINK_SYMBOL_COMMENT("This version of the component is installed already."),
     &vl_error_AlreadyInstalled,
     SD_VARLINK_SYMBOL_COMMENT("The component is not installed."),
     &vl_error_NoSuchComponent,
     SD_VARLINK_SYMBOL_COMMENT("An installed component builds on this component."),
-    &vl_error_ComponentInUse);
+    &vl_error_ComponentInUse,
+    SD_VARLINK_SYMBOL_COMMENT("The component architecture and that of the current system are incompatible."),
+    &vl_error_WrongArchitecture);
 
 /* clang-format on */

@@ -51,7 +51,7 @@ mfc_progress_bar_free(MfcProgressBar *bar)
 }
 
 static int
-terminal_width(void)
+mfc_terminal_width(void)
 {
     struct winsize ws;
 
@@ -122,7 +122,8 @@ mfc_progress_bar_update(MfcProgressBar *bar, double percent_done, guint64 bytes_
         speed = g_strdup_printf("%s/s", rate);
     }
 
-    bar_length = MIN(BAR_LENGTH_MAX, terminal_width() - ((int) strlen(bar->label) + 8 + (speed ? 14 : 0)));
+    bar_length = MIN(BAR_LENGTH_MAX,
+                     mfc_terminal_width() - ((int) strlen(bar->label) + 8 + (speed ? 14 : 0)));
     if (bar_length < 1)
         bar_length = 1;
     n_full = (bar_length * (int) percent) / 100;

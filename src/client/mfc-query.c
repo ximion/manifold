@@ -29,6 +29,7 @@ static int
 mfc_run_list_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
 {
     g_autoptr(GOptionContext) context = NULL;
+    g_autoptr(MfStore) store = NULL;
     g_autoptr(GPtrArray) components = NULL;
     g_autoptr(GError) error = NULL;
     MfComponentKind kind = MF_COMPONENT_KIND_UNKNOWN;
@@ -44,8 +45,13 @@ mfc_run_list_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         mfc_print_help_hint(cmd->name, argv[2]);
         return MFC_EXIT_INVALID_CMD;
     }
-    if (argc == 2)
+    if (argc == 2) {
         component_id = argv[1];
+        if (!mf_component_id_is_valid(component_id)) {
+            g_printerr("'%s' is not a valid component identifier.\n", component_id);
+            return MFC_EXIT_INVALID_CMD;
+        }
+    }
     if (optn_kind != NULL) {
         kind = mf_component_kind_from_string(optn_kind);
         if (kind == MF_COMPONENT_KIND_UNKNOWN) {
@@ -54,7 +60,8 @@ mfc_run_list_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         }
     }
 
-    components = mf_client_list_components(mfc_context_get_client(ctx), component_id, kind, NULL, &error);
+    store = mf_store_new();
+    components = mf_store_list_components(store, component_id, kind, &error);
     if (components == NULL) {
         g_printerr("Unable to list components: %s\n", error->message);
         return MFC_EXIT_FAILURE;

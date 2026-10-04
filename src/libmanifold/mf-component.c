@@ -7,7 +7,11 @@
 #include "config.h"
 #include "mf-component-private.h"
 
+#include <string.h>
+
 #include "mf-error.h"
+#include "mf-store-private.h"
+#include "mf-utils-private.h"
 
 /**
  * MfComponent:
@@ -15,9 +19,9 @@
  * Description of an installed Manifold component.
  */
 
-constexpr size_t COMPONENT_ID_LENGTH_MAX = 255;
-
 struct _MfComponent {
+    GObject parent_instance;
+
     char *component_id;
     MfComponentKind kind;
     char *version;
@@ -26,11 +30,38 @@ struct _MfComponent {
     char *identity;
     char *verity_hash;
     gboolean current;
-    gboolean dependency;
+    MfInstallMode install_mode;
     char *origin;
+    MfManifest *manifest; /* (nullable) as read from storage */
 };
 
-G_DEFINE_BOXED_TYPE(MfComponent, mf_component, mf_component_copy, mf_component_free)
+G_DEFINE_FINAL_TYPE(MfComponent, mf_component, G_TYPE_OBJECT)
+
+static void
+mf_component_finalize(GObject *object)
+{
+    MfComponent *component = MF_COMPONENT(object);
+
+    g_free(component->component_id);
+    g_free(component->version);
+    g_free(component->identity);
+    g_free(component->verity_hash);
+    g_free(component->origin);
+    g_clear_object(&component->manifest);
+
+    G_OBJECT_CLASS(mf_component_parent_class)->finalize(object);
+}
+
+static void
+mf_component_class_init(MfComponentClass *klass)
+{
+    G_OBJECT_CLASS(klass)->finalize = mf_component_finalize;
+}
+
+static void
+mf_component_init(MfComponent *component)
+{
+}
 
 /**
  * mf_component_kind_to_string:
@@ -80,6 +111,41 @@ mf_component_kind_from_string(const char *kind_str)
 }
 
 /**
+ * mf_install_mode_to_string:
+ * @mode: an #MfInstallMode
+ *
+ * Returns: the name of the install mode
+ */
+const char *
+mf_install_mode_to_string(MfInstallMode mode)
+{
+    switch (mode) {
+    case MF_INSTALL_MODE_MANUAL:
+        return "manual";
+    case MF_INSTALL_MODE_AUTO:
+        return "auto";
+    default:
+        return "unknown";
+    }
+}
+
+/**
+ * mf_install_mode_from_string:
+ * @mode_str: (nullable): the name of a mode
+ *
+ * Returns: the mode, or %MF_INSTALL_MODE_UNKNOWN if the name is not known
+ */
+MfInstallMode
+mf_install_mode_from_string(const char *mode_str)
+{
+    if (g_strcmp0(mode_str, "manual") == 0)
+        return MF_INSTALL_MODE_MANUAL;
+    if (g_strcmp0(mode_str, "auto") == 0)
+        return MF_INSTALL_MODE_AUTO;
+    return MF_INSTALL_MODE_UNKNOWN;
+}
+
+/**
  * mf_component_id_is_valid:
  * @component_id: (nullable): a component identifier
  *
@@ -91,67 +157,40 @@ mf_component_kind_from_string(const char *kind_str)
 gboolean
 mf_component_id_is_valid(const char *component_id)
 {
-    if (component_id == NULL)
-        return FALSE;
-
-    size_t len = strnlen(component_id, COMPONENT_ID_LENGTH_MAX + 1);
-    if (len == 0 || len > COMPONENT_ID_LENGTH_MAX)
-        return FALSE;
-    if (component_id[0] == '.' || component_id[0] == '-')
-        return FALSE;
-
-    for (size_t i = 0; i < len; i++) {
-        if (!g_ascii_isalnum(component_id[i]) && strchr("._-", component_id[i]) == NULL)
-            return FALSE;
-    }
-
-    return TRUE;
+    return mf_name_is_valid(component_id, "._-", MF_COMPONENT_ID_LENGTH_MAX);
 }
 
 /**
- * mf_component_copy:
- * @component: an #MfComponent
+ * mf_component_new:
  *
- * Returns: (transfer full): a copy of the component
+ * Returns: (transfer full): an installed Manifold component
  */
 MfComponent *
-mf_component_copy(const MfComponent *component)
+mf_component_new(const char *component_id,
+                 MfComponentKind kind,
+                 const char *version,
+                 guint64 revision,
+                 gboolean sdk,
+                 const char *identity,
+                 const char *verity_hash,
+                 gboolean current,
+                 MfInstallMode install_mode,
+                 const char *origin)
 {
-    MfComponent *copy;
+    MfComponent *component = g_object_new(MF_TYPE_COMPONENT, NULL);
 
-    g_return_val_if_fail(component != NULL, NULL);
+    component->component_id = g_strdup(component_id);
+    component->kind = kind;
+    component->version = g_strdup(version);
+    component->revision = revision;
+    component->sdk = sdk;
+    component->identity = g_strdup(identity);
+    component->verity_hash = g_strdup(verity_hash);
+    component->current = current;
+    component->install_mode = install_mode;
+    component->origin = g_strdup(origin);
 
-    copy = g_new0(MfComponent, 1);
-    copy->component_id = g_strdup(component->component_id);
-    copy->kind = component->kind;
-    copy->version = g_strdup(component->version);
-    copy->revision = component->revision;
-    copy->sdk = component->sdk;
-    copy->identity = g_strdup(component->identity);
-    copy->verity_hash = g_strdup(component->verity_hash);
-    copy->current = component->current;
-    copy->dependency = component->dependency;
-    copy->origin = g_strdup(component->origin);
-
-    return copy;
-}
-
-/**
- * mf_component_free:
- * @component: (nullable): an #MfComponent
- */
-void
-mf_component_free(MfComponent *component)
-{
-    if (component == NULL)
-        return;
-
-    g_free(component->component_id);
-    g_free(component->version);
-    g_free(component->identity);
-    g_free(component->verity_hash);
-    g_free(component->origin);
-    g_free(component);
+    return component;
 }
 
 /**
@@ -161,9 +200,9 @@ mf_component_free(MfComponent *component)
  * Returns: the identifier of the component
  */
 const char *
-mf_component_get_id(const MfComponent *component)
+mf_component_get_id(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, NULL);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
     return component->component_id;
 }
 
@@ -174,9 +213,9 @@ mf_component_get_id(const MfComponent *component)
  * Returns: the kind of the component
  */
 MfComponentKind
-mf_component_get_kind(const MfComponent *component)
+mf_component_get_kind(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, MF_COMPONENT_KIND_UNKNOWN);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), MF_COMPONENT_KIND_UNKNOWN);
     return component->kind;
 }
 
@@ -187,9 +226,9 @@ mf_component_get_kind(const MfComponent *component)
  * Returns: the version of the component
  */
 const char *
-mf_component_get_version(const MfComponent *component)
+mf_component_get_version(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, NULL);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
     return component->version;
 }
 
@@ -197,15 +236,15 @@ mf_component_get_version(const MfComponent *component)
  * mf_component_get_revision:
  * @component: an #MfComponent
  *
- * Get the revision of the version, which tells rebuilds of it apart.
+ * Get the revision of the version, which distinguishes rebuilds of it.
  * It is usually automatically set by the builder, or by a repository.
  *
  * Returns: the revision number.
  */
 guint64
-mf_component_get_revision(const MfComponent *component)
+mf_component_get_revision(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, 0);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), 0);
     return component->revision;
 }
 
@@ -216,9 +255,9 @@ mf_component_get_revision(const MfComponent *component)
  * Returns: whether this is the SDK image of the component
  */
 gboolean
-mf_component_is_sdk(const MfComponent *component)
+mf_component_is_sdk(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, FALSE);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), FALSE);
     return component->sdk;
 }
 
@@ -229,9 +268,9 @@ mf_component_is_sdk(const MfComponent *component)
  * Returns: the identity hash of the image, as a hex encoded string
  */
 const char *
-mf_component_get_identity(const MfComponent *component)
+mf_component_get_identity(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, NULL);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
     return component->identity;
 }
 
@@ -242,9 +281,9 @@ mf_component_get_identity(const MfComponent *component)
  * Returns: the dm-verity root hash of the component's image, as a hex encoded string
  */
 const char *
-mf_component_get_verity_hash(const MfComponent *component)
+mf_component_get_verity_hash(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, NULL);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
     return component->verity_hash;
 }
 
@@ -255,23 +294,23 @@ mf_component_get_verity_hash(const MfComponent *component)
  * Returns: whether this is the version of the component that is launched
  */
 gboolean
-mf_component_is_current(const MfComponent *component)
+mf_component_is_current(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, FALSE);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), FALSE);
     return component->current;
 }
 
 /**
- * mf_component_is_dependency:
+ * mf_component_get_install_mode:
  * @component: an #MfComponent
  *
- * Returns: whether the component was installed as dependency only.
+ * Returns: why the component is installed: explicitly, or as a dependency only
  */
-gboolean
-mf_component_is_dependency(const MfComponent *component)
+MfInstallMode
+mf_component_get_install_mode(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, FALSE);
-    return component->dependency;
+    g_return_val_if_fail(MF_IS_COMPONENT(component), MF_INSTALL_MODE_UNKNOWN);
+    return component->install_mode;
 }
 
 /**
@@ -283,9 +322,9 @@ mf_component_is_dependency(const MfComponent *component)
  * Returns: where the component came from: the name of a repository, or "local"
  */
 const char *
-mf_component_get_origin(const MfComponent *component)
+mf_component_get_origin(MfComponent *component)
 {
-    g_return_val_if_fail(component != NULL, NULL);
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
     return component->origin;
 }
 
@@ -309,7 +348,7 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
         const char *identity;
         const char *verity_hash;
         bool current;
-        bool dependency;
+        const char *install_mode;
         const char *origin;
     } fields = {};
     static const sd_json_dispatch_field fields_table[] = {
@@ -342,9 +381,9 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
          offsetof(typeof(fields), revision),
          SD_JSON_MANDATORY},
         {"current", SD_JSON_VARIANT_BOOLEAN, sd_json_dispatch_stdbool, offsetof(typeof(fields), current), 0},
-        {"dependency",
-         SD_JSON_VARIANT_BOOLEAN, sd_json_dispatch_stdbool,
-         offsetof(typeof(fields), dependency),
+        {"installMode",
+         SD_JSON_VARIANT_STRING, sd_json_dispatch_const_string,
+         offsetof(typeof(fields), install_mode),
          0},
         {"origin",
          SD_JSON_VARIANT_STRING, sd_json_dispatch_const_string,
@@ -363,7 +402,7 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
         return NULL;
     }
 
-    MfComponent *component = g_new0(MfComponent, 1);
+    MfComponent *component = g_object_new(MF_TYPE_COMPONENT, NULL);
     component->component_id = g_strdup(fields.component_id);
     component->kind = mf_component_kind_from_string(fields.kind);
     component->version = g_strdup(fields.version);
@@ -372,7 +411,7 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
     component->verity_hash = g_strdup(fields.verity_hash);
     component->revision = fields.revision;
     component->current = fields.current;
-    component->dependency = fields.dependency;
+    component->install_mode = mf_install_mode_from_string(fields.install_mode);
     component->origin = g_strdup(fields.origin);
 
     return component;
@@ -387,7 +426,7 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
 GPtrArray *
 mf_component_array_from_reply(sd_json_variant *list, GError **error)
 {
-    g_autoptr(GPtrArray) components = g_ptr_array_new_with_free_func((GDestroyNotify) mf_component_free);
+    g_autoptr(GPtrArray) components = g_ptr_array_new_with_free_func(g_object_unref);
 
     for (size_t i = 0; list != NULL && i < sd_json_variant_elements(list); i++) {
         MfComponent *component = mf_component_new_from_reply(sd_json_variant_by_index(list, i), error);
@@ -398,4 +437,29 @@ mf_component_array_from_reply(sd_json_variant *list, GError **error)
     }
 
     return g_steal_pointer(&components);
+}
+
+/**
+ * mf_component_set_manifest:
+ * @manifest: (nullable): the manifest the component was read from
+ *
+ * Keep the manifest with the component, so that it is not read twice.
+ */
+void
+mf_component_set_manifest(MfComponent *component, MfManifest *manifest)
+{
+    g_return_if_fail(MF_IS_COMPONENT(component));
+    g_set_object(&component->manifest, manifest);
+}
+
+/**
+ * mf_component_peek_manifest:
+ *
+ * Returns: (transfer none) (nullable): the manifest the component was read from
+ */
+MfManifest *
+mf_component_peek_manifest(MfComponent *component)
+{
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
+    return component->manifest;
 }

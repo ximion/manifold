@@ -8,14 +8,10 @@
 #include "mf-progress-private.h"
 
 /**
- * MfProgress:
+ * MfItemProgress:
  *
- * How far an operation of the Manifold service is: a percentage of the
- * whole, and the item it is working on right now. An #MfItemProgress says
- * what is being done to which component or image, and how far that is;
- * only the copy of an image carries bytes.
+ * Progress of one item of an operation.
  */
-
 struct _MfItemProgress {
     MfAction action;
     char *subject;
@@ -64,6 +60,31 @@ mf_action_from_string(const char *action_str)
     if (g_strcmp0(action_str, "cleanup") == 0)
         return MF_ACTION_CLEANUP;
     return MF_ACTION_UNKNOWN;
+}
+
+/**
+ * mf_item_progress_new:
+ * @action: what is done to the item
+ * @subject: the component or image the item is about
+ * @version: (nullable): the version of the component
+ *
+ * Creates the progress of an item that was not started yet.
+ *
+ * Returns: (transfer full): a new #MfItemProgress
+ */
+MfItemProgress *
+mf_item_progress_new(MfAction action, const char *subject, const char *version)
+{
+    MfItemProgress *item;
+
+    g_return_val_if_fail(subject != NULL, NULL);
+
+    item = g_new0(MfItemProgress, 1);
+    item->action = action;
+    item->subject = g_strdup(subject);
+    item->version = g_strdup(version);
+
+    return item;
 }
 
 /**
@@ -184,13 +205,49 @@ mf_item_progress_get_bytes_total(const MfItemProgress *item)
 }
 
 /**
- * item_progress_new_from_reply:
+ * mf_item_progress_set_percent:
+ * @item: an #MfItemProgress
+ * @percent: how far this item has progressed, from 0 to 100
+ */
+void
+mf_item_progress_set_percent(MfItemProgress *item, double percent)
+{
+    g_return_if_fail(item != NULL);
+    item->percent = percent;
+}
+
+/**
+ * mf_item_progress_set_bytes_done:
+ * @item: an #MfItemProgress
+ * @bytes_done: bytes of the image copied so far
+ */
+void
+mf_item_progress_set_bytes_done(MfItemProgress *item, guint64 bytes_done)
+{
+    g_return_if_fail(item != NULL);
+    item->bytes_done = bytes_done;
+}
+
+/**
+ * mf_item_progress_set_bytes_total:
+ * @item: an #MfItemProgress
+ * @bytes_total: the size of the image in bytes if the item copies one, otherwise 0
+ */
+void
+mf_item_progress_set_bytes_total(MfItemProgress *item, guint64 bytes_total)
+{
+    g_return_if_fail(item != NULL);
+    item->bytes_total = bytes_total;
+}
+
+/**
+ * mf_item_progress_new_from_reply:
  * @variant: an item, as the service reports it
  *
  * Returns: (transfer full): the item progress, or %NULL if the reply was invalid
  */
 static MfItemProgress *
-item_progress_new_from_reply(sd_json_variant *variant)
+mf_item_progress_new_from_reply(sd_json_variant *variant)
 {
     struct {
         const char *action;
@@ -243,12 +300,33 @@ item_progress_new_from_reply(sd_json_variant *variant)
     return item;
 }
 
+/**
+ * MfProgress:
+ *
+ * Progress of an operation of the Manifold service: a percentage of the
+ * whole, and the item it is working on right now. An #MfItemProgress
+ * describes what is being done to which component or image, and how far
+ * along it is.
+ */
 struct _MfProgress {
     double percent;
     MfItemProgress *item;
 };
 
 G_DEFINE_BOXED_TYPE(MfProgress, mf_progress, mf_progress_copy, mf_progress_free)
+
+/**
+ * mf_progress_new:
+ *
+ * Creates the progress of an operation that has not progressed yet.
+ *
+ * Returns: (transfer full): a new #MfProgress
+ */
+MfProgress *
+mf_progress_new(void)
+{
+    return g_new0(MfProgress, 1);
+}
 
 /**
  * mf_progress_copy:
@@ -311,6 +389,37 @@ mf_progress_get_item(const MfProgress *progress)
 }
 
 /**
+ * mf_progress_set_percent:
+ * @progress: an #MfProgress
+ * @percent: progress of the whole operation, from 0 to 100
+ */
+void
+mf_progress_set_percent(MfProgress *progress, double percent)
+{
+    g_return_if_fail(progress != NULL);
+    progress->percent = percent;
+}
+
+/**
+ * mf_progress_take_item:
+ * @progress: an #MfProgress
+ * @item: (nullable) (transfer full): the item that is being worked on now, or %NULL
+ *
+ * Set the item that is being worked on, replacing the previous one.
+ * The item stays valid until it is replaced or @progress is freed.
+ */
+void
+mf_progress_take_item(MfProgress *progress, MfItemProgress *item)
+{
+    g_return_if_fail(progress != NULL);
+
+    if (progress->item == item)
+        return;
+    mf_item_progress_free(progress->item);
+    progress->item = item;
+}
+
+/**
  * mf_progress_new_from_reply:
  * @variant: progress, as the service reports it
  *
@@ -336,10 +445,10 @@ mf_progress_new_from_reply(sd_json_variant *variant)
     if (sd_json_dispatch(variant, fields_table, SD_JSON_ALLOW_EXTENSIONS, &fields) < 0)
         return NULL;
 
-    progress = g_new0(MfProgress, 1);
+    progress = mf_progress_new();
     progress->percent = fields.percent;
     if (fields.item != NULL) {
-        progress->item = item_progress_new_from_reply(fields.item);
+        progress->item = mf_item_progress_new_from_reply(fields.item);
         if (progress->item == NULL)
             return NULL;
     }
