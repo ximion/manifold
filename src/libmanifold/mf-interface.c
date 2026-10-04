@@ -88,7 +88,7 @@ static SD_VARLINK_DEFINE_STRUCT_TYPE(
 
 static SD_VARLINK_DEFINE_STRUCT_TYPE(
     Result,
-    SD_VARLINK_FIELD_COMMENT("The components that were installed, or found installed already."),
+    SD_VARLINK_FIELD_COMMENT("The components that were installed."),
     SD_VARLINK_DEFINE_FIELD_BY_TYPE(installed, Component, SD_VARLINK_ARRAY),
     SD_VARLINK_FIELD_COMMENT("The components that were removed, including dependencies nothing needed anymore."),
     SD_VARLINK_DEFINE_FIELD_BY_TYPE(removed, Component, SD_VARLINK_ARRAY),

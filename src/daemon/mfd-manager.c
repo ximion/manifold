@@ -1148,14 +1148,18 @@ mfd_manager_install_bundle(MfdManager *manager,
     if (rmplan == NULL || !mfd_manager_execute_removal(manager, rmplan, &tracker, result, &supersede_error))
         g_warning("Unable to remove what the installation supersedes: %s", supersede_error->message);
 
-    /* emit the components of the bundle that are installed now as results */
+    /* emit the components of the bundle that were installed now as results, not the
+     * dependencies that were there already */
     for (guint i = 0; i < images->len; i++) {
         MfManifest *manifest = mf_bundle_image_get_manifest(g_ptr_array_index(images, i));
-        g_autoptr(MfComponent) component = mfd_manager_get_installed(manager,
-                                                                     mf_manifest_get_component_id(manifest),
-                                                                     mf_manifest_get_version(manifest),
-                                                                     mf_manifest_get_revision(manifest));
+        g_autoptr(MfComponent) component = NULL;
 
+        if (g_array_index(plans, MfdInstallPlan, i).skip)
+            continue;
+        component = mfd_manager_get_installed(manager,
+                                              mf_manifest_get_component_id(manifest),
+                                              mf_manifest_get_version(manifest),
+                                              mf_manifest_get_revision(manifest));
         if (component == NULL ||
             g_strcmp0(mf_component_get_verity_hash(component), mf_manifest_get_verity_hash(manifest)) != 0)
             continue;
