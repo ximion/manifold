@@ -922,17 +922,16 @@ mf_store_find_identity(MfStore *store, const char *identity, GError **error)
 
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
-        int cmp;
 
         if (g_strcmp0(mf_component_get_identity(component), identity) != 0 ||
             !mf_store_has_image(store, mf_component_get_verity_hash(component)))
             continue;
         if (mf_component_is_current(component))
             return g_object_ref(component);
-        cmp = found == NULL
-                  ? 1
-                  : mf_version_compare(mf_component_get_version(component), mf_component_get_version(found));
-        if (cmp > 0 || (cmp == 0 && mf_component_get_revision(component) > mf_component_get_revision(found)))
+        if (found == NULL || mf_version_compare_with_rev(mf_component_get_version(component),
+                                                         mf_component_get_revision(component),
+                                                         mf_component_get_version(found),
+                                                         mf_component_get_revision(found)) > 0)
             found = component;
     }
 

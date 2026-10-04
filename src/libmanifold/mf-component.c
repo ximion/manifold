@@ -402,19 +402,16 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
         return NULL;
     }
 
-    MfComponent *component = g_object_new(MF_TYPE_COMPONENT, NULL);
-    component->component_id = g_strdup(fields.component_id);
-    component->kind = mf_component_kind_from_string(fields.kind);
-    component->version = g_strdup(fields.version);
-    component->sdk = fields.sdk;
-    component->identity = g_strdup(fields.identity);
-    component->verity_hash = g_strdup(fields.verity_hash);
-    component->revision = fields.revision;
-    component->current = fields.current;
-    component->install_mode = mf_install_mode_from_string(fields.install_mode);
-    component->origin = g_strdup(fields.origin);
-
-    return component;
+    return mf_component_new(fields.component_id,
+                            mf_component_kind_from_string(fields.kind),
+                            fields.version,
+                            fields.revision,
+                            fields.sdk,
+                            fields.identity,
+                            fields.verity_hash,
+                            fields.current,
+                            mf_install_mode_from_string(fields.install_mode),
+                            fields.origin);
 }
 
 /**

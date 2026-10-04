@@ -247,8 +247,8 @@ mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_di
         if (!mf_split_full_version(name, &version, &revision))
             continue;
 
-        int cmp = newest_version == NULL ? 1 : mf_version_compare(version, newest_version);
-        if (cmp > 0 || (cmp == 0 && revision > newest_revision)) {
+        if (newest_version == NULL ||
+            mf_version_compare_with_rev(version, revision, newest_version, newest_revision) > 0) {
             g_free(newest_name);
             g_free(newest_version);
             newest_name = g_strdup(name);
