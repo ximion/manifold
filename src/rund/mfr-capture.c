@@ -62,15 +62,17 @@ constexpr char STAMP_NAME[] = "stamp";
 
 constexpr char MF_STALE_PREFIX[] = ".stale-";
 
-/* the dlopen()ed vendor drivers below the host's libdir, named as steam-runtime-tools enumerates them */
+/* the dlopen()ed vendor drivers below the host's libdir, named as steam-runtime-tools enumerates them,
+ * and the variables that point the loaders at them */
 static const struct {
     const char *subdir;
     const char *prefix;
     const char *const suffixes[3];
+    const char *const variables[3];
 } DRIVER_SUBDIRS[] = {
-    {"dri",   "",          {"_dri.so", "_drv_video.so"}},
-    {"gbm",   "",          {"_gbm.so"}                 },
-    {"vdpau", "libvdpau_", {".so.1"}                   },
+    {"dri",   "",          {"_dri.so", "_drv_video.so"}, {"LIBGL_DRIVERS_PATH", "LIBVA_DRIVERS_PATH"}},
+    {"gbm",   "",          {"_gbm.so"},                  {"GBM_BACKENDS_PATH"}                       },
+    {"vdpau", "libvdpau_", {".so.1"},                    {"VDPAU_DRIVER_PATH"}                       },
 };
 
 /* multiarch tuple -> the ld.so path ELF binaries of that ABI hardcode */
@@ -272,16 +274,6 @@ static const char *const GLIBC_EXECUTABLES[] = {
     "usr/bin/pldd",
     "usr/bin/tzselect",
     "usr/bin/zdump",
-};
-
-/* vendor driver directories, and the variables that point the loaders at them */
-static const struct {
-    const char *subdir;
-    const char *const variables[3];
-} DRIVER_PATH_VARS[] = {
-    {"dri",   {"LIBGL_DRIVERS_PATH", "LIBVA_DRIVERS_PATH"}},
-    {"gbm",   {"GBM_BACKENDS_PATH"}                       },
-    {"vdpau", {"VDPAU_DRIVER_PATH"}                       },
 };
 
 /**
@@ -505,9 +497,9 @@ mfr_capture_get_managed_variables(void)
         for (size_t j = 0; kind->env_unset[j] != NULL; j++)
             g_ptr_array_add(names, (char *) kind->env_unset[j]);
     }
-    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_PATH_VARS); i++) {
-        for (size_t j = 0; DRIVER_PATH_VARS[i].variables[j] != NULL; j++)
-            g_ptr_array_add(names, (char *) DRIVER_PATH_VARS[i].variables[j]);
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
+        for (size_t j = 0; DRIVER_SUBDIRS[i].variables[j] != NULL; j++)
+            g_ptr_array_add(names, (char *) DRIVER_SUBDIRS[i].variables[j]);
     }
     g_ptr_array_sort_values(names, (GCompareFunc) g_strcmp0);
     g_ptr_array_add(names, NULL);
@@ -672,8 +664,8 @@ mfr_capture_job_register_patterns(MfrCaptureJob *job, GPtrArray *argv)
  *
  * Capture the dlopen()ed vendor drivers of the host (DRI, VA-API, GBM and
  * VDPAU) into subdirectories of the libdir named as on the host. Their loaders
- * do not look up SONAMEs, but scan one directory each, which DRIVER_PATH_VARS
- * points them at, so the drivers cannot share the libdir with everything else.
+ * do not look up SONAMEs, but scan one directory each, which the variables of
+ * DRIVER_SUBDIRS point them at, so the drivers cannot share the libdir with everything else.
  *
  * The capture tool takes a single destination, so this runs it once per
  * subdirectory. The dependencies of the drivers were captured into the libdir
@@ -1355,14 +1347,14 @@ mfr_capture_job_link_host_data_dirs(MfrCaptureJob *job, GError **error)
 static void
 mfr_capture_job_add_driver_path_vars(MfrCaptureJob *job)
 {
-    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_PATH_VARS); i++) {
-        g_autofree char *dir = g_build_filename(job->libdir, DRIVER_PATH_VARS[i].subdir, NULL);
-        g_autofree char *tree_dir = g_build_filename(job->tree_libdir, DRIVER_PATH_VARS[i].subdir, NULL);
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
+        g_autofree char *dir = g_build_filename(job->libdir, DRIVER_SUBDIRS[i].subdir, NULL);
+        g_autofree char *tree_dir = g_build_filename(job->tree_libdir, DRIVER_SUBDIRS[i].subdir, NULL);
 
         if (!g_file_test(dir, G_FILE_TEST_IS_DIR))
             continue;
-        for (size_t j = 0; DRIVER_PATH_VARS[i].variables[j] != NULL; j++)
-            mfr_env_table_add(job->env, DRIVER_PATH_VARS[i].variables[j], tree_dir);
+        for (size_t j = 0; DRIVER_SUBDIRS[i].variables[j] != NULL; j++)
+            mfr_env_table_add(job->env, DRIVER_SUBDIRS[i].variables[j], tree_dir);
     }
 }
 
@@ -1475,13 +1467,18 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
     g_autoptr(sd_json_variant) targets = NULL;
     g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     g_autofree char *host_libdir = g_build_filename("/usr/lib", job->tuple, NULL);
-    g_autofree char *host_dridir = g_build_filename(host_libdir, "dri", NULL);
     g_autofree char *id = g_uuid_string_random();
     g_autofree char *path = g_build_filename(dir, STAMP_NAME, NULL);
     int r;
 
-    if (mfr_stamp_add_dir(&dirs, host_libdir) < 0 || mfr_stamp_add_dir(&dirs, host_dridir) < 0)
+    if (mfr_stamp_add_dir(&dirs, host_libdir) < 0)
         return glnx_throw(error, "Unable to record directories");
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
+        g_autofree char *driver_dir = g_build_filename(host_libdir, DRIVER_SUBDIRS[i].subdir, NULL);
+
+        if (mfr_stamp_add_dir(&dirs, driver_dir) < 0)
+            return glnx_throw(error, "Unable to record directories");
+    }
     if (!mfr_stamp_add_link_targets(job->overrides_dir, seen, &targets, error))
         return FALSE;
     if (targets == NULL)
