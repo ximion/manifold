@@ -96,6 +96,17 @@ class InstallerTest(unittest.TestCase):
                     found.append((component_id, name.rsplit('-', 1)[0], mode))
         return sorted(found)
 
+    def version_dirs(self, subdir, component_id):
+        """The names of the version directories of a component."""
+        path = f'{STORE}/{subdir}/{component_id}'
+        return sorted(
+            name
+            for name in os.listdir(path)
+            if not name.startswith('.')
+            and not os.path.islink(f'{path}/{name}')
+            and os.path.isdir(f'{path}/{name}')
+        )
+
     def stored_images(self):
         return sorted(name[: -len('.raw')] for name in os.listdir(f'{STORE}/images/by-verity'))
 
@@ -167,7 +178,7 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('installed already', self.manifold('install', self.core_bundle, expect=1))
         self.assertEqual(len(self.stored_images()), 2)
 
-    def test_same_version_with_other_image_is_refused(self):
+    def test_same_revision_with_other_image_is_refused(self):
         other_kit = Image(
             self.kit.component,
             'kit',
@@ -182,6 +193,83 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('installed already', self.manifold('install', other_bundle, expect=1))
         self.assertNotIn(other_kit.verity_hash, self.stored_images())
         self.assertNotIn((APP_ID, '0.1.0', 'auto'), self.installed())
+
+    def test_rebuild_supersedes_older_revisions(self):
+        kit = Image(
+            self.kit.component,
+            'kit',
+            self.kit.version,
+            revision=self.kit.revision + 1,
+            base=self.core,
+            seed='rebuilt kit',
+        )
+        app = Image(
+            APP_ID, 'app', '0.1.0', revision=self.app.revision + 1, base=kit, seed='rebuilt app'
+        )
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+
+        # the application is auto, and so is the kit that came along with it
+        out = self.manifold('install', self.bundle('rebuild', [kit, app]))
+        self.assertIn('Removed:', out)
+        self.assertEqual(self.version_dirs('apps', APP_ID), [f'0.1.0-{app.revision}'])
+        self.assertEqual(
+            self.version_dirs('runtimes', kit.component), [f'{kit.version}-{kit.revision}']
+        )
+        self.assertNotIn(self.app.verity_hash, self.stored_images())
+        self.assertNotIn(self.kit.verity_hash, self.stored_images())
+
+    def test_rebuild_keeps_what_was_installed_on_purpose(self):
+        core = Image(CORE_ID, 'core', '13.4', revision=self.core.revision + 1, seed='rebuilt core')
+        # without its SDK, which would keep the old core as its exact base
+        self.manifold('install', self.bundle('core-only', [self.core]))
+
+        self.assertNotIn('Removed', self.manifold('install', self.bundle('core-rebuild', [core])))
+        self.assertEqual(
+            self.version_dirs('runtimes', CORE_ID),
+            [f'13.4-{self.core.revision}', f'13.4-{core.revision}'],
+        )
+        self.assertEqual(
+            os.readlink(f'{STORE}/runtimes/{CORE_ID}/current'), f'13.4-{core.revision}'
+        )
+
+    def test_rebuild_keeps_what_is_still_used(self):
+        kit_sdk = Image(
+            self.kit.component + '.sdk', 'kit', self.kit.version, sdk=True, base=self.kit
+        )
+        kit = Image(
+            self.kit.component,
+            'kit',
+            self.kit.version,
+            revision=self.kit.revision + 1,
+            base=self.core,
+            seed='rebuilt kit',
+        )
+        app = Image(
+            APP_ID, 'app', '0.1.0', revision=self.app.revision + 1, base=kit, seed='rebuilt app'
+        )
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+        self.manifold('install', self.bundle('kit-sdk', [kit_sdk]))
+
+        # the SDK needs the exact revision of the kit it extends
+        self.manifold('install', self.bundle('rebuild', [kit, app]))
+        self.assertEqual(self.version_dirs('apps', APP_ID), [f'0.1.0-{app.revision}'])
+        self.assertEqual(
+            self.version_dirs('runtimes', kit.component),
+            [f'{kit.version}-{self.kit.revision}', f'{kit.version}-{kit.revision}'],
+        )
+
+    def test_newer_version_supersedes_older(self):
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+
+        # the kit stays, the new version uses it too
+        out = self.manifold('install', self.app2_bundle)
+        self.assertIn(f'app      {APP_ID} 0.1.0', out[out.index('Removed:') :])
+        self.assertEqual(self.version_dirs('apps', APP_ID), [f'0.2.0-{self.app2.revision}'])
+        self.assertIn((self.kit.component, self.kit.version, 'auto'), self.installed())
+        self.assertNotIn(self.app.verity_hash, self.stored_images())
 
     def test_base_is_what_provides_the_identity(self):
         # a kit with another ID, but the same identity as the kit the app needs
