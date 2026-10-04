@@ -5,14 +5,17 @@
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
 
+#define _GNU_SOURCE
 #include "config.h"
 #include "mfr-capture.h"
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/openat2.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <libglnx.h>
 #include <systemd/sd-json.h>
@@ -73,16 +76,6 @@ static const struct {
     {"dri",   "",          {"_dri.so", "_drv_video.so"}, {"LIBGL_DRIVERS_PATH", "LIBVA_DRIVERS_PATH"}},
     {"gbm",   "",          {"_gbm.so"},                  {"GBM_BACKENDS_PATH"}                       },
     {"vdpau", "libvdpau_", {".so.1"},                    {"VDPAU_DRIVER_PATH"}                       },
-};
-
-/* multiarch tuple -> the ld.so path ELF binaries of that ABI hardcode */
-static const struct {
-    const char *tuple;
-    const char *ld_so;
-} LD_SO_PATHS[] = {
-    {"x86_64-linux-gnu",  "lib64/ld-linux-x86-64.so.2"},
-    {"i386-linux-gnu",    "lib/ld-linux.so.2"         },
-    {"aarch64-linux-gnu", "lib/ld-linux-aarch64.so.1" },
 };
 
 /* captured only if the host's copy is newer than the image's */
@@ -1230,6 +1223,26 @@ mfr_capture_job_link_host_executable(MfrCaptureJob *job, const char *relative_pa
 }
 
 /**
+ * mfr_capture_job_ask_tool:
+ *
+ * Run the capture tool with an option that makes it print a path.
+ *
+ * Returns: (transfer full): the path, or %NULL on error
+ */
+static char *
+mfr_capture_job_ask_tool(MfrCaptureJob *job, const char *option, GError **error)
+{
+    g_autoptr(GPtrArray) argv = g_ptr_array_new_with_free_func(g_free);
+    char *output = NULL;
+
+    g_ptr_array_add(argv, g_strdup(job->tool));
+    g_ptr_array_add(argv, g_strdup(option));
+    if (!mfr_capture_run_tool(argv, &output, error))
+        return NULL;
+    return g_strchomp(output);
+}
+
+/**
  * mfr_capture_job_resolve_core_ld_so:
  *
  * Resolve the dynamic linker path @ld_so within the core. It is usually a
@@ -1241,14 +1254,18 @@ mfr_capture_job_link_host_executable(MfrCaptureJob *job, const char *relative_pa
 static char *
 mfr_capture_job_resolve_core_ld_so(MfrCaptureJob *job, const char *ld_so)
 {
-    g_autofree char *path = g_build_filename(job->core_mount, ld_so, NULL);
-    g_autofree char *resolved = realpath(path, NULL);
+    /* links are followed as if the core was the root, so an absolute one stays within it */
+    struct open_how how = {.flags = O_PATH | O_CLOEXEC, .resolve = RESOLVE_IN_ROOT};
+    glnx_autofd int core_fd = open(job->core_mount, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    glnx_autofd int fd = core_fd >= 0 ? (int) syscall(SYS_openat2, core_fd, ld_so, &how, sizeof(how)) : -1;
+    g_autofree char *fd_path = g_strdup_printf("/proc/self/fd/%d", fd);
+    g_autofree char *resolved = fd >= 0 ? g_file_read_link(fd_path, NULL) : NULL;
 
     if (resolved != NULL && g_str_has_prefix(resolved, job->core_mount) &&
         resolved[strlen(job->core_mount)] == '/')
         return g_strdup(resolved + strlen(job->core_mount) + 1);
-    /* missing in the core, or linked outside of it: use the interoperable path as-is */
-    return g_strdup(ld_so);
+    /* missing in the core: use the interoperable path as-is */
+    return g_strdup(g_path_skip_root(ld_so));
 }
 
 /**
@@ -1261,31 +1278,27 @@ mfr_capture_job_resolve_core_ld_so(MfrCaptureJob *job, const char *ld_so)
 static gboolean
 mfr_capture_job_link_host_glibc_runtime(MfrCaptureJob *job, GError **error)
 {
-    g_autoptr(GPtrArray) argv = g_ptr_array_new_with_free_func(g_free);
+    g_autofree char *ld_so = NULL;
     g_autofree char *resolved = NULL;
     g_autofree char *ld_so_in_core = NULL;
     g_autofree char *link = NULL;
     g_autofree char *link_dir = NULL;
     g_autofree char *target = NULL;
     g_autofree char *gconv = NULL;
-    const char *ld_so = NULL;
 
     if (!mfr_capture_job_check_captured(job, "libc.so.6")) {
         g_info("glibc comes from the image, keeping its dynamic linker");
         return TRUE;
     }
-    for (size_t i = 0; i < G_N_ELEMENTS(LD_SO_PATHS); i++) {
-        if (g_str_equal(LD_SO_PATHS[i].tuple, job->tuple))
-            ld_so = LD_SO_PATHS[i].ld_so;
-    }
-    if (ld_so == NULL)
-        return glnx_throw(error, "The path of the dynamic linker for %s is not known", job->tuple);
 
-    g_ptr_array_add(argv, g_strdup(job->tool));
-    g_ptr_array_add(argv, g_strdup("--resolve-ld.so=/"));
-    if (!mfr_capture_run_tool(argv, &resolved, error))
+    /* the tool knows the path of the dynamic linker for its architecture, which is the
+     * same on the host and in every image we install */
+    ld_so = mfr_capture_job_ask_tool(job, "--print-ld.so", error);
+    if (ld_so == NULL)
         return FALSE;
-    g_strchomp(resolved);
+    resolved = mfr_capture_job_ask_tool(job, "--resolve-ld.so=/", error);
+    if (resolved == NULL)
+        return FALSE;
 
     ld_so_in_core = mfr_capture_job_resolve_core_ld_so(job, ld_so);
     link = g_build_filename(job->overrides_dir, ld_so_in_core, NULL);
