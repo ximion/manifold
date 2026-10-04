@@ -275,11 +275,15 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "version", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_NO_SUCH_COMPONENT) == 0) {
+        const char *version = mf_parameter_string(parameters, "version", NULL);
+
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_NOT_FOUND,
-                    "Component %s is not installed",
-                    mf_parameter_string(parameters, "componentId", "?"));
+                    "Component %s%s%s is not installed",
+                    mf_parameter_string(parameters, "componentId", "?"),
+                    version != NULL ? " " : "",
+                    version != NULL ? version : "");
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_COMPONENT_IN_USE) == 0) {
         g_set_error(error,
                     MF_ERROR,

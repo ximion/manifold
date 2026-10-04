@@ -138,7 +138,10 @@ mfd_service_reply_error(sd_varlink *link, const GError *error, const MfdErrorDet
         case MF_ERROR_NOT_FOUND:
             return sd_varlink_errorbo(link,
                                       MF_VARLINK_ERROR_NO_SUCH_COMPONENT,
-                                      SD_JSON_BUILD_PAIR_STRING("componentId", detail->component_id));
+                                      SD_JSON_BUILD_PAIR_STRING("componentId", detail->component_id),
+                                      SD_JSON_BUILD_PAIR_CONDITION(detail->version != NULL,
+                                                                   "version",
+                                                                   SD_JSON_BUILD_STRING(detail->version)));
         case MF_ERROR_WRONG_ARCHITECTURE:
             return sd_varlink_errorbo(
                 link,

@@ -816,13 +816,14 @@ mfd_manager_plan_removal(MfdManager *manager,
             if (ret_detail != NULL) {
                 mfd_error_detail_clear(ret_detail);
                 ret_detail->component_id = g_strdup(component_id);
+                ret_detail->version = g_strdup(version);
             }
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_NOT_FOUND,
                         "%s%s%s is not installed",
                         component_id,
-                        version != NULL ? "/" : "",
+                        version != NULL ? " " : "",
                         version != NULL ? version : "");
             return NULL;
         }

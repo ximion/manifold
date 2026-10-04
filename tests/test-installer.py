@@ -297,8 +297,13 @@ class InstallerTest(unittest.TestCase):
         self.manifold('install', self.app_bundle)
         self.assertIn('is used by', self.manifold('remove', self.kit.component, expect=1))
         self.assertIn('is used by', self.manifold('remove', CORE_ID, expect=1))
-        self.assertIn('not installed', self.manifold('remove', 'org.example.nothing', expect=1))
-        self.assertIn('not installed', self.manifold('remove', APP_ID, '9.9.9', expect=1))
+        self.assertIn(
+            'org.example.nothing is not installed',
+            self.manifold('remove', 'org.example.nothing', expect=1),
+        )
+        self.assertIn(
+            f'{APP_ID} 9.9.9 is not installed', self.manifold('remove', APP_ID, '9.9.9', expect=1)
+        )
 
     def test_several_versions(self):
         self.manifold('install', self.core_bundle)

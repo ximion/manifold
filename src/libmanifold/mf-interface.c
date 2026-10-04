@@ -174,7 +174,9 @@ static SD_VARLINK_DEFINE_ERROR(
 static SD_VARLINK_DEFINE_ERROR(
     NoSuchComponent,
     SD_VARLINK_FIELD_COMMENT("Identifier of the component that was not found."),
-    SD_VARLINK_DEFINE_FIELD(componentId, SD_VARLINK_STRING, 0));
+    SD_VARLINK_DEFINE_FIELD(componentId, SD_VARLINK_STRING, 0),
+    SD_VARLINK_FIELD_COMMENT("The version that was not found, if only one version was asked for."),
+    SD_VARLINK_DEFINE_FIELD(version, SD_VARLINK_STRING, SD_VARLINK_NULLABLE));
 
 static SD_VARLINK_DEFINE_ERROR(
     ComponentInUse,
