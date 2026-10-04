@@ -157,6 +157,8 @@ mfd_service_reply_error(sd_varlink *link, const GError *error, const MfdErrorDet
     if (error->domain == MF_ERROR) {
         switch (error->code) {
         case MF_ERROR_INVALID_BUNDLE:
+        case MF_ERROR_INVALID_MANIFEST:
+            /* a manifest is only ever installed as part of a bundle */
             error_id = MF_VARLINK_ERROR_INVALID_BUNDLE;
             break;
         case MF_ERROR_VERIFICATION_FAILED:

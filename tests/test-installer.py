@@ -367,6 +367,12 @@ class InstallerTest(unittest.TestCase):
         self.assertIn('describes org.example.Other, not', out)
         self.assertEqual(self.installed(), [])
 
+    def test_invalid_manifest_is_an_invalid_bundle(self):
+        sdk = Image(CORE_ID + '.sdk', 'core', '13.4', sdk=True)
+        out = self.manifold('install', self.bundle('sdk-without-base', [sdk]), expect=1)
+        self.assertIn('Not a valid bundle', out)
+        self.assertIn('an SDK must name the component it extends', out)
+
     # removing
 
     def test_remove_takes_the_kit_along(self):

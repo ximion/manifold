@@ -347,8 +347,12 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
 
     if (!mf_manifest_json_parse_base(jo, priv, error))
         return FALSE;
-    /* only a core has nothing below it, following base from anything else leads to its core */
-    if ((priv->kind != MF_COMPONENT_KIND_CORE || priv->sdk) && priv->base_id == NULL) {
+    /* only a core has nothing below it, and the SDK of a core builds on that core */
+    if (priv->sdk && priv->base_id == NULL) {
+        mf_set_invalid_json(error, "an SDK must name the component it extends");
+        return FALSE;
+    }
+    if (priv->kind != MF_COMPONENT_KIND_CORE && priv->base_id == NULL) {
         mf_set_invalid_json(error,
                             "a %s must name the layer it is built on",
                             mf_component_kind_to_string(priv->kind));
