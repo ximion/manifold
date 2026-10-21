@@ -35,6 +35,8 @@ typedef struct {
     const TestImage *missing;  /* an image that is not in the bundle */
     /* an image whose manifest records a wrong blake3, next to the right sha256 */
     const TestImage *wrong_blake3;
+    /* an image whose MetaInfo the index lists twice */
+    const TestImage *listed_twice;
 } BundleFlaws;
 
 typedef struct {
@@ -121,6 +123,30 @@ mft_bundle_add(zip_t *zip, const char *name, gconstpointer data, gsize size)
     g_assert_cmpint(zip_file_add(zip, name, source, ZIP_FL_ENC_UTF_8), >=, 0);
 }
 
+static void
+mft_index_add(GString *index, const char *name, const char *contents)
+{
+    g_autofree char *sha256 = g_compute_checksum_for_string(G_CHECKSUM_SHA256, contents, -1);
+    g_autofree char *blake3 = mft_blake3_of(contents, strlen(contents));
+
+    /* clang-format off */
+    g_string_append_printf(
+        index,
+        "%s\n"
+        "      {\n"
+        "         \"name\": \"%s\",\n"
+        "         \"size\": %zu,\n"
+        "         \"sha256\": \"%s\",\n"
+        "         \"blake3\": \"%s\"\n"
+        "      }",
+        index->str[index->len - 1] == '[' ? "" : ",",
+        name,
+        strlen(contents),
+        sha256,
+        blake3);
+    /* clang-format on */
+}
+
 /**
  * mft_write_bundle:
  *
@@ -142,32 +168,14 @@ mft_write_bundle(Fixture *f, const char *name, const TestImage *const *images, c
         g_autofree char *metainfo_name = g_strconcat(base_name, ".metainfo.xml", NULL);
         g_autofree char *manifest = mft_image_manifest_json(image, image == flaws->wrong_blake3);
         g_autofree char *metainfo = mft_metainfo_xml(image->component_id);
-        const char *const names[] = {manifest_name, metainfo_name};
-        const char *const contents[] = {manifest, metainfo};
         gsize data_size;
         const guint8 *data = g_bytes_get_data(image->data, &data_size);
 
-        for (size_t j = 0; j < G_N_ELEMENTS(names); j++) {
-            g_autofree char *sha256 = g_compute_checksum_for_string(G_CHECKSUM_SHA256, contents[j], -1);
-            g_autofree char *blake3 = mft_blake3_of(contents[j], strlen(contents[j]));
+        mft_index_add(index, manifest_name, manifest);
+        mft_index_add(index, metainfo_name, metainfo);
+        if (image == flaws->listed_twice)
+            mft_index_add(index, metainfo_name, metainfo);
 
-            /* clang-format off */
-            g_string_append_printf(
-                index,
-                "%s\n"
-                "      {\n"
-                "         \"name\": \"%s\",\n"
-                "         \"size\": %zu,\n"
-                "         \"sha256\": \"%s\",\n"
-                "         \"blake3\": \"%s\"\n"
-                "      }",
-                index->str[index->len - 1] == '[' ? "" : ",",
-                names[j],
-                strlen(contents[j]),
-                sha256,
-                blake3);
-            /* clang-format on */
-        }
         if (image == flaws->tampered) {
             g_autofree char *changed = g_strconcat(manifest, "\n", NULL);
 
@@ -423,8 +431,31 @@ test_missing_image(Fixture *f, gconstpointer user_data)
     g_assert_error(error, MF_ERROR, MF_ERROR_VERIFICATION_FAILED);
     g_assert_cmpstr(error->message,
                     ==,
-                    "Image " TEST_KIT_ID "_20260112T0238.raw of " TEST_KIT_ID
-                    "_20260112T0238.manifold.json is not in the bundle");
+                    TEST_KIT_ID "_20260112T0238.manifold.json refers to " TEST_KIT_ID
+                                "_20260112T0238.raw, which is not in the bundle");
+}
+
+/**
+ * test_listed_twice:
+ *
+ * Every file of a bundle is referred to once, so an index can not list a
+ * file twice.
+ */
+static void
+test_listed_twice(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = mft_write_bundle(f,
+                                             "twice.manifold",
+                                             (const TestImage *[]){&f->kit, &f->app, NULL},
+                                             &(BundleFlaws){.listed_twice = &f->app});
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message,
+                    ==,
+                    "index.json refers to " TEST_APP_ID "_0.1.0.metainfo.xml, which is referred to already");
 }
 
 /**
@@ -607,6 +638,7 @@ main(int argc, char **argv)
     add_test("copy-image", test_copy_image);
     add_test("corrupt-image", test_corrupt_image);
     add_test("missing-image", test_missing_image);
+    add_test("listed-twice", test_listed_twice);
     add_test("tampered-manifest", test_tampered_manifest);
     add_test("wrong-blake3", test_wrong_blake3);
     add_test("unlisted-file", test_unlisted_file);

@@ -227,6 +227,68 @@ mf_set_zip_error(GError **error, MfError code, zip_error_t *zerr, const char *me
     g_set_error(error, MF_ERROR, code, "%s: %s", message, zip_error_strerror(zerr));
 }
 
+/* a file in the archive of a bundle */
+typedef struct {
+    guint64 index;       /* the index of the file in the archive */
+    gboolean referenced; /* the index lists the file, or a manifest names it as its image */
+} MfBundleEntry;
+
+/* what opening a bundle keeps track of */
+typedef struct {
+    MfBundle *bundle;
+    GHashTable *entries; /* name -> MfBundleEntry, for every file in the archive */
+    guint64 budget;      /* how much metadata may still be read into memory */
+} MfBundleReader;
+
+static void
+mf_bundle_reader_clear(MfBundleReader *reader)
+{
+    g_clear_pointer(&reader->entries, g_hash_table_unref);
+}
+
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfBundleReader, mf_bundle_reader_clear)
+
+/**
+ * mf_bundle_reader_take_reference:
+ * @name: the name of a file in the bundle
+ * @source: what refers to the file, for messages
+ *
+ * Record that @source refers to a file of the bundle. Every file in a bundle
+ * has to be referred to exactly once: by the index, or by a manifest as its
+ * image. The index and its signature count as referred to by themselves.
+ * This does not verify the file.
+ *
+ * Returns: (transfer none): the entry of the file, or %NULL if the bundle
+ *   does not have it, or something refers to it already
+ */
+static MfBundleEntry *
+mf_bundle_reader_take_reference(MfBundleReader *reader, const char *name, const char *source, GError **error)
+{
+    MfBundleEntry *entry = g_hash_table_lookup(reader->entries, name);
+
+    if (entry == NULL) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_VERIFICATION_FAILED,
+                    "%s refers to %s, which is not in the bundle",
+                    source,
+                    name);
+        return NULL;
+    }
+    if (entry->referenced) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    "%s refers to %s, which is referred to already",
+                    source,
+                    name);
+        return NULL;
+    }
+
+    entry->referenced = TRUE;
+    return entry;
+}
+
 /**
  * mf_zip_read_entry:
  * @budget: (inout): how much metadata we may still read, which we lower by the size of the file
@@ -301,24 +363,24 @@ mf_zip_read_entry(zip_t *zip,
 }
 
 /**
- * mf_bundle_parse_manifest:
+ * mf_bundle_reader_parse_manifest:
  *
- * Get an image description of a manifest file of the bundle.
+ * Parse a manifest file of the bundle into a #MfBundleImage, and record
+ * that the manifest refers to its image file.
  */
 static MfBundleImage *
-mf_bundle_parse_manifest(MfBundle *bundle,
-                         const char *name,
-                         const char *data,
-                         gsize size,
-                         GHashTable *entries,
-                         GError **error)
+mf_bundle_reader_parse_manifest(MfBundleReader *reader,
+                                const char *name,
+                                const char *data,
+                                gsize size,
+                                GError **error)
 {
-    MfBundlePrivate *priv = GET_PRIVATE(bundle);
+    MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
     g_autoptr(MfBundleImage) image = NULL;
     g_autoptr(GBytes) bytes = g_bytes_new(data, size);
+    MfBundleEntry *image_entry;
     const char *image_name;
     zip_stat_t st;
-    gpointer index_ptr;
 
     image = g_object_new(MF_TYPE_BUNDLE_IMAGE, NULL);
     image->manifest_name = g_strdup(name);
@@ -334,16 +396,10 @@ mf_bundle_parse_manifest(MfBundle *bundle,
 
     /* the image has to be in the bundle, and as large as the manifest says */
     image_name = mf_manifest_get_image_file(image->manifest);
-    if (!g_hash_table_lookup_extended(entries, image_name, NULL, &index_ptr)) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_VERIFICATION_FAILED,
-                    "Image %s of %s is not in the bundle",
-                    image_name,
-                    name);
+    image_entry = mf_bundle_reader_take_reference(reader, image_name, name, error);
+    if (image_entry == NULL)
         return NULL;
-    }
-    image->image_index = GPOINTER_TO_SIZE(index_ptr);
+    image->image_index = image_entry->index;
 
     if (zip_stat_index(priv->zip, image->image_index, 0, &st) < 0 || !(st.valid & ZIP_STAT_SIZE) ||
         st.size != mf_manifest_get_image_size(image->manifest)) {
@@ -359,22 +415,21 @@ mf_bundle_parse_manifest(MfBundle *bundle,
 }
 
 /**
- * mf_bundle_verify_indexed_file:
+ * mf_bundle_reader_verify_indexed_file:
  *
  * Check a file that the index lists against its size and hashes in the
- * index, and return its contents.
- * Its size is taken from the metadata @budget.
+ * index, and return its contents. We also record that the index refers to
+ * the file.
  */
 static char *
-mf_bundle_verify_indexed_file(MfBundle *bundle,
-                              sd_json_variant *entry,
-                              GHashTable *entries,
-                              guint64 *budget,
-                              char **ret_name,
-                              gsize *ret_size,
-                              GError **error)
+mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
+                                     sd_json_variant *entry,
+                                     char **ret_name,
+                                     gsize *ret_size,
+                                     GError **error)
 {
-    MfBundlePrivate *priv = GET_PRIVATE(bundle);
+    MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
+    MfBundleEntry *archive_entry;
     g_autofree char *data = NULL;
     g_autofree char *actual_sha256 = NULL;
     g_autofree char *actual_blake3 = NULL;
@@ -383,7 +438,6 @@ mf_bundle_verify_indexed_file(MfBundle *bundle,
     const char *expected_blake3;
     guint64 size;
     gsize actual_size;
-    gpointer index_ptr;
 
     if (!sd_json_variant_is_object(entry)) {
         g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "%s: file entry is not an object", INDEX_NAME);
@@ -406,16 +460,11 @@ mf_bundle_verify_indexed_file(MfBundle *bundle,
     if (expected_blake3 == NULL)
         return NULL;
 
-    if (!g_hash_table_lookup_extended(entries, name, NULL, &index_ptr)) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_VERIFICATION_FAILED,
-                    "%s is listed in the index, but not in the bundle",
-                    name);
+    archive_entry = mf_bundle_reader_take_reference(reader, name, INDEX_NAME, error);
+    if (archive_entry == NULL)
         return NULL;
-    }
 
-    data = mf_zip_read_entry(priv->zip, GPOINTER_TO_SIZE(index_ptr), name, budget, &actual_size, error);
+    data = mf_zip_read_entry(priv->zip, archive_entry->index, name, &reader->budget, &actual_size, error);
     if (data == NULL)
         return NULL;
 
@@ -495,35 +544,36 @@ mf_bundle_image_make_sanitized_metainfo(MfBundleImage *image,
 }
 
 /**
- * mf_bundle_read_index:
+ * mf_bundle_reader_read_index:
  *
  * Verify every file the index lists, parse the manifests among them, and
- * give every image its MetaInfo. The names of verified files are collected
- * in @verified.
+ * give every image its MetaInfo.
  */
 static gboolean
-mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified, GError **error)
+mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
 {
-    MfBundlePrivate *priv = GET_PRIVATE(bundle);
+    MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
     g_autofree char *index_data = NULL;
     g_autoptr(GHashTable) contents = NULL;
     g_autoptr(sd_json_variant) index = NULL;
+    MfBundleEntry *index_entry;
     sd_json_variant *files;
-    gpointer index_ptr;
     gsize index_size;
     guint64 format;
-    guint64 budget = METADATA_TOTAL_SIZE_MAX;
 
     contents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
-    if (!g_hash_table_lookup_extended(entries, INDEX_NAME, NULL, &index_ptr)) {
+    index_entry = g_hash_table_lookup(reader->entries, INDEX_NAME);
+    if (index_entry == NULL) {
         g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "The bundle has no %s", INDEX_NAME);
         return FALSE;
     }
+    /* the index cannot list itself */
+    index_entry->referenced = TRUE;
 
     index_data = mf_zip_read_entry(priv->zip,
-                                   GPOINTER_TO_SIZE(index_ptr),
+                                   index_entry->index,
                                    INDEX_NAME,
-                                   &budget,
+                                   &reader->budget,
                                    &index_size,
                                    error);
     if (index_data == NULL)
@@ -560,27 +610,25 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
         g_autofree char *data = NULL;
         gsize size;
 
-        data = mf_bundle_verify_indexed_file(bundle,
-                                             sd_json_variant_by_index(files, i),
-                                             entries,
-                                             &budget,
-                                             &name,
-                                             &size,
-                                             error);
+        data = mf_bundle_reader_verify_indexed_file(reader,
+                                                    sd_json_variant_by_index(files, i),
+                                                    &name,
+                                                    &size,
+                                                    error);
         if (data == NULL)
             return FALSE;
 
         if (g_str_has_suffix(name, MANIFEST_SUFFIX)) {
-            MfBundleImage *image = mf_bundle_parse_manifest(bundle, name, data, size, entries, error);
+            MfBundleImage *image = mf_bundle_reader_parse_manifest(reader, name, data, size, error);
 
             if (image == NULL)
                 return FALSE;
             g_ptr_array_add(priv->images, image);
         } else {
-            g_hash_table_insert(contents, g_strdup(name), g_bytes_new_take(g_steal_pointer(&data), size));
+            g_hash_table_insert(contents,
+                                g_steal_pointer(&name),
+                                g_bytes_new_take(g_steal_pointer(&data), size));
         }
-
-        g_hash_table_add(verified, g_steal_pointer(&name));
     }
 
     /* the MetaInfo of an image is named like its manifest */
@@ -622,11 +670,12 @@ MfBundle *
 mf_bundle_new_from_fd(int fd, GError **error)
 {
     g_autoptr(MfBundle) bundle = NULL;
-    g_autoptr(GHashTable) entries = NULL;  /* name -> index */
-    g_autoptr(GHashTable) verified = NULL; /* names of files the index vouches for */
+    g_auto(MfBundleReader) reader = {.budget = METADATA_TOTAL_SIZE_MAX};
     MfBundlePrivate *priv;
+    MfBundleEntry *signature_entry;
     GHashTableIter iter;
     gpointer entry_name;
+    gpointer entry_ptr;
     zip_int64_t n_entries;
     int fd_copy;
     int zip_errno = 0;
@@ -646,6 +695,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
 
     bundle = g_object_new(MF_TYPE_BUNDLE, NULL);
     priv = GET_PRIVATE(bundle);
+    reader.bundle = bundle;
 
     priv->zip = zip_fdopen(fd_copy, ZIP_RDONLY, &zip_errno);
     if (priv->zip == NULL) {
@@ -659,10 +709,11 @@ mf_bundle_new_from_fd(int fd, GError **error)
     }
 
     /* what is in the archive */
-    entries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    reader.entries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     n_entries = zip_get_num_entries(priv->zip, 0);
     for (zip_int64_t i = 0; i < n_entries; i++) {
         const char *name = zip_get_name(priv->zip, (zip_uint64_t) i, 0);
+        MfBundleEntry *entry;
 
         if (!mf_file_name_is_valid(name)) {
             g_set_error(error,
@@ -671,15 +722,22 @@ mf_bundle_new_from_fd(int fd, GError **error)
                         "The bundle contains a file with an invalid name");
             return NULL;
         }
-        if (g_hash_table_contains(entries, name)) {
+        if (g_hash_table_contains(reader.entries, name)) {
             g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "The bundle contains %s twice", name);
             return NULL;
         }
-        g_hash_table_insert(entries, g_strdup(name), GSIZE_TO_POINTER((gsize) i));
+        entry = g_new0(MfBundleEntry, 1);
+        entry->index = (guint64) i;
+        g_hash_table_insert(reader.entries, g_strdup(name), entry);
     }
 
-    verified = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-    if (!mf_bundle_read_index(bundle, entries, verified, error))
+    /* the index cannot list its own signature, which is made over the index */
+    signature_entry = g_hash_table_lookup(reader.entries, SIGNATURE_NAME);
+    if (signature_entry != NULL)
+        signature_entry->referenced = TRUE;
+    priv->is_signed = signature_entry != NULL;
+
+    if (!mf_bundle_reader_read_index(&reader, error))
         return NULL;
 
     if (priv->images->len == 0) {
@@ -687,31 +745,12 @@ mf_bundle_new_from_fd(int fd, GError **error)
         return NULL;
     }
 
-    priv->is_signed = g_hash_table_contains(entries, SIGNATURE_NAME);
-    g_hash_table_add(verified, g_strdup(INDEX_NAME));
-    g_hash_table_add(verified, g_strdup(SIGNATURE_NAME));
+    /* nothing may be in the bundle that nothing refers to */
+    g_hash_table_iter_init(&iter, reader.entries);
+    while (g_hash_table_iter_next(&iter, &entry_name, &entry_ptr)) {
+        const MfBundleEntry *entry = entry_ptr;
 
-    /* every image a manifest refers to is accounted for by that manifest, and is nothing else */
-    for (guint i = 0; i < priv->images->len; i++) {
-        MfBundleImage *image = g_ptr_array_index(priv->images, i);
-        const char *image_name = mf_manifest_get_image_file(image->manifest);
-
-        if (g_hash_table_contains(verified, image_name)) {
-            g_set_error(error,
-                        MF_ERROR,
-                        MF_ERROR_INVALID_BUNDLE,
-                        "Image %s of %s is used for something else already",
-                        image_name,
-                        image->manifest_name);
-            return NULL;
-        }
-        g_hash_table_add(verified, g_strdup(image_name));
-    }
-
-    /* nothing may be in the bundle that nothing vouches for */
-    g_hash_table_iter_init(&iter, entries);
-    while (g_hash_table_iter_next(&iter, &entry_name, NULL)) {
-        if (!g_hash_table_contains(verified, entry_name)) {
+        if (!entry->referenced) {
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_INVALID_BUNDLE,
