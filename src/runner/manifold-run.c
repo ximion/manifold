@@ -41,17 +41,36 @@
 
 #define PROGRAM_NAME "manifold-run"
 
+/**
+ * MfxLaunchData:
+ *
+ * What the compose service prepared for a launch.
+ */
 typedef struct {
-    int mount_fd;
-    char *executable;   /* absolute path within the tree */
-    char **environment; /* NAME=VALUE, an empty value means unset */
+    unsigned int mount_fd_idx; /* which descriptor of the reply is the tree */
+    int mount_fd;              /* the tree, once taken from the reply */
+    char *executable;          /* absolute path within the tree */
+    char **environment;        /* NAME=VALUE, an empty value means unset */
 } MfxLaunchData;
 
-typedef struct {
-    unsigned int mount_fd_index;
-    char *executable;
-    char **environment;
-} MfxPrepareLaunchReply;
+/**
+ * mfx_launch_data_clear:
+ */
+static void
+mfx_launch_data_clear(MfxLaunchData *launch_data)
+{
+    if (launch_data->mount_fd >= 0)
+        close(launch_data->mount_fd);
+    launch_data->mount_fd = -1;
+    free(launch_data->executable);
+    launch_data->executable = nullptr;
+    if (launch_data->environment != nullptr) {
+        for (char **e = launch_data->environment; *e != nullptr; e++)
+            free(*e);
+        free(launch_data->environment);
+        launch_data->environment = nullptr;
+    }
+}
 
 /**
  * mfx_print_usage:
@@ -130,23 +149,21 @@ mfx_prepare_launch(const char *socket_path, const char *component_id, MfxLaunchD
     static const sd_json_dispatch_field dispatch_table[] = {
         {"mountFileDescriptor",
          _SD_JSON_VARIANT_TYPE_INVALID, sd_json_dispatch_uint,
-         offsetof(MfxPrepareLaunchReply, mount_fd_index),
+         offsetof(MfxLaunchData, mount_fd_idx),
          SD_JSON_MANDATORY},
         {"executable",
          SD_JSON_VARIANT_STRING, sd_json_dispatch_string,
-         offsetof(MfxPrepareLaunchReply, executable),
+         offsetof(MfxLaunchData, executable),
          SD_JSON_MANDATORY},
         {"environment",
          SD_JSON_VARIANT_ARRAY, sd_json_dispatch_strv,
-         offsetof(MfxPrepareLaunchReply, environment),
+         offsetof(MfxLaunchData, environment),
          0},
         {},
     };
-    MfxPrepareLaunchReply reply = {};
     sd_varlink *link = nullptr;
     sd_json_variant *parameters = nullptr;
     const char *error_id = nullptr;
-    int mount_fd = -1;
     int r;
 
     r = sd_varlink_connect_address(&link, socket_path);
@@ -176,7 +193,7 @@ mfx_prepare_launch(const char *socket_path, const char *component_id, MfxLaunchD
         goto out;
     }
 
-    r = sd_json_dispatch(parameters, dispatch_table, SD_JSON_ALLOW_EXTENSIONS, &reply);
+    r = sd_json_dispatch(parameters, dispatch_table, SD_JSON_ALLOW_EXTENSIONS, launch_data);
     if (r < 0) {
         fprintf(stderr,
                 "%s: Failed to parse reply of the Manifold compose service: %s\n",
@@ -185,39 +202,26 @@ mfx_prepare_launch(const char *socket_path, const char *component_id, MfxLaunchD
         goto out;
     }
 
-    if (reply.executable[0] != '/') {
+    if (launch_data->executable[0] != '/') {
         fprintf(stderr,
                 "%s: Received a relative executable path (this is not allowed): %s\n",
                 PROGRAM_NAME,
-                reply.executable);
+                launch_data->executable);
         r = -EINVAL;
         goto out;
     }
 
-    mount_fd = sd_varlink_take_fd(link, reply.mount_fd_index);
-    if (mount_fd < 0) {
+    launch_data->mount_fd = sd_varlink_take_fd(link, launch_data->mount_fd_idx);
+    if (launch_data->mount_fd < 0) {
         fprintf(stderr, "%s: Did not receive a mount tree\n", PROGRAM_NAME);
         r = -EBADF;
         goto out;
     }
-
-    launch_data->mount_fd = mount_fd;
-    launch_data->executable = reply.executable;
-    launch_data->environment = reply.environment;
-    reply.executable = nullptr;
-    reply.environment = nullptr;
-    mount_fd = -1;
     r = 0;
 
 out:
-    if (mount_fd >= 0)
-        close(mount_fd);
-    free(reply.executable);
-    if (reply.environment != nullptr) {
-        for (char **e = reply.environment; *e != nullptr; e++)
-            free(*e);
-        free(reply.environment);
-    }
+    if (r < 0)
+        mfx_launch_data_clear(launch_data);
     /* the reply is owned by the connection */
     sd_varlink_close_unref(link);
 
