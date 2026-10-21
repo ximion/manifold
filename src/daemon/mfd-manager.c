@@ -272,6 +272,30 @@ mfd_set_already_installed_error(GError **error,
 }
 
 /**
+ * mfd_set_not_installed_error:
+ * @version: (nullable): the version, or %NULL for any version of the component
+ */
+static void
+mfd_set_not_installed_error(GError **error,
+                            MfdErrorDetail *ret_detail,
+                            const char *component_id,
+                            const char *version)
+{
+    if (ret_detail != NULL) {
+        mfd_error_detail_clear(ret_detail);
+        ret_detail->component_id = g_strdup(component_id);
+        ret_detail->version = g_strdup(version);
+    }
+    g_set_error(error,
+                MF_ERROR,
+                MF_ERROR_NOT_FOUND,
+                "%s%s%s is not installed",
+                component_id,
+                version != NULL ? " " : "",
+                version != NULL ? version : "");
+}
+
+/**
  * mfd_set_wrong_architecture_error:
  */
 static void
@@ -868,18 +892,7 @@ mfd_manager_plan_removal(MfdManager *manager,
                 mfd_removal_plan_add_item(rmplan, candidate, MF_ACTION_REMOVE);
         }
         if (rmplan->items->len == 0) {
-            if (ret_detail != NULL) {
-                mfd_error_detail_clear(ret_detail);
-                ret_detail->component_id = g_strdup(component_id);
-                ret_detail->version = g_strdup(version);
-            }
-            g_set_error(error,
-                        MF_ERROR,
-                        MF_ERROR_NOT_FOUND,
-                        "%s%s%s is not installed",
-                        component_id,
-                        version != NULL ? " " : "",
-                        version != NULL ? version : "");
+            mfd_set_not_installed_error(error, ret_detail, component_id, version);
             return NULL;
         }
 
@@ -1299,18 +1312,7 @@ mfd_manager_mark(MfdManager *manager,
         n_marked++;
     }
     if (n_marked == 0) {
-        if (ret_detail != NULL) {
-            mfd_error_detail_clear(ret_detail);
-            ret_detail->component_id = g_strdup(component_id);
-            ret_detail->version = g_strdup(version);
-        }
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_NOT_FOUND,
-                    "%s%s%s is not installed",
-                    component_id,
-                    version != NULL ? " " : "",
-                    version != NULL ? version : "");
+        mfd_set_not_installed_error(error, ret_detail, component_id, version);
         return NULL;
     }
 
