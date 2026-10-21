@@ -278,12 +278,10 @@ mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrLayer *layer, GError *
     if (!mfr_layer_image_setup(layer, device_name, device_path, error))
         return NULL;
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, path, 0755, NULL, error))
-        return NULL;
+        goto fail;
     if (mount(device_path, path, "erofs", MS_RDONLY | MS_NOSUID | MS_NODEV, NULL) != 0) {
         glnx_throw_errno_prefix(error, "Unable to mount %s at %s", device_path, path);
-        /* deferred, as a device that was reused may still be in use */
-        mfr_verity_deactivate(device_name, TRUE, NULL);
-        return NULL;
+        goto fail;
     }
     g_info("Mounted %s %s at %s", layer->component_id, layer->version, path);
 
@@ -293,6 +291,12 @@ mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrLayer *layer, GError *
     g_hash_table_insert(mounts->table, g_strdup(layer->verity_hash), img_mount);
 
     return img_mount->path;
+
+fail:
+    (void) rmdir(path);
+    /* deferred, as a device that was reused may still be in use */
+    mfr_verity_deactivate(device_name, TRUE, NULL);
+    return NULL;
 }
 
 /**
