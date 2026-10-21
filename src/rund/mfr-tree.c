@@ -412,13 +412,17 @@ mfr_tree_prepare_layer(MfrTree *tree, const char *layer_dir, GError **error)
     g_autofree char *record_dir = g_path_get_dirname(record_path);
     g_autofree char *host_dir = g_build_filename(layer_dir, MFR_HOST_DIR, NULL);
     g_autofree char *app_dir = g_build_filename(layer_dir, "app", NULL);
+    g_autofree char *proc_dir = g_build_filename(layer_dir, "proc", NULL);
 
+    /* every mount point of the tree is a directory of this layer, as one of an
+     * image could be a link, which mounting would follow outside of the tree */
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, record_dir, 0755, NULL, error) ||
         !glnx_shutil_mkdir_p_at(AT_FDCWD, host_dir, 0755, NULL, error) ||
-        !glnx_shutil_mkdir_p_at(AT_FDCWD, app_dir, 0755, NULL, error))
+        !glnx_shutil_mkdir_p_at(AT_FDCWD, app_dir, 0755, NULL, error) ||
+        !glnx_shutil_mkdir_p_at(AT_FDCWD, proc_dir, 0755, NULL, error))
         return FALSE;
 
-    /* the mount points; a directory here merges with the one of the images, if any */
+    /* a directory here merges with the one of the images, if any */
     for (size_t i = 0; i < G_N_ELEMENTS(HOST_BINDS); i++) {
         g_autofree char *dir = g_build_filename(layer_dir, HOST_BINDS[i].path, NULL);
 
@@ -606,7 +610,8 @@ mfr_tree_assemble_internal(MfrTree *tree, const char *const *image_paths, GError
     g_ptr_array_add(lowers, NULL);
 
     lower = g_strjoinv(":", (char **) lowers->pdata);
-    if (!g_file_test(app_dir, G_FILE_TEST_IS_DIR))
+    /* binding /app would follow a link outside of the image */
+    if (g_file_test(app_dir, G_FILE_TEST_IS_SYMLINK) || !g_file_test(app_dir, G_FILE_TEST_IS_DIR))
         return glnx_throw(error, "The application image has no /app directory");
 
     /* an application launched before a restart of the daemon may still use the
