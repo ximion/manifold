@@ -54,8 +54,6 @@
  * modification times of the library directories are compared.
  */
 
-/* where the host is bound in a mount tree */
-constexpr char HOST_PREFIX[] = "/run/host";
 /* where the rewritten loader manifests go in a tree, kept apart from the image's own */
 constexpr char GRAPHICS_OVERRIDES[] = "/usr/lib/manifold/graphics";
 
@@ -574,7 +572,7 @@ mfr_capture_job_make_argv(MfrCaptureJob *job, const char *dest)
     /* comparing against the core implements "newest of host and image" */
     g_ptr_array_add(argv, g_strdup_printf("--container=%s", job->core_mount));
     /* the host is at /run/host in the tree, so every link has to point there */
-    g_ptr_array_add(argv, g_strdup_printf("--link-target=%s", HOST_PREFIX));
+    g_ptr_array_add(argv, g_strdup_printf("--link-target=%s", MFR_HOST_DIR));
     g_ptr_array_add(argv, g_strdup_printf("--dest=%s", dest));
 
     return argv;
@@ -1074,7 +1072,6 @@ mfr_capture_job_rewrite_json_loader_manifest(MfrCaptureJob *job,
                                              GError **error)
 {
     g_autoptr(sd_json_variant) manifest = mf_json_parse_file(plan->source, error);
-    g_autofree char *formatted = NULL;
     int r;
 
     if (manifest == NULL)
@@ -1130,10 +1127,7 @@ mfr_capture_job_rewrite_json_loader_manifest(MfrCaptureJob *job,
             return glnx_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
     }
 
-    r = sd_json_variant_format(manifest, SD_JSON_FORMAT_PRETTY | SD_JSON_FORMAT_NEWLINE, &formatted);
-    if (r < 0)
-        return glnx_throw(error, "Unable to format manifest: %s", g_strerror(-r));
-    return g_file_set_contents(target, formatted, -1, error);
+    return mf_json_write_file(target, manifest, error);
 }
 
 /**
@@ -1275,7 +1269,7 @@ mfr_capture_job_link_host_path(MfrCaptureJob *job, const char *relative_path, GF
 {
     g_autofree char *host_path = g_build_filename("/", relative_path, NULL);
     g_autofree char *link = g_build_filename(job->overrides_dir, relative_path, NULL);
-    g_autofree char *target = g_build_filename(HOST_PREFIX, relative_path, NULL);
+    g_autofree char *target = g_build_filename(MFR_HOST_DIR, relative_path, NULL);
     g_autofree char *parent = g_path_get_dirname(link);
 
     if (!g_file_test(host_path, test))
@@ -1390,7 +1384,7 @@ mfr_capture_job_link_host_glibc_runtime(MfrCaptureJob *job, GError **error)
     ld_so_in_core = mfr_capture_job_resolve_core_ld_so(job, ld_so);
     link = g_build_filename(job->overrides_dir, ld_so_in_core, NULL);
     link_dir = g_path_get_dirname(link);
-    target = g_build_filename(HOST_PREFIX, resolved, NULL);
+    target = g_build_filename(MFR_HOST_DIR, resolved, NULL);
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, link_dir, 0755, NULL, error))
         return FALSE;
     /* the main run may have linked it as part of the glibc family */
@@ -1518,9 +1512,9 @@ mfr_stamp_add_link_targets(const char *dir, GHashTable *seen, sd_json_variant **
             struct stat st;
             int r;
 
-            if (target == NULL || !g_str_has_prefix(target, HOST_PREFIX))
+            if (target == NULL || !g_str_has_prefix(target, MFR_HOST_DIR))
                 continue;
-            host_path = target + strlen(HOST_PREFIX);
+            host_path = target + strlen(MFR_HOST_DIR);
             if (!g_hash_table_add(seen, g_strdup(host_path)))
                 continue;
             if (stat(host_path, &st) != 0)
@@ -1535,23 +1529,6 @@ mfr_stamp_add_link_targets(const char *dir, GHashTable *seen, sd_json_variant **
     }
 
     return TRUE;
-}
-
-/**
- * mfr_write_json:
- *
- * Write @json to @path, formatted.
- */
-static gboolean
-mfr_write_json(const char *path, sd_json_variant *json, GError **error)
-{
-    g_autofree char *formatted = NULL;
-    int r;
-
-    r = sd_json_variant_format(json, SD_JSON_FORMAT_PRETTY | SD_JSON_FORMAT_NEWLINE, &formatted);
-    if (r < 0)
-        return glnx_throw(error, "Unable to format %s: %s", path, g_strerror(-r));
-    return g_file_set_contents(path, formatted, -1, error);
 }
 
 /**
@@ -1594,7 +1571,7 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
     if (r < 0)
         return glnx_throw(error, "Unable to build stamp: %s", g_strerror(-r));
 
-    return mfr_write_json(path, stamp, error);
+    return mf_json_write_file(path, stamp, error);
 }
 
 /**
@@ -1624,7 +1601,7 @@ mfr_capture_job_write_environment(MfrCaptureJob *job, const char *dir, GError **
             return glnx_throw(error, "Unable to build environment: %s", g_strerror(-r));
     }
 
-    return mfr_write_json(path, environment, error);
+    return mf_json_write_file(path, environment, error);
 }
 
 /**

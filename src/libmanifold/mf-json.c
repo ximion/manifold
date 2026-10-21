@@ -195,3 +195,26 @@ mf_json_get_string(sd_json_variant *object, const char *key)
 
     return sd_json_variant_is_string(value) ? sd_json_variant_string(value) : NULL;
 }
+
+/**
+ * mf_json_write_file:
+ * @path: the file to write
+ * @json: what to write into it
+ *
+ * Write JSON to a file, formatted for humans to read.
+ *
+ * Returns: %TRUE on success
+ */
+gboolean
+mf_json_write_file(const char *path, sd_json_variant *json, GError **error)
+{
+    g_autofree char *formatted = NULL;
+    int r;
+
+    r = sd_json_variant_format(json, SD_JSON_FORMAT_PRETTY | SD_JSON_FORMAT_NEWLINE, &formatted);
+    if (r < 0) {
+        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "Unable to format %s: %s", path, g_strerror(-r));
+        return FALSE;
+    }
+    return g_file_set_contents(path, formatted, -1, error);
+}

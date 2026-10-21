@@ -179,7 +179,7 @@ mfr_bind_mount(const char *source, const char *target, gboolean read_only, GErro
 static gboolean
 mfr_bind_host(const char *tree_path, GError **error)
 {
-    g_autofree char *host_dir = g_build_filename(tree_path, "run/host", NULL);
+    g_autofree char *host_dir = g_build_filename(tree_path, MFR_HOST_DIR, NULL);
 
     if (mount("/", host_dir, NULL, MS_BIND, NULL) != 0)
         return glnx_throw_errno_prefix(error, "Unable to bind the host root at %s", host_dir);
@@ -237,7 +237,6 @@ mfr_write_environment_record(MfrTree *tree, const char *path, GError **error)
     g_autoptr(sd_json_variant) record = NULL;
     g_autoptr(sd_json_variant) layers = NULL;
     g_autoptr(sd_json_variant) environment = NULL;
-    g_autofree char *formatted = NULL;
     struct utsname uts = {0};
 
     int r = mfr_app_append_layers_json(tree->app, &layers);
@@ -263,12 +262,10 @@ mfr_write_environment_record(MfrTree *tree, const char *path, GError **error)
                        SD_JSON_BUILD_PAIR_STRING("capture", mfr_capture_get_id(tree->capture)),
                        SD_JSON_BUILD_PAIR_VARIANT("environment", environment),
                        SD_JSON_BUILD_PAIR_STRING("manifold", MF_VERSION));
-    if (r >= 0)
-        r = sd_json_variant_format(record, SD_JSON_FORMAT_PRETTY | SD_JSON_FORMAT_NEWLINE, &formatted);
     if (r < 0)
         return glnx_throw(error, "Unable to build environment record: %s", g_strerror(-r));
 
-    return g_file_set_contents(path, formatted, -1, error);
+    return mf_json_write_file(path, record, error);
 }
 
 /**
@@ -350,7 +347,7 @@ mfr_tree_prepare_layer(MfrTree *tree, const char *layer_dir, GError **error)
 {
     g_autofree char *record_path = g_build_filename(layer_dir, ENVIRONMENT_RECORD, NULL);
     g_autofree char *record_dir = g_path_get_dirname(record_path);
-    g_autofree char *host_dir = g_build_filename(layer_dir, "run/host", NULL);
+    g_autofree char *host_dir = g_build_filename(layer_dir, MFR_HOST_DIR, NULL);
     g_autofree char *app_dir = g_build_filename(layer_dir, "app", NULL);
 
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, record_dir, 0755, NULL, error) ||

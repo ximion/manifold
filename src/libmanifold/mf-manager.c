@@ -18,6 +18,7 @@
 #include "mf-interface-private.h"
 #include "mf-progress-private.h"
 #include "mf-result-private.h"
+#include "mf-sdautoptr-private.h"
 
 /**
  * MfManager:
@@ -335,7 +336,6 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
 
 typedef struct {
     sd_varlink *link;
-    GSource *source; /* owned by the main context */
     MfProgressFunc progress_func;
     gpointer progress_data;
     sd_json_variant *reply; /* the final reply */
@@ -349,8 +349,6 @@ typedef struct {
 static void
 mf_call_free(MfCall *call)
 {
-    if (call->source != NULL)
-        g_source_destroy(call->source);
     sd_varlink_close_unref(call->link);
     sd_json_variant_unref(call->reply);
     g_clear_error(&call->error);
@@ -517,11 +515,8 @@ static void
 mf_call_source_finalize(GSource *source)
 {
     MfCallSource *call_source = (MfCallSource *) source;
-    MfCall *call = g_task_get_task_data(call_source->task);
 
-    /* the source is gone, the call must not destroy it again */
-    if (call != NULL)
-        call->source = NULL;
+    /* the task owns the call, so the call stays until the source drops the task here */
     g_object_unref(call_source->task);
 }
 
@@ -534,6 +529,8 @@ static GSourceFuncs mf_call_source_funcs = {
 
 /**
  * mf_manager_call_async:
+ * @build_result: what building @parameters returned, a negative errno fails the call
+ * @parameters: (nullable): the parameters, without the transaction flags
  * @fd: a file descriptor to pass along with the call, or -1
  *
  * Connect to the service and call a method with the 'more' flag, as every
@@ -543,6 +540,7 @@ static GSourceFuncs mf_call_source_funcs = {
 static void
 mf_manager_call_async(MfManager *manager,
                       const char *method,
+                      int build_result,
                       sd_json_variant *parameters,
                       int fd,
                       MfProgressFunc progress_func,
@@ -553,9 +551,21 @@ mf_manager_call_async(MfManager *manager,
                       gpointer source_tag)
 {
     g_autoptr(GTask) task = g_task_new(manager, cancellable, callback, user_data);
+    g_autoptr(sd_json_variant) call_parameters = sd_json_variant_ref(parameters);
     MfCallSource *call_source;
 
     g_task_set_source_tag(task, source_tag);
+
+    if (build_result >= 0)
+        build_result = mf_manager_add_transaction_flags(manager, &call_parameters);
+    if (build_result < 0) {
+        g_task_return_new_error(task,
+                                MF_ERROR,
+                                MF_ERROR_FAILED,
+                                "Unable to build call parameters: %s",
+                                g_strerror(-build_result));
+        return;
+    }
 
     MfCall *call = g_new0(MfCall, 1);
     call->progress_func = progress_func;
@@ -611,7 +621,7 @@ mf_manager_call_async(MfManager *manager,
         }
     }
 
-    r = sd_varlink_observe(call->link, method, parameters);
+    r = sd_varlink_observe(call->link, method, call_parameters);
     if (r < 0) {
         g_task_return_new_error(task,
                                 MF_ERROR,
@@ -634,7 +644,6 @@ mf_manager_call_async(MfManager *manager,
         g_source_set_dummy_callback(cancel_source);
         g_source_add_child_source(source, cancel_source);
     }
-    call->source = source;
     g_source_attach(source, g_main_context_get_thread_default());
     g_source_unref(source);
 }
@@ -661,42 +670,11 @@ mf_manager_call_finish(MfManager *manager, GAsyncResult *result, gpointer source
 static MfResult *
 mf_manager_result_finish(MfManager *manager, GAsyncResult *result, gpointer source_tag, GError **error)
 {
-    sd_json_variant *reply = mf_manager_call_finish(manager, result, source_tag, error);
+    g_autoptr(sd_json_variant) reply = mf_manager_call_finish(manager, result, source_tag, error);
+
     if (reply == NULL)
         return NULL;
-
-    MfResult *ret = mf_result_new_from_reply(reply, error);
-    sd_json_variant_unref(reply);
-    return ret;
-}
-
-static void
-mf_set_build_parameters_error(GError **error, int negative_errno)
-{
-    g_set_error(error,
-                MF_ERROR,
-                MF_ERROR_FAILED,
-                "Unable to build call parameters: %s",
-                g_strerror(-negative_errno));
-}
-
-/**
- * mf_manager_return_error_async:
- *
- * Fail a call before it was made.
- */
-static void
-mf_manager_return_error_async(MfManager *manager,
-                              GCancellable *cancellable,
-                              GAsyncReadyCallback callback,
-                              gpointer user_data,
-                              gpointer source_tag,
-                              GError *error)
-{
-    g_autoptr(GTask) task = g_task_new(manager, cancellable, callback, user_data);
-
-    g_task_set_source_tag(task, source_tag);
-    g_task_return_error(task, error);
+    return mf_result_new_from_reply(reply, error);
 }
 
 /**
@@ -777,31 +755,17 @@ mf_manager_install_file_async(MfManager *manager,
                               GAsyncReadyCallback callback,
                               gpointer user_data)
 {
-    sd_json_variant *parameters = NULL;
+    g_autoptr(sd_json_variant) parameters = NULL;
+    int r;
 
     g_return_if_fail(MF_IS_MANAGER(manager));
     g_return_if_fail(fd >= 0);
 
     /* the descriptor is the first and only one passed along */
-    int r = sd_json_buildo(&parameters, SD_JSON_BUILD_PAIR_INTEGER("bundleFileDescriptor", 0));
-    if (r >= 0)
-        r = mf_manager_add_transaction_flags(manager, &parameters);
-    if (r < 0) {
-        GError *error = NULL;
-
-        mf_set_build_parameters_error(&error, r);
-        sd_json_variant_unref(parameters);
-        mf_manager_return_error_async(manager,
-                                      cancellable,
-                                      callback,
-                                      user_data,
-                                      mf_manager_install_file_async,
-                                      error);
-        return;
-    }
-
+    r = sd_json_buildo(&parameters, SD_JSON_BUILD_PAIR_INTEGER("bundleFileDescriptor", 0));
     mf_manager_call_async(manager,
                           MF_VARLINK_METHOD_INSTALL_FILE,
+                          r,
                           parameters,
                           fd,
                           progress_func,
@@ -810,7 +774,6 @@ mf_manager_install_file_async(MfManager *manager,
                           callback,
                           user_data,
                           mf_manager_install_file_async);
-    sd_json_variant_unref(parameters);
 }
 
 /**
@@ -888,33 +851,19 @@ mf_manager_remove_component_async(MfManager *manager,
                                   GAsyncReadyCallback callback,
                                   gpointer user_data)
 {
-    sd_json_variant *parameters = NULL;
+    g_autoptr(sd_json_variant) parameters = NULL;
+    int r;
 
     g_return_if_fail(MF_IS_MANAGER(manager));
     g_return_if_fail(component_id != NULL);
 
-    int r = sd_json_buildo(
+    r = sd_json_buildo(
         &parameters,
         SD_JSON_BUILD_PAIR_STRING("componentId", component_id),
         SD_JSON_BUILD_PAIR_CONDITION(version != NULL, "version", SD_JSON_BUILD_STRING(version)));
-    if (r >= 0)
-        r = mf_manager_add_transaction_flags(manager, &parameters);
-    if (r < 0) {
-        GError *error = NULL;
-
-        mf_set_build_parameters_error(&error, r);
-        sd_json_variant_unref(parameters);
-        mf_manager_return_error_async(manager,
-                                      cancellable,
-                                      callback,
-                                      user_data,
-                                      mf_manager_remove_component_async,
-                                      error);
-        return;
-    }
-
     mf_manager_call_async(manager,
                           MF_VARLINK_METHOD_REMOVE_COMPONENT,
+                          r,
                           parameters,
                           -1,
                           progress_func,
@@ -923,7 +872,6 @@ mf_manager_remove_component_async(MfManager *manager,
                           callback,
                           user_data,
                           mf_manager_remove_component_async);
-    sd_json_variant_unref(parameters);
 }
 
 /**
@@ -1001,28 +949,12 @@ mf_manager_cleanup_async(MfManager *manager,
                          GAsyncReadyCallback callback,
                          gpointer user_data)
 {
-    sd_json_variant *parameters = NULL;
-
     g_return_if_fail(MF_IS_MANAGER(manager));
-
-    int r = mf_manager_add_transaction_flags(manager, &parameters);
-    if (r < 0) {
-        GError *error = NULL;
-
-        mf_set_build_parameters_error(&error, r);
-        sd_json_variant_unref(parameters);
-        mf_manager_return_error_async(manager,
-                                      cancellable,
-                                      callback,
-                                      user_data,
-                                      mf_manager_cleanup_async,
-                                      error);
-        return;
-    }
 
     mf_manager_call_async(manager,
                           MF_VARLINK_METHOD_CLEANUP,
-                          parameters,
+                          0,
+                          NULL,
                           -1,
                           progress_func,
                           progress_data,
@@ -1030,7 +962,6 @@ mf_manager_cleanup_async(MfManager *manager,
                           callback,
                           user_data,
                           mf_manager_cleanup_async);
-    sd_json_variant_unref(parameters);
 }
 
 /**
@@ -1099,35 +1030,21 @@ mf_manager_mark_component_async(MfManager *manager,
                                 GAsyncReadyCallback callback,
                                 gpointer user_data)
 {
-    sd_json_variant *parameters = NULL;
+    g_autoptr(sd_json_variant) parameters = NULL;
+    int r;
 
     g_return_if_fail(MF_IS_MANAGER(manager));
     g_return_if_fail(component_id != NULL);
     g_return_if_fail(mode == MF_INSTALL_MODE_MANUAL || mode == MF_INSTALL_MODE_AUTO);
 
-    int r = sd_json_buildo(
+    r = sd_json_buildo(
         &parameters,
         SD_JSON_BUILD_PAIR_STRING("componentId", component_id),
         SD_JSON_BUILD_PAIR_CONDITION(version != NULL, "version", SD_JSON_BUILD_STRING(version)),
         SD_JSON_BUILD_PAIR_STRING("mode", mf_install_mode_to_string(mode)));
-    if (r >= 0)
-        r = mf_manager_add_transaction_flags(manager, &parameters);
-    if (r < 0) {
-        GError *error = NULL;
-
-        mf_set_build_parameters_error(&error, r);
-        sd_json_variant_unref(parameters);
-        mf_manager_return_error_async(manager,
-                                      cancellable,
-                                      callback,
-                                      user_data,
-                                      mf_manager_mark_component_async,
-                                      error);
-        return;
-    }
-
     mf_manager_call_async(manager,
                           MF_VARLINK_METHOD_MARK_COMPONENT,
+                          r,
                           parameters,
                           -1,
                           NULL,
@@ -1136,7 +1053,6 @@ mf_manager_mark_component_async(MfManager *manager,
                           callback,
                           user_data,
                           mf_manager_mark_component_async);
-    sd_json_variant_unref(parameters);
 }
 
 /**
@@ -1150,16 +1066,14 @@ mf_manager_mark_component_async(MfManager *manager,
 GPtrArray *
 mf_manager_mark_component_finish(MfManager *manager, GAsyncResult *result, GError **error)
 {
-    sd_json_variant *reply = mf_manager_call_finish(manager, result, mf_manager_mark_component_async, error);
-    GPtrArray *components;
+    g_autoptr(sd_json_variant)
+        reply = mf_manager_call_finish(manager, result, mf_manager_mark_component_async, error);
 
     if (reply == NULL)
         return NULL;
-    components = mf_component_array_from_reply(
+    return mf_component_array_from_reply(
         sd_json_variant_by_key(sd_json_variant_by_key(reply, "done"), "components"),
         error);
-    sd_json_variant_unref(reply);
-    return components;
 }
 
 /**

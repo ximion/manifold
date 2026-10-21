@@ -18,6 +18,7 @@
 
 #include "mf-error.h"
 #include "mf-json-private.h"
+#include "mf-sdautoptr-private.h"
 #include "mf-utils-private.h"
 
 /**
@@ -506,13 +507,12 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
     MfBundlePrivate *priv = GET_PRIVATE(bundle);
     g_autofree char *index_data = NULL;
     g_autoptr(GHashTable) contents = NULL;
-    sd_json_variant *index = NULL;
+    g_autoptr(sd_json_variant) index = NULL;
     sd_json_variant *files;
     gpointer index_ptr;
     gsize index_size;
     guint64 format;
     guint64 budget = METADATA_TOTAL_SIZE_MAX;
-    gboolean ret = FALSE;
 
     contents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
     if (!g_hash_table_lookup_extended(entries, INDEX_NAME, NULL, &index_ptr)) {
@@ -533,7 +533,7 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
         return FALSE;
 
     if (!mf_json_get_unsigned_field(index, INDEX_NAME, "format", MF_ERROR_INVALID_BUNDLE, &format, error))
-        goto out;
+        return FALSE;
     if (format != (guint64) BUNDLE_FORMAT) {
         g_set_error(error,
                     MF_ERROR,
@@ -542,7 +542,7 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
                     INDEX_NAME,
                     format,
                     BUNDLE_FORMAT);
-        goto out;
+        return FALSE;
     }
 
     files = sd_json_variant_by_key(index, "files");
@@ -552,7 +552,7 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
                     MF_ERROR_INVALID_BUNDLE,
                     "%s: files is missing or not an array",
                     INDEX_NAME);
-        goto out;
+        return FALSE;
     }
 
     for (size_t i = 0; i < sd_json_variant_elements(files); i++) {
@@ -568,13 +568,13 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
                                              &size,
                                              error);
         if (data == NULL)
-            goto out;
+            return FALSE;
 
         if (g_str_has_suffix(name, MANIFEST_SUFFIX)) {
             MfBundleImage *image = mf_bundle_parse_manifest(bundle, name, data, size, entries, error);
 
             if (image == NULL)
-                goto out;
+                return FALSE;
             g_ptr_array_add(priv->images, image);
         } else {
             g_hash_table_insert(contents, g_strdup(name), g_bytes_new_take(g_steal_pointer(&data), size));
@@ -598,18 +598,14 @@ mf_bundle_read_index(MfBundle *bundle, GHashTable *entries, GHashTable *verified
                         "The MetaInfo of %s, %s, is not in the bundle",
                         mf_manifest_get_component_id(image->manifest),
                         metainfo_name);
-            goto out;
+            return FALSE;
         }
         image->metainfo = mf_bundle_image_make_sanitized_metainfo(image, metainfo_name, metainfo, error);
         if (image->metainfo == NULL)
-            goto out;
+            return FALSE;
     }
 
-    ret = TRUE;
-
-out:
-    sd_json_variant_unref(index);
-    return ret;
+    return TRUE;
 }
 
 /**

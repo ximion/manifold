@@ -588,7 +588,7 @@ mfd_removal_plan_add_version_dir(MfdRemovalPlan *rmplan,
 }
 
 /**
- * mfd_manager_find_dependent_dirs_for:
+ * mfd_manager_find_used_dirs:
  * @components: (element-type MfComponent): what is installed
  * @dirs: the version directory of each of @components
  * @rm_pending: version directories whose links do not count
@@ -600,10 +600,10 @@ mfd_removal_plan_add_version_dir(MfdRemovalPlan *rmplan,
  * Returns: a table of every version directory a link names, mapped to the component-ID that links to it
  */
 static GHashTable *
-mfd_manager_find_dependent_dirs_for(MfdManager *manager,
-                                    GPtrArray *components,
-                                    GPtrArray *dirs,
-                                    GHashTable *rm_pending)
+mfd_manager_find_used_dirs(MfdManager *manager,
+                           GPtrArray *components,
+                           GPtrArray *dirs,
+                           GHashTable *rm_pending)
 {
     const char *root = mf_store_get_path(manager->store);
     GHashTable *used = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
@@ -763,7 +763,7 @@ mfd_manager_complete_removal_plan(MfdManager *manager,
     newest_apps = mfd_find_newest_apps(components, version_dirs, rm_pending);
     do {
         g_autoptr(GHashTable)
-            used = mfd_manager_find_dependent_dirs_for(manager, components, version_dirs, rm_pending);
+            used = mfd_manager_find_used_dirs(manager, components, version_dirs, rm_pending);
 
         added = FALSE;
         for (guint i = 0; i < components->len; i++) {
@@ -863,7 +863,7 @@ mfd_manager_plan_removal(MfdManager *manager,
         }
 
         /* nothing that stays may link to stuff that is going to be removed */
-        used = mfd_manager_find_dependent_dirs_for(manager, components, version_dirs, rm_pending);
+        used = mfd_manager_find_used_dirs(manager, components, version_dirs, rm_pending);
         for (guint i = 0; i < rmplan->dirs->len; i++) {
             const char *used_by = g_hash_table_lookup(used, g_ptr_array_index(rmplan->dirs, i));
 
@@ -944,7 +944,7 @@ mfd_manager_plan_supersede(MfdManager *manager, GPtrArray *images, GArray *plans
         gpointer version_dir;
 
         g_clear_pointer(&used, g_hash_table_unref);
-        used = mfd_manager_find_dependent_dirs_for(manager, components, version_dirs, superseded);
+        used = mfd_manager_find_used_dirs(manager, components, version_dirs, superseded);
         kept = FALSE;
         g_hash_table_iter_init(&iter, superseded);
         while (g_hash_table_iter_next(&iter, &version_dir, NULL)) {

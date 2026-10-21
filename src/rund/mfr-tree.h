@@ -16,6 +16,9 @@ G_BEGIN_DECLS
 #define MFR_TREES_MOUNT_DIR MF_RUN_MOUNT_DIR "/trees"
 #define MFR_TREES_CACHE_DIR MF_RUN_CACHE_DIR "/trees"
 
+/* where the filesystem of the host is bound in every tree */
+#define MFR_HOST_DIR "/run/host"
+
 #define MFR_TYPE_TREE (mfr_tree_get_type())
 G_DECLARE_FINAL_TYPE(MfrTree, mfr_tree, MFR, TREE, GObject)
 
