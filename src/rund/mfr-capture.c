@@ -387,6 +387,16 @@ typedef struct {
     GPtrArray *absolute; /* host paths to capture into libdir/<libsubdir>/ */
 } MfrLoaderManifestPlan;
 
+/**
+ * MfrLoaderManifestGroup:
+ *
+ * The manifests of the host of one kind.
+ */
+typedef struct {
+    const MfrLoaderManifestKind *kind;
+    GPtrArray *plans; /* of MfrLoaderManifestPlan */
+} MfrLoaderManifestGroup;
+
 struct _MfrCapture {
     GObject parent_instance;
 
@@ -508,6 +518,16 @@ mfr_loader_manifest_plan_free(MfrLoaderManifestPlan *plan)
     g_ptr_array_unref(plan->sonames);
     g_ptr_array_unref(plan->absolute);
     g_free(plan);
+}
+
+/**
+ * mfr_loader_manifest_group_free:
+ */
+static void
+mfr_loader_manifest_group_free(MfrLoaderManifestGroup *group)
+{
+    g_ptr_array_unref(group->plans);
+    g_free(group);
 }
 
 /**
@@ -1018,56 +1038,73 @@ mfr_loader_manifest_plan_new(const MfrLoaderManifestKind *kind, const char *sour
 }
 
 /**
- * mfr_fetch_loader_manifest_plans:
+ * mfr_fetch_loader_manifest_groups:
  *
- * Returns: (transfer full): plans for every loader manifest of the host
+ * Returns: (transfer full): plans for every loader manifest of the host,
+ *   grouped by kind, for the kinds the host has readable manifests of
  */
 static GPtrArray *
-mfr_fetch_loader_manifest_plans(void)
+mfr_fetch_loader_manifest_groups(void)
 {
-    GPtrArray *plans = g_ptr_array_new_with_free_func((GDestroyNotify) mfr_loader_manifest_plan_free);
+    GPtrArray *groups = g_ptr_array_new_with_free_func((GDestroyNotify) mfr_loader_manifest_group_free);
 
     for (size_t i = 0; i < G_N_ELEMENTS(MFR_LOADER_MANIFEST_KINDS); i++) {
         const MfrLoaderManifestKind *kind = &MFR_LOADER_MANIFEST_KINDS[i];
         g_autoptr(GPtrArray) sources = mfr_find_loader_manifests(kind);
+        g_autoptr(GPtrArray) plans = NULL;
+        MfrLoaderManifestGroup *group;
 
-        if (sources->len > 0)
-            g_info("%s: %u manifest(s) on the host", kind->label, sources->len);
+        if (sources->len == 0)
+            continue;
+        g_info("%s: %u manifest(s) on the host", kind->label, sources->len);
+
+        plans = g_ptr_array_new_with_free_func((GDestroyNotify) mfr_loader_manifest_plan_free);
         for (guint j = 0; j < sources->len; j++) {
             auto plan = mfr_loader_manifest_plan_new(kind, g_ptr_array_index(sources, j));
 
             if (plan != NULL)
                 g_ptr_array_add(plans, plan);
         }
+        if (plans->len == 0)
+            continue;
+
+        group = g_new0(MfrLoaderManifestGroup, 1);
+        group->kind = kind;
+        group->plans = g_steal_pointer(&plans);
+        g_ptr_array_add(groups, group);
     }
 
-    return plans;
+    return groups;
 }
 
 /**
- * mfr_loader_manifest_plans_register_patterns:
+ * mfr_loader_manifest_groups_register_patterns:
  *
  * Register the patterns that the manifests need for the main run. We capture
  * the libraries that a manifest names by SONAME into the libdir. Of the
  * libraries named by path, we only capture their dependencies here, as
  * drivers of different vendors may have the same file name.
- * mfr_capture_job_install_loader_manifests() captures those libraries
- * themselves, into subdirectories that are numbered where names clash.
+ * mfr_capture_job_place_drivers() captures those libraries themselves, into
+ * subdirectories that are numbered where names clash.
  */
 static void
-mfr_loader_manifest_plans_register_patterns(GPtrArray *plans, GPtrArray *argv)
+mfr_loader_manifest_groups_register_patterns(GPtrArray *groups, GPtrArray *argv)
 {
-    for (guint i = 0; i < plans->len; i++) {
-        MfrLoaderManifestPlan *plan = g_ptr_array_index(plans, i);
+    for (guint i = 0; i < groups->len; i++) {
+        const MfrLoaderManifestGroup *group = g_ptr_array_index(groups, i);
 
-        for (guint j = 0; j < plan->sonames->len; j++)
-            g_ptr_array_add(argv,
-                            g_strdup_printf("if-exists:even-if-older:if-same-abi:soname:%s",
-                                            (char *) g_ptr_array_index(plan->sonames, j)));
-        for (guint j = 0; j < plan->absolute->len; j++)
-            g_ptr_array_add(argv,
-                            g_strdup_printf("only-dependencies:if-exists:if-same-abi:path:%s",
-                                            (char *) g_ptr_array_index(plan->absolute, j)));
+        for (guint j = 0; j < group->plans->len; j++) {
+            const MfrLoaderManifestPlan *plan = g_ptr_array_index(group->plans, j);
+
+            for (guint k = 0; k < plan->sonames->len; k++)
+                g_ptr_array_add(argv,
+                                g_strdup_printf("if-exists:even-if-older:if-same-abi:soname:%s",
+                                                (char *) g_ptr_array_index(plan->sonames, k)));
+            for (guint k = 0; k < plan->absolute->len; k++)
+                g_ptr_array_add(argv,
+                                g_strdup_printf("only-dependencies:if-exists:if-same-abi:path:%s",
+                                                (char *) g_ptr_array_index(plan->absolute, k)));
+        }
     }
 }
 
@@ -1195,6 +1232,64 @@ mfr_capture_job_rewrite_icd_file(MfrCaptureJob *job,
 }
 
 /**
+ * mfr_capture_job_place_drivers:
+ *
+ * Capture the libraries the manifests of a group name by path into a
+ * subdirectory of the libdir, and record where they are in the tree.
+ * Drivers of different vendors may have the same file name, so if any two
+ * do, every driver gets a numbered subdirectory of its own. A driver that
+ * several manifests name is placed once, and does not clash with itself.
+ */
+static gboolean
+mfr_capture_job_place_drivers(MfrCaptureJob *job, const MfrLoaderManifestGroup *group, GError **error)
+{
+    g_autoptr(GPtrArray) paths = g_ptr_array_new();
+    g_autoptr(GHashTable) basenames = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    gboolean numbered = FALSE;
+
+    for (guint i = 0; i < group->plans->len; i++) {
+        const MfrLoaderManifestPlan *plan = g_ptr_array_index(group->plans, i);
+
+        for (guint j = 0; j < plan->absolute->len; j++) {
+            const char *path = g_ptr_array_index(plan->absolute, j);
+
+            if (g_ptr_array_find_with_equal_func(paths, path, g_str_equal, NULL))
+                continue;
+            g_ptr_array_add(paths, (gpointer) path);
+            if (!g_hash_table_add(basenames, g_path_get_basename(path)))
+                numbered = TRUE;
+        }
+    }
+
+    for (guint i = 0; i < paths->len; i++) {
+        const char *path = g_ptr_array_index(paths, i);
+        g_autofree char *basename = g_path_get_basename(path);
+        g_autofree char *subdir = numbered ? g_strdup_printf("%s/%u", group->kind->libsubdir, i)
+                                           : g_strdup(group->kind->libsubdir);
+        g_autofree char *driver_dir = g_build_filename(job->libdir, subdir, NULL);
+        g_autofree char *link = g_build_filename(driver_dir, basename, NULL);
+        g_autoptr(GPtrArray) argv = NULL;
+
+        if (g_hash_table_contains(job->placed, path))
+            continue;
+        if (!glnx_shutil_mkdir_p_at(AT_FDCWD, driver_dir, 0755, NULL, error))
+            return FALSE;
+        argv = mfr_capture_job_make_argv(job, driver_dir);
+        g_ptr_array_add(argv,
+                        g_strdup_printf("no-dependencies:even-if-older:if-exists:if-same-abi:path:%s", path));
+        if (!mfr_capture_run_tool(argv, NULL, error))
+            return FALSE;
+        /* if-exists and if-same-abi may have left nothing behind */
+        if (g_file_test(link, G_FILE_TEST_IS_SYMLINK))
+            g_hash_table_insert(job->placed,
+                                g_strdup(path),
+                                g_build_filename(job->tree_libdir, subdir, basename, NULL));
+    }
+
+    return TRUE;
+}
+
+/**
  * mfr_capture_job_install_loader_manifests:
  *
  * Capture the libraries the manifests name by path, write the rewritten
@@ -1203,29 +1298,14 @@ mfr_capture_job_rewrite_icd_file(MfrCaptureJob *job,
  * never picks a library of another architecture or the image's own.
  */
 static gboolean
-mfr_capture_job_install_loader_manifests(MfrCaptureJob *job, GPtrArray *plans, GError **error)
+mfr_capture_job_install_loader_manifests(MfrCaptureJob *job, GPtrArray *groups, GError **error)
 {
-    for (size_t i = 0; i < G_N_ELEMENTS(MFR_LOADER_MANIFEST_KINDS); i++) {
-        const MfrLoaderManifestKind *kind = &MFR_LOADER_MANIFEST_KINDS[i];
-        g_autoptr(GPtrArray) kind_plans = g_ptr_array_new();
-        g_autoptr(GPtrArray) absolute = g_ptr_array_new();
-        g_autoptr(GHashTable) basenames = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    for (guint i = 0; i < groups->len; i++) {
+        const MfrLoaderManifestGroup *group = g_ptr_array_index(groups, i);
+        const MfrLoaderManifestKind *kind = group->kind;
         g_autofree char *dest_rel = NULL;
         g_autofree char *dest_dir = NULL;
-        gboolean numbered = FALSE;
         unsigned int written = 0;
-
-        for (guint j = 0; j < plans->len; j++) {
-            MfrLoaderManifestPlan *plan = g_ptr_array_index(plans, j);
-
-            if (plan->kind != kind)
-                continue;
-            g_ptr_array_add(kind_plans, plan);
-            for (guint k = 0; k < plan->absolute->len; k++)
-                g_ptr_array_add(absolute, g_ptr_array_index(plan->absolute, k));
-        }
-        if (kind_plans->len == 0)
-            continue;
 
         dest_rel = g_build_filename(GRAPHICS_OVERRIDES,
                                     kind->per_arch ? job->tuple : "common",
@@ -1235,41 +1315,11 @@ mfr_capture_job_install_loader_manifests(MfrCaptureJob *job, GPtrArray *plans, G
         if (!glnx_shutil_mkdir_p_at(AT_FDCWD, dest_dir, 0755, NULL, error))
             return FALSE;
 
-        /* drivers named by path collide across vendors, so number them if they do */
-        for (guint j = 0; j < absolute->len; j++) {
-            g_autofree char *basename = g_path_get_basename(g_ptr_array_index(absolute, j));
+        if (!mfr_capture_job_place_drivers(job, group, error))
+            return FALSE;
 
-            if (!g_hash_table_add(basenames, g_steal_pointer(&basename)))
-                numbered = TRUE;
-        }
-        for (guint j = 0; j < absolute->len; j++) {
-            const char *path = g_ptr_array_index(absolute, j);
-            g_autofree char *basename = g_path_get_basename(path);
-            g_autofree char *subdir = numbered ? g_strdup_printf("%s/%u", kind->libsubdir, j)
-                                               : g_strdup(kind->libsubdir);
-            g_autofree char *driver_dir = g_build_filename(job->libdir, subdir, NULL);
-            g_autofree char *link = g_build_filename(driver_dir, basename, NULL);
-            g_autoptr(GPtrArray) argv = NULL;
-
-            if (g_hash_table_contains(job->placed, path))
-                continue;
-            if (!glnx_shutil_mkdir_p_at(AT_FDCWD, driver_dir, 0755, NULL, error))
-                return FALSE;
-            argv = mfr_capture_job_make_argv(job, driver_dir);
-            g_ptr_array_add(
-                argv,
-                g_strdup_printf("no-dependencies:even-if-older:if-exists:if-same-abi:path:%s", path));
-            if (!mfr_capture_run_tool(argv, NULL, error))
-                return FALSE;
-            /* if-exists and if-same-abi may have left nothing behind */
-            if (g_file_test(link, G_FILE_TEST_IS_SYMLINK))
-                g_hash_table_insert(job->placed,
-                                    g_strdup(path),
-                                    g_build_filename(job->tree_libdir, subdir, basename, NULL));
-        }
-
-        for (guint j = 0; j < kind_plans->len; j++) {
-            const MfrLoaderManifestPlan *plan = g_ptr_array_index(kind_plans, j);
+        for (guint j = 0; j < group->plans->len; j++) {
+            const MfrLoaderManifestPlan *plan = g_ptr_array_index(group->plans, j);
             g_autofree char *basename = g_path_get_basename(plan->source);
             g_autofree char *name = g_strdup_printf("%02u-%s", j, basename);
             g_autofree char *target = g_build_filename(dest_dir, name, NULL);
@@ -1680,7 +1730,7 @@ mfr_capture_build(const char *dir, const char *core_mount, const char *tuple, GE
         .core_mount = core_mount,
         .tuple = tuple,
     };
-    g_autoptr(GPtrArray) plans = NULL;
+    g_autoptr(GPtrArray) loader_manifests = NULL;
     g_autoptr(GPtrArray) argv = NULL;
     gboolean ret = FALSE;
 
@@ -1699,15 +1749,15 @@ mfr_capture_build(const char *dir, const char *core_mount, const char *tuple, GE
     g_info("Capturing the host graphics stack for %s against %s", tuple, core_mount);
     if (!mfr_capture_job_find_drivers(&job, error))
         goto out;
-    plans = mfr_fetch_loader_manifest_plans();
+    loader_manifests = mfr_fetch_loader_manifest_groups();
     argv = mfr_capture_job_make_argv(&job, job.libdir);
     mfr_capture_job_register_patterns(&job, argv);
-    mfr_loader_manifest_plans_register_patterns(plans, argv);
+    mfr_loader_manifest_groups_register_patterns(loader_manifests, argv);
     if (!mfr_capture_run_tool(argv, NULL, error))
         goto out;
     if (!mfr_capture_job_capture_drivers(&job, error))
         goto out;
-    if (!mfr_capture_job_install_loader_manifests(&job, plans, error))
+    if (!mfr_capture_job_install_loader_manifests(&job, loader_manifests, error))
         goto out;
     if (!mfr_capture_job_capture_families(&job, error))
         goto out;
