@@ -81,13 +81,16 @@ mfc_parse_command_options(GOptionContext *context, MfcCommand *cmd, int *argc, c
 }
 
 /**
- * mfc_print_components:
+ * mfc_format_components:
  *
- * Print a table of components, one per line.
+ * Format a table of components, one per line.
+ *
+ * Returns: (transfer full): the table
  */
-void
-mfc_print_components(GPtrArray *components, gboolean with_header)
+char *
+mfc_format_components(GPtrArray *components, gboolean with_header)
 {
+    g_autoptr(GString) table = g_string_new(NULL);
     g_autoptr(GPtrArray) versions = g_ptr_array_new_with_free_func(g_free);
     gsize id_width = with_header ? strlen("COMPONENT") : 0;
     gsize version_width = with_header ? strlen("VERSION") : 0;
@@ -105,13 +108,14 @@ mfc_print_components(GPtrArray *components, gboolean with_header)
     }
 
     if (with_header)
-        g_print("%-8s %-*s %-*s %s\n",
-                "KIND",
-                (int) id_width,
-                "COMPONENT",
-                (int) version_width,
-                "VERSION",
-                "FLAGS");
+        g_string_append_printf(table,
+                               "%-8s %-*s %-*s %s\n",
+                               "KIND",
+                               (int) id_width,
+                               "COMPONENT",
+                               (int) version_width,
+                               "VERSION",
+                               "FLAGS");
 
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
@@ -126,14 +130,30 @@ mfc_print_components(GPtrArray *components, gboolean with_header)
         if (flags->len > 0)
             g_string_truncate(flags, flags->len - 1);
 
-        g_print("%-8s %-*s %-*s %s\n",
-                mf_component_kind_to_string(mf_component_get_kind(component)),
-                (int) id_width,
-                mf_component_get_id(component),
-                (int) version_width,
-                (const char *) g_ptr_array_index(versions, i),
-                flags->str);
+        g_string_append_printf(table,
+                               "%-8s %-*s %-*s %s\n",
+                               mf_component_kind_to_string(mf_component_get_kind(component)),
+                               (int) id_width,
+                               mf_component_get_id(component),
+                               (int) version_width,
+                               (const char *) g_ptr_array_index(versions, i),
+                               flags->str);
     }
+
+    return g_string_free(g_steal_pointer(&table), FALSE);
+}
+
+/**
+ * mfc_print_components:
+ *
+ * Print a table of components, one per line.
+ */
+void
+mfc_print_components(GPtrArray *components, gboolean with_header)
+{
+    g_autofree char *table = mfc_format_components(components, with_header);
+
+    g_print("%s", table);
 }
 
 /**

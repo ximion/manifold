@@ -167,10 +167,6 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
 
     *ret_version = NULL;
 
-    if (!mf_component_id_is_valid(component_id)) {
-        g_printerr("'%s' is not a valid component identifier.\n", component_id);
-        return MFC_EXIT_INVALID_CMD;
-    }
     versions = mf_store_list_components(store, component_id, MF_COMPONENT_KIND_UNKNOWN, &error);
     if (versions == NULL) {
         g_printerr("Unable to look up %s: %s\n", component_id, error->message);
@@ -180,8 +176,11 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
         return MFC_EXIT_SUCCESS;
 
     if (!isatty(STDIN_FILENO)) {
-        g_printerr("Several versions of %s are installed, specify the one to remove:\n", component_id);
-        mfc_print_components(versions, FALSE);
+        g_autofree char *table = mfc_format_components(versions, FALSE);
+
+        g_printerr("Several versions of %s are installed, specify the one to remove:\n%s",
+                   component_id,
+                   table);
         return MFC_EXIT_FAILURE;
     }
 
@@ -240,6 +239,10 @@ mfc_run_remove_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         return MFC_EXIT_INVALID_CMD;
     }
     component_id = argv[1];
+    if (!mf_component_id_is_valid(component_id)) {
+        g_printerr("'%s' is not a valid component identifier.\n", component_id);
+        return MFC_EXIT_INVALID_CMD;
+    }
     if (argc > 2) {
         version = argv[2];
     } else {

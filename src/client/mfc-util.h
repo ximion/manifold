@@ -22,6 +22,8 @@ int             mfc_parse_command_options(GOptionContext *context,
                                           int            *argc,
                                           char         ***argv);
 
+char           *mfc_format_components(GPtrArray *components,
+                                      gboolean   with_header);
 void            mfc_print_components(GPtrArray *components,
                                      gboolean   with_header);
 guint           mfc_prompt_number(const char *question,

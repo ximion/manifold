@@ -72,14 +72,23 @@ class InstallerTest(unittest.TestCase):
         for name in ('images/by-verity', 'apps', 'plugins', 'runtimes'):
             os.makedirs(os.path.join(STORE, name))
 
-    def manifold(self, *args, expect=0):
-        """Run the manifold tool, check its exit status, and return its output."""
+    def manifold_streams(self, *args, expect=0):
+        """Run the manifold tool, check its exit status, and return its standard
+        output and its standard error."""
         result = subprocess.run(
             [ARGS.client, '--socket', SOCKET, *args], capture_output=True, text=True, check=False
         )
-        output = result.stdout + result.stderr
-        self.assertEqual(result.returncode, expect, f'manifold {" ".join(args)}:\n{output}')
-        return output
+        self.assertEqual(
+            result.returncode,
+            expect,
+            f'manifold {" ".join(args)}:\n{result.stdout + result.stderr}',
+        )
+        return result.stdout, result.stderr
+
+    def manifold(self, *args, expect=0):
+        """Run the manifold tool, check its exit status, and return all it printed."""
+        out, err = self.manifold_streams(*args, expect=expect)
+        return out + err
 
     def installed(self):
         """The identifiers of the installed components, with their version and mode,
@@ -123,6 +132,8 @@ class InstallerTest(unittest.TestCase):
         self.manifold('mark', 'manual', expect=2)
         self.assertIn("'bogus' is not a mode", self.manifold('mark', 'bogus', APP_ID, expect=2))
         self.manifold('mark', 'manual', APP_ID, '0.1.0', 'extra', expect=2)
+        self.manifold('remove', 'not/valid', expect=2)
+        self.manifold('remove', 'not/valid', '1.0', expect=2)
         self.manifold('install', '/nonexistent.manifold', expect=3)
 
     def test_not_a_bundle(self):
@@ -415,7 +426,10 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(self.manifold('list', APP_ID).count(APP_ID), 2)
 
         # without a terminal, a removal of one of several versions has to name it
-        self.assertIn('Several versions', self.manifold('remove', APP_ID, expect=1))
+        out, err = self.manifold_streams('remove', APP_ID, expect=1)
+        self.assertEqual(out, '')
+        self.assertIn('Several versions', err)
+        self.assertIn(f'app      {APP_ID} 0.2.0', err)
         # the version that is newest then stays, though it is auto
         self.manifold('remove', APP_ID, '0.2.0')
         self.assertEqual(self.manifold('list', APP_ID).count(APP_ID), 1)
