@@ -65,18 +65,32 @@ constexpr char STAMP_NAME[] = "stamp";
 
 constexpr char MF_STALE_PREFIX[] = ".stale-";
 
-/* the dlopen()ed vendor drivers below the host's libdir, named as steam-runtime-tools enumerates them,
- * and the variables that point the loaders at them */
+/*
+ * The dlopen()ed vendor drivers, named as steam-runtime-tools enumerates them, the variables
+ * that point their loaders at them, and where on the host they are. Distributions put the
+ * drivers in different places, but always in a subdirectory of the directory that holds the
+ * library loading them (Slackware has the DRI drivers in xorg/modules/dri).
+ */
+/* clang-format off */
 static const struct {
     const char *subdir;
     const char *prefix;
     const char *const suffixes[3];
     const char *const variables[3];
+    const char *const loaders[6];
+    const char *const lookups[3]; /* subdirectories of a loader's directory */
 } DRIVER_SUBDIRS[] = {
-    {"dri",   "",          {"_dri.so", "_drv_video.so"}, {"LIBGL_DRIVERS_PATH", "LIBVA_DRIVERS_PATH"}},
-    {"gbm",   "",          {"_gbm.so"},                  {"GBM_BACKENDS_PATH"}                       },
-    {"vdpau", "libvdpau_", {".so.1"},                    {"VDPAU_DRIVER_PATH"}                       },
+    {"dri",   "",          {"_dri.so", "_drv_video.so"}, {"LIBGL_DRIVERS_PATH", "LIBVA_DRIVERS_PATH"},
+     {"libGLX_mesa.so.0", "libEGL_mesa.so.0", "libGL.so.1", "libva.so.2", "libva.so.1"},
+     {"dri", "xorg/modules/dri"}},
+    {"gbm",   "",          {"_gbm.so"},                  {"GBM_BACKENDS_PATH"},
+     {"libgbm.so.1"},
+     {"gbm"}},
+    {"vdpau", "libvdpau_", {".so.1"},                    {"VDPAU_DRIVER_PATH"},
+     {"libvdpau.so.1"},
+     {"vdpau"}},
 };
+/* clang-format on */
 
 /* captured only if the host's copy is newer than the image's */
 static const char *const SONAMES[] = {
@@ -435,6 +449,10 @@ typedef struct {
     char *tree_libdir;  /* /usr/lib/<tuple> */
     GHashTable *env;    /* variable -> GPtrArray of values */
     GHashTable *placed; /* host path of a driver -> path in the tree */
+    /* host paths of the drivers of each kind */
+    GPtrArray *drivers[G_N_ELEMENTS(DRIVER_SUBDIRS)];
+    /* the host directories the drivers are looked for in */
+    GPtrArray *host_dirs;
 } MfrCaptureJob;
 
 /**
@@ -578,17 +596,21 @@ mfr_read_nvidia_version(void)
 }
 
 /**
- * mfr_fetch_host_drivers:
+ * mfr_capture_job_add_drivers_in:
+ * @seen: the names of the drivers of this kind found so far
  *
- * The dlopen()ed vendor drivers of the host in one subdirectory of its libdir.
+ * Add the drivers of one kind in a host directory to the job, unless one
+ * of the same name was found in a directory searched before.
  */
-static GPtrArray *
-mfr_fetch_host_drivers(const char *tuple, size_t subdir_index)
+static void
+mfr_capture_job_add_drivers_in(MfrCaptureJob *job, size_t subdir_index, const char *dir, GHashTable *seen)
 {
-    g_autofree char *dir = g_strdup_printf("/usr/lib/%s/%s", tuple, DRIVER_SUBDIRS[subdir_index].subdir);
     g_autoptr(GDir) entries = g_dir_open(dir, 0, NULL);
-    GPtrArray *paths = g_ptr_array_new_with_free_func(g_free);
+    g_autoptr(GPtrArray) names = g_ptr_array_new();
     const char *name;
+
+    if (!g_ptr_array_find_with_equal_func(job->host_dirs, dir, g_str_equal, NULL))
+        g_ptr_array_add(job->host_dirs, g_strdup(dir));
 
     while (entries != NULL && (name = g_dir_read_name(entries)) != NULL) {
         gboolean wanted = FALSE;
@@ -598,12 +620,73 @@ mfr_fetch_host_drivers(const char *tuple, size_t subdir_index)
         for (size_t i = 0; DRIVER_SUBDIRS[subdir_index].suffixes[i] != NULL; i++)
             wanted |= g_str_has_suffix(name, DRIVER_SUBDIRS[subdir_index].suffixes[i]);
         /* nvidia-vaapi-driver depends on GStreamer, which is more than a capture can carry */
-        if (wanted && !g_str_equal(name, "nvidia_drv_video.so"))
-            g_ptr_array_add(paths, g_build_filename(dir, name, NULL));
+        if (wanted && !g_str_equal(name, "nvidia_drv_video.so") && !g_hash_table_contains(seen, name))
+            g_ptr_array_add(names, (char *) name);
     }
-    g_ptr_array_sort_values(paths, (GCompareFunc) g_strcmp0);
+    g_ptr_array_sort_values(names, (GCompareFunc) g_strcmp0);
 
-    return paths;
+    for (guint i = 0; i < names->len; i++) {
+        g_hash_table_add(seen, g_strdup(g_ptr_array_index(names, i)));
+        g_ptr_array_add(job->drivers[subdir_index], g_build_filename(dir, g_ptr_array_index(names, i), NULL));
+    }
+}
+
+/**
+ * mfr_capture_job_find_drivers:
+ *
+ * Find the dlopen()ed vendor drivers of the host: the capture tool looks
+ * up the libraries that load them in the host's ld.so.cache, and the
+ * drivers are in subdirectories of the directories those libraries are
+ * in, whatever the distribution calls them.
+ */
+static gboolean
+mfr_capture_job_find_drivers(MfrCaptureJob *job, GError **error)
+{
+    g_auto(GLnxTmpDir) links_dir = {0};
+    g_autoptr(GPtrArray) argv = g_ptr_array_new_with_free_func(g_free);
+
+    if (!glnx_mkdtemp("manifold-loaders-XXXXXX", 0700, &links_dir, error))
+        return FALSE;
+    g_ptr_array_add(argv, g_strdup(job->tool));
+    g_ptr_array_add(argv, g_strdup_printf("--dest=%s", links_dir.path));
+    g_ptr_array_add(argv, g_strdup("--provider=/"));
+    /* links to where the loaders are on the host, not to where the host is in a tree */
+    g_ptr_array_add(argv, g_strdup("--link-target=/"));
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
+        for (size_t j = 0; DRIVER_SUBDIRS[i].loaders[j] != NULL; j++)
+            g_ptr_array_add(argv,
+                            g_strdup_printf("no-dependencies:if-exists:even-if-older:soname:%s",
+                                            DRIVER_SUBDIRS[i].loaders[j]));
+    }
+    if (!mfr_capture_run_tool(argv, NULL, error))
+        return FALSE;
+
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
+        g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+
+        for (size_t j = 0; DRIVER_SUBDIRS[i].loaders[j] != NULL; j++) {
+            g_autofree char *link = g_build_filename(links_dir.path, DRIVER_SUBDIRS[i].loaders[j], NULL);
+            g_autofree char *loader = g_file_read_link(link, NULL);
+            g_autofree char *libdir = NULL;
+            g_autofree char *canonical = NULL;
+
+            if (loader == NULL)
+                continue;
+            libdir = g_path_get_dirname(loader);
+            canonical = realpath(libdir, NULL);
+            if (canonical != NULL)
+                g_set_str(&libdir, canonical);
+            if (!g_ptr_array_find_with_equal_func(job->host_dirs, libdir, g_str_equal, NULL))
+                g_ptr_array_add(job->host_dirs, g_strdup(libdir));
+            for (size_t k = 0; DRIVER_SUBDIRS[i].lookups[k] != NULL; k++) {
+                g_autofree char *dir = g_build_filename(libdir, DRIVER_SUBDIRS[i].lookups[k], NULL);
+
+                mfr_capture_job_add_drivers_in(job, i, dir, seen);
+            }
+        }
+    }
+
+    return TRUE;
 }
 
 /**
@@ -643,12 +726,10 @@ mfr_capture_job_register_patterns(MfrCaptureJob *job, GPtrArray *argv)
 
     /* the dependencies of the vendor drivers; the drivers come separately */
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
-        g_autoptr(GPtrArray) drivers = mfr_fetch_host_drivers(job->tuple, i);
-
-        for (guint j = 0; j < drivers->len; j++)
+        for (guint j = 0; j < job->drivers[i]->len; j++)
             g_ptr_array_add(argv,
                             g_strdup_printf("only-dependencies:if-exists:if-same-abi:path:%s",
-                                            (char *) g_ptr_array_index(drivers, j)));
+                                            (char *) g_ptr_array_index(job->drivers[i], j)));
     }
 }
 
@@ -669,7 +750,7 @@ static gboolean
 mfr_capture_job_capture_drivers(MfrCaptureJob *job, GError **error)
 {
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
-        g_autoptr(GPtrArray) drivers = mfr_fetch_host_drivers(job->tuple, i);
+        GPtrArray *drivers = job->drivers[i];
         g_autofree char *dest = g_build_filename(job->libdir, DRIVER_SUBDIRS[i].subdir, NULL);
         g_autoptr(GPtrArray) argv = NULL;
 
@@ -1492,10 +1573,10 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
 
     if (mfr_stamp_add_dir(&dirs, host_libdir) < 0)
         return glnx_throw(error, "Unable to record directories");
-    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
-        g_autofree char *driver_dir = g_build_filename(host_libdir, DRIVER_SUBDIRS[i].subdir, NULL);
+    for (guint i = 0; i < job->host_dirs->len; i++) {
+        const char *host_dir = g_ptr_array_index(job->host_dirs, i);
 
-        if (mfr_stamp_add_dir(&dirs, driver_dir) < 0)
+        if (!g_str_equal(host_dir, host_libdir) && mfr_stamp_add_dir(&dirs, host_dir) < 0)
             return glnx_throw(error, "Unable to record directories");
     }
     if (!mfr_stamp_add_link_targets(job->overrides_dir, seen, &targets, error))
@@ -1569,11 +1650,16 @@ mfr_capture_build(const char *dir, const char *core_mount, const char *tuple, GE
     job.tree_libdir = g_build_filename("/usr/lib", tuple, NULL);
     job.env = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_ptr_array_unref);
     job.placed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    job.host_dirs = g_ptr_array_new_with_free_func(g_free);
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++)
+        job.drivers[i] = g_ptr_array_new_with_free_func(g_free);
 
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, job.libdir, 0755, NULL, error))
         goto out;
 
     g_info("Capturing the host graphics stack for %s against %s", tuple, core_mount);
+    if (!mfr_capture_job_find_drivers(&job, error))
+        goto out;
     plans = mfr_fetch_loader_manifest_plans();
     argv = mfr_capture_job_make_argv(&job, job.libdir);
     mfr_capture_job_register_patterns(&job, argv);
@@ -1604,6 +1690,9 @@ out:
     g_free(job.tree_libdir);
     g_hash_table_unref(job.env);
     g_hash_table_unref(job.placed);
+    g_ptr_array_unref(job.host_dirs);
+    for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++)
+        g_ptr_array_unref(job.drivers[i]);
     return ret;
 }
 
