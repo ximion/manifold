@@ -257,8 +257,8 @@ mfd_on_copy_progress(guint64 bytes_copied, gpointer user_data)
 typedef struct {
     MfBundleImage *image; /* the image of the bundle, which outlives the plan */
     MfInstallMode mode;
-    gboolean skip;      /* installed already, there is nothing to do */
-    gboolean add_image; /* the image is not in the store yet */
+    gboolean skip;      /* installed already, or not needed: there is nothing to do */
+    gboolean add_image; /* the image has to be added to the store */
     MfBaseLink *base;   /* what the component builds on, NULL for a core */
 } MfdInstallPlan;
 
@@ -373,13 +373,35 @@ mfd_set_wrong_architecture_error(GError **error,
 }
 
 /**
+ * mfd_check_if_bundle_image_wins:
+ * @manifest: the manifest of an image of the bundle that provides an identity
+ * @installed: (nullable): what provides the identity in the store
+ *
+ * Check whether we use the image of the bundle that provides an identity, rather
+ * than what provides the identity in the store. The image of the bundle wins if the
+ * store has nothing that provides the identity, if that is another component, or if
+ * it is an older version of the same component.
+ *
+ * Returns: %TRUE if the image of the bundle wins
+ */
+static gboolean
+mfd_check_if_bundle_image_wins(MfManifest *manifest, MfComponent *installed)
+{
+    return installed == NULL ||
+           g_strcmp0(mf_component_get_id(installed), mf_manifest_get_component_id(manifest)) != 0 ||
+           mf_version_compare_with_rev(mf_component_get_version(installed),
+                                       mf_component_get_revision(installed),
+                                       mf_manifest_get_version(manifest),
+                                       mf_manifest_get_revision(manifest)) < 0;
+}
+
+/**
  * mfd_manager_resolve_dependency:
  * @iplan: the plan whose base to set
  * @ret_kind: (out): the kind of the component that provides the identity
  *
- * Find the component that provides an identity a component needs, in the
- * bundle or in the store, and make it the base of @iplan. If the bundle and
- * the store both have that component, we take the newer of the two versions.
+ * Find the component that provides the identity a component needs as its
+ * base, in the bundle or in the store, and make it the base of @iplan.
  *
  * The base link follows the `current` version of that component if the
  * version we found will be the current one once the bundle is installed.
@@ -398,32 +420,25 @@ mfd_manager_resolve_dependency(MfdManager *manager,
     g_autoptr(MfComponent) installed = mf_store_find_identity(manager->store, identity, NULL);
     gboolean current;
 
-    if (image != NULL) {
+    if (image != NULL && mfd_check_if_bundle_image_wins(mf_bundle_image_get_manifest(image), installed)) {
         MfManifest *manifest = mf_bundle_image_get_manifest(image);
         const char *component_id = mf_manifest_get_component_id(manifest);
         const char *version = mf_manifest_get_version(manifest);
         guint64 revision = mf_manifest_get_revision(manifest);
+        /* the bundle's image becomes current unless a newer version is already installed */
+        g_autoptr(MfComponent) newest = mf_store_get_component(manager->store, component_id, NULL, NULL);
+        g_autofree char *version_name = NULL;
 
-        if (installed == NULL || g_strcmp0(mf_component_get_id(installed), component_id) != 0 ||
-            mf_version_compare_with_rev(mf_component_get_version(installed),
-                                        mf_component_get_revision(installed),
-                                        version,
-                                        revision) < 0) {
-            /* the bundle's image becomes current unless a newer version is already installed */
-            g_autoptr(MfComponent) newest = mf_store_get_component(manager->store, component_id, NULL, NULL);
-            g_autofree char *version_name = NULL;
-
-            current = newest == NULL || mf_version_compare_with_rev(version,
-                                                                    revision,
-                                                                    mf_component_get_version(newest),
-                                                                    mf_component_get_revision(newest)) >= 0;
-            version_name = current ? NULL : mf_build_full_version(version, revision);
-            *ret_kind = mf_manifest_get_kind(manifest);
-            iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, mf_manifest_is_sdk(manifest)),
-                                           component_id,
-                                           version_name);
-            return TRUE;
-        }
+        current = newest == NULL || mf_version_compare_with_rev(version,
+                                                                revision,
+                                                                mf_component_get_version(newest),
+                                                                mf_component_get_revision(newest)) >= 0;
+        version_name = current ? NULL : mf_build_full_version(version, revision);
+        *ret_kind = mf_manifest_get_kind(manifest);
+        iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, mf_manifest_is_sdk(manifest)),
+                                       component_id,
+                                       version_name);
+        return TRUE;
     }
 
     if (installed == NULL)
@@ -563,9 +578,9 @@ mfd_manager_resolve_exact_base(MfdManager *manager,
  * mfd_manager_plan_image_install:
  *
  * Plan how we install an image of the bundle: whether we add the image to
- * the store, whether the component is installed already, its install mode,
- * and what it builds on. Everything that refuses the installation of the
- * image is checked here, before anything is written.
+ * the store, whether the component is installed already or not needed at
+ * all, its install mode, and what it builds on. Everything that refuses the
+ * installation of the image is checked here, before anything is written.
  *
  * Returns: %TRUE if the image can be installed
  */
@@ -623,6 +638,23 @@ mfd_manager_plan_image_install(MfdManager *manager,
             return FALSE;
         }
         g_info("%s %s was a dependency, and is installed on purpose now", component_id, version);
+    }
+
+    /* a kit that came along with an application is not needed if the application can run on
+     * a newer version that we already have in the store */
+    if (dependency) {
+        g_autoptr(MfComponent)
+            provider = mf_store_find_identity(manager->store, mf_manifest_get_identity(manifest), NULL);
+
+        if (!mfd_check_if_bundle_image_wins(manifest, provider)) {
+            g_info("%s %s is not needed, %s is installed",
+                   component_id,
+                   version,
+                   mf_component_get_full_version(provider));
+            iplan->skip = TRUE;
+            iplan->add_image = FALSE;
+            return TRUE;
+        }
     }
 
     if (base_id != NULL) {
@@ -1300,6 +1332,8 @@ mfd_manager_install_bundle(MfdManager *manager,
         const char *version = mf_manifest_get_version(manifest);
         guint64 image_size = mf_manifest_get_image_size(manifest);
 
+        if (plan->skip)
+            continue;
         if (!plan->add_image) {
             g_info("Image %s of %s %s is in the store already", verity_hash, component_id, version);
             continue;

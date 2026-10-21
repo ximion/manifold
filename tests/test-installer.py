@@ -360,6 +360,26 @@ class InstallerTest(unittest.TestCase):
             f'../../../runtimes/{renamed_kit.component}/current',
         )
 
+    def test_older_kit_the_app_does_not_use_is_left_out(self):
+        newer_kit = Image(
+            self.kit.component, 'kit', '20260201T0000', base=self.core, seed='newer kit'
+        )
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.bundle('newer-kit', [newer_kit]))
+
+        # the app builds on the newer kit, so the one that came along is not installed
+        out = self.manifold('install', self.app_bundle)
+        self.assertNotIn(self.kit.version, out)
+        self.assertEqual(
+            self.version_dirs('runtimes', self.kit.component),
+            [f'{newer_kit.version}-{newer_kit.revision}'],
+        )
+        self.assertNotIn(self.kit.verity_hash, self.stored_images())
+        self.assertEqual(
+            os.readlink(f'{STORE}/apps/{APP_ID}/0.1.0-{self.app.revision}/base'),
+            f'../../../runtimes/{self.kit.component}/current',
+        )
+
     def test_platform_sits_on_its_exact_core(self):
         platform = Image(CORE_ID + '.qt6', 'platform', '6.8', revision=22910119, base=self.core)
         self.manifold('install', self.core_bundle)
