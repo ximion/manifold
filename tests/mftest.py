@@ -68,44 +68,55 @@ class VarlinkError(Exception):
 
 
 class Daemon:
-    """A daemon of Manifold, listening on a socket of our choosing."""
+    """A daemon of Manifold, listening on a socket of our choosing. It logs to a
+    file: a pipe that is not read while the tests run would fill up, and block it."""
 
-    def __init__(self, exe, socket_path):
+    def __init__(self, exe, socket_path, log_path):
         self.exe = exe
         self.socket_path = socket_path
+        self.log_path = log_path
         self.process = None
-        self.log = None
 
     def start(self):
-        self.log = None
         if os.path.exists(self.socket_path):
             os.unlink(self.socket_path)
-        self.process = subprocess.Popen(
-            [self.exe, '--socket', self.socket_path, '--verbose'],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
+        with open(self.log_path, 'wb') as log:
+            self.process = subprocess.Popen(
+                [self.exe, '--socket', self.socket_path, '--verbose'],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
         for _ in range(200):
             if os.path.exists(self.socket_path):
                 return
             if self.process.poll() is not None:
-                raise RuntimeError(f'{self.exe} exited early:\n{self.process.stderr.read()}')
+                raise RuntimeError(f'{self.exe} exited early:\n{self.read_log()}')
             time.sleep(0.05)
         raise RuntimeError(f'{self.exe} did not start listening')
 
+    def log_size(self):
+        return os.path.getsize(self.log_path)
+
+    def read_log(self, start=0):
+        """What the daemon logged, from the offset start on, e.g. a log_size() of before."""
+        with open(self.log_path, 'rb') as f:
+            f.seek(start)
+            return f.read().decode(errors='replace')
+
     def stop(self):
         """Stop the daemon, and return what it logged. Stopping it twice is fine."""
-        if self.log is not None:
-            return self.log
         if self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
-        _, self.log = self.process.communicate(timeout=10)
+            try:
+                self.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait()
         if self.process.returncode != 0:
             raise RuntimeError(
-                f'{self.exe} exited with status {self.process.returncode}:\n{self.log}'
+                f'{self.exe} exited with status {self.process.returncode}:\n{self.read_log()}'
             )
-        return self.log
+        return self.read_log()
 
     def call(self, method, parameters=None, more=False, fd=None):
         """

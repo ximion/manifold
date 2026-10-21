@@ -42,7 +42,7 @@ class InstallerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.work = tempfile.mkdtemp(prefix='manifold-test-')
-        cls.daemon = Daemon(ARGS.daemon, SOCKET)
+        cls.daemon = Daemon(ARGS.daemon, SOCKET, os.path.join(cls.work, 'manifoldd.log'))
         cls.daemon.start()
 
         cls.core = Image(CORE_ID, 'core', '13.4')
@@ -64,6 +64,16 @@ class InstallerTest(unittest.TestCase):
     @classmethod
     def bundle(cls, name, images, **kwargs):
         return write_bundle(os.path.join(cls.work, name + '.manifold'), images, **kwargs)
+
+    def run(self, result=None):
+        """Run a test, and if it fails, show what the daemon logged meanwhile."""
+        result = result if result is not None else self.defaultTestResult()
+        start = self.daemon.log_size()
+        problems = len(result.failures) + len(result.errors)
+        super().run(result)
+        if len(result.failures) + len(result.errors) > problems:
+            sys.stderr.write(f'--- the daemon logged:\n{self.daemon.read_log(start)}---\n')
+        return result
 
     def setUp(self):
         """Every test starts with nothing installed."""
