@@ -10,8 +10,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "mf-utils-private.h"
-
 #define BIN_NAME "manifold"
 
 void
@@ -97,11 +95,9 @@ mfc_format_components(GPtrArray *components, gboolean with_header)
     /* the columns are as wide as what they contain */
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
-        g_autofree char *version = mf_build_full_version(mf_component_get_version(component),
-                                                         mf_component_get_revision(component));
 
         id_width = MAX(id_width, strlen(mf_component_get_id(component)));
-        version_width = MAX(version_width, strlen(version));
+        version_width = MAX(version_width, strlen(mf_component_get_full_version(component)));
     }
 
     if (with_header)
@@ -116,8 +112,6 @@ mfc_format_components(GPtrArray *components, gboolean with_header)
 
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
-        g_autofree char *version = mf_build_full_version(mf_component_get_version(component),
-                                                         mf_component_get_revision(component));
         g_autoptr(GString) flags = g_string_new(NULL);
 
         if (mf_component_is_sdk(component))
@@ -135,7 +129,7 @@ mfc_format_components(GPtrArray *components, gboolean with_header)
                                (int) id_width,
                                mf_component_get_id(component),
                                (int) version_width,
-                               version,
+                               mf_component_get_full_version(component),
                                flags->str);
     }
 

@@ -15,8 +15,8 @@
 MF_BEGIN_PRIVATE_DECLS
 
 MF_INTERNAL_VISIBLE
-gboolean     mf_component_kind_is_always_auto(MfComponentKind kind,
-                                              gboolean        sdk);
+gboolean mf_component_kind_is_always_auto(MfComponentKind kind,
+                                          gboolean        sdk);
 
 MF_INTERNAL_VISIBLE
 MfComponent *mf_component_new(const char     *component_id,

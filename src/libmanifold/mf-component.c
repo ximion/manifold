@@ -26,6 +26,7 @@ struct _MfComponent {
     MfComponentKind kind;
     char *version;
     guint64 revision;
+    char *full_version; /* (nullable) built on first use */
     gboolean sdk;
     char *identity;
     char *verity_hash;
@@ -44,6 +45,7 @@ mf_component_finalize(GObject *object)
 
     g_free(component->component_id);
     g_free(component->version);
+    g_free(component->full_version);
     g_free(component->identity);
     g_free(component->verity_hash);
     g_free(component->origin);
@@ -264,6 +266,27 @@ mf_component_get_revision(MfComponent *component)
 {
     g_return_val_if_fail(MF_IS_COMPONENT(component), 0);
     return component->revision;
+}
+
+/**
+ * mf_component_get_full_version:
+ * @component: an #MfComponent
+ *
+ * Get the version and the revision of the component as one string,
+ * `<version>-<revision>`. This is also the name of the component's
+ * directory in the store.
+ *
+ * Returns: the full version of the component
+ */
+const char *
+mf_component_get_full_version(MfComponent *component)
+{
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
+
+    /* a component does not change once it is made */
+    if (component->full_version == NULL)
+        component->full_version = mf_build_full_version(component->version, component->revision);
+    return component->full_version;
 }
 
 /**

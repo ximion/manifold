@@ -70,6 +70,7 @@ const char     *mf_component_get_id(MfComponent *component);
 MfComponentKind mf_component_get_kind(MfComponent *component);
 const char     *mf_component_get_version(MfComponent *component);
 guint64         mf_component_get_revision(MfComponent *component);
+const char     *mf_component_get_full_version(MfComponent *component);
 gboolean        mf_component_is_sdk(MfComponent *component);
 const char     *mf_component_get_identity(MfComponent *component);
 const char     *mf_component_get_verity_hash(MfComponent *component);

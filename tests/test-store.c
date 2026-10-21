@@ -268,6 +268,7 @@ test_install_runtime(Fixture *f, gconstpointer user_data)
     g_assert_nonnull(core);
     g_assert_cmpint(mf_component_get_kind(core), ==, MF_COMPONENT_KIND_CORE);
     g_assert_cmpuint(mf_component_get_revision(core), ==, 1);
+    g_assert_cmpstr(mf_component_get_full_version(core), ==, "13.4-1");
     g_assert_false(mf_component_is_sdk(core));
     g_assert_cmpstr(mf_component_get_verity_hash(core), ==, hash);
     g_assert_true(mf_component_is_current(core));

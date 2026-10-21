@@ -474,27 +474,16 @@ mf_version_dir_name_at(const char *root,
 }
 
 /**
- * mf_component_make_version_dir_name:
- */
-static char *
-mf_component_make_version_dir_name(MfComponent *component)
-{
-    return mf_build_full_version(mf_component_get_version(component), mf_component_get_revision(component));
-}
-
-/**
  * mf_component_dir_at:
  */
 static char *
 mf_component_dir_at(const char *root, MfComponent *component)
 {
-    g_autofree char *version_name = mf_component_make_version_dir_name(component);
-
     return g_build_filename(
         root,
         mf_store_subdir_for_kind(mf_component_get_kind(component), mf_component_is_sdk(component)),
         mf_component_get_id(component),
-        version_name,
+        mf_component_get_full_version(component),
         NULL);
 }
 
@@ -957,15 +946,13 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
         return NULL;
     for (guint i = 0; i < components->len; i++) {
         MfComponent *candidate = g_ptr_array_index(components, i);
-        g_autofree char *version_name = NULL;
 
         if (!g_str_equal(mf_component_get_id(candidate), base->component_id) ||
             !g_str_equal(
                 mf_store_subdir_for_kind(mf_component_get_kind(candidate), mf_component_is_sdk(candidate)),
                 base->subdir))
             continue;
-        version_name = mf_component_make_version_dir_name(candidate);
-        if (g_str_equal(version_name, base->version_name))
+        if (g_str_equal(mf_component_get_full_version(candidate), base->version_name))
             return g_object_ref(candidate);
     }
 

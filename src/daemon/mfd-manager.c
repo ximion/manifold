@@ -342,7 +342,6 @@ mfd_manager_resolve_dependency(MfdManager *manager,
 {
     MfBundleImage *image = mf_bundle_find_image_for_identity(bundle, identity);
     g_autoptr(MfComponent) installed = mf_store_find_identity(manager->store, identity, NULL);
-    g_autofree char *version_name = NULL;
     gboolean current;
 
     if (image != NULL) {
@@ -358,6 +357,7 @@ mfd_manager_resolve_dependency(MfdManager *manager,
                                         revision) < 0) {
             /* the bundle's image becomes current unless a newer version is already installed */
             g_autoptr(MfComponent) newest = mf_store_get_component(manager->store, component_id, NULL, NULL);
+            g_autofree char *version_name = NULL;
 
             current = newest == NULL || mf_version_compare_with_rev(version,
                                                                     revision,
@@ -375,12 +375,10 @@ mfd_manager_resolve_dependency(MfdManager *manager,
     if (installed == NULL)
         return FALSE;
     *ret_kind = mf_component_get_kind(installed);
-    if (!mf_component_is_current(installed))
-        version_name = mf_build_full_version(mf_component_get_version(installed),
-                                             mf_component_get_revision(installed));
-    iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, mf_component_is_sdk(installed)),
-                                   mf_component_get_id(installed),
-                                   version_name);
+    iplan->base = mf_base_link_new(
+        mf_store_subdir_for_kind(*ret_kind, mf_component_is_sdk(installed)),
+        mf_component_get_id(installed),
+        mf_component_is_current(installed) ? NULL : mf_component_get_full_version(installed));
     return TRUE;
 }
 

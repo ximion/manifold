@@ -84,9 +84,9 @@ MfBaseLink *mf_base_link_new(const char *subdir,
                              const char *component_id,
                              const char *version_name);
 MF_INTERNAL_VISIBLE
-void        mf_base_link_free(MfBaseLink *link);
+void mf_base_link_free(MfBaseLink *link);
 MF_INTERNAL_VISIBLE
-char       *mf_base_link_get_target(const MfBaseLink *link);
+char *mf_base_link_get_target(const MfBaseLink *link);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(MfBaseLink, mf_base_link_free)
 
