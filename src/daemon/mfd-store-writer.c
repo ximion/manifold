@@ -219,13 +219,17 @@ mfd_store_writer_update_metainfo_link(MfdStoreWriter *writer, const char *compon
 
 /**
  * mfd_store_writer_update_current:
+ * @except: (nullable): the name of a version directory to leave out, as it is about to be removed
  *
  * Point the `current` link of a component at its newest installed
  * version, or remove it if there is none, and keep the MetaInfo link of
  * the local origin in step.
  */
 static gboolean
-mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_dir, GError **error)
+mfd_store_writer_update_current(MfdStoreWriter *writer,
+                                const char *component_dir,
+                                const char *except,
+                                GError **error)
 {
     g_autofree char *link_path = g_build_filename(component_dir, MF_STORE_CURRENT_NAME, NULL);
     g_autofree char *newest_name = NULL;
@@ -242,7 +246,8 @@ mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_di
         g_autofree char *version = NULL;
         guint64 revision;
 
-        if (mfd_is_hidden(name) || mfd_is_symlink(path) || !mfd_is_directory(path))
+        if (mfd_is_hidden(name) || g_strcmp0(name, except) == 0 || mfd_is_symlink(path) ||
+            !mfd_is_directory(path))
             continue;
         if (!mf_split_full_version(name, &version, &revision))
             continue;
@@ -381,7 +386,7 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
            version,
            mode == MF_INSTALL_MODE_AUTO ? " as a dependency" : "");
     ret = TRUE;
-    if (!mfd_store_writer_update_current(writer, component_dir, &current_error))
+    if (!mfd_store_writer_update_current(writer, component_dir, NULL, &current_error))
         g_warning("Unable to make the newest version of %s current: %s",
                   component_id,
                   current_error->message);
@@ -399,9 +404,13 @@ out:
 /**
  * mfd_store_writer_remove_version_dir:
  *
- * Remove a version directory, point `current` of its component at the
- * newest remaining version, and remove the directory of the component if
- * that was its last version.
+ * Remove a version directory, and the directory of the component if that
+ * was its last version. Before the version goes, `current` of the component
+ * is pointed at the newest other version, so it never points at nothing.
+ *
+ * We remove the version from the store by renaming its directory to a hidden
+ * name, and then delete that. If deleting fails, we only warn about it, and
+ * the next cleanup deletes it.
  */
 gboolean
 mfd_store_writer_remove_version_dir(MfdStoreWriter *writer, const char *version_dir, GError **error)
@@ -410,23 +419,31 @@ mfd_store_writer_remove_version_dir(MfdStoreWriter *writer, const char *version_
     g_autofree char *version_name = g_path_get_basename(version_dir);
     g_autofree char *tmp_name = g_strconcat(MF_TMP_PREFIX, version_name, NULL);
     g_autofree char *tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
+    g_autoptr(GError) local_error = NULL;
 
     g_info("Removing %s", version_dir);
-    /* out of sight first, so that an interrupted removal leaves only a temp dir */
     if (!mfd_remove_if_exists(tmp_dir, error))
         return FALSE;
-    if (rename(version_dir, tmp_dir) < 0)
-        return glnx_throw_errno_prefix(error, "Unable to rename %s", version_dir);
+
     mf_store_invalidate(writer->store);
-    if (!mfd_remove_if_exists(tmp_dir, error) ||
-        !mfd_store_writer_update_current(writer, component_dir, error))
-        return FALSE;
-    if (rmdir(component_dir) < 0 && errno != ENOTEMPTY && errno != EEXIST && errno != ENOENT) {
-        glnx_throw_errno_prefix(error, "Unable to remove directory %s", component_dir);
-        return FALSE;
+    if (!mfd_store_writer_update_current(writer, component_dir, version_name, error))
+        goto undo;
+    /* we rename it first, so an interrupted removal only leaves a hidden directory behind */
+    if (rename(version_dir, tmp_dir) < 0) {
+        glnx_throw_errno_prefix(error, "Unable to rename %s", version_dir);
+        goto undo;
     }
 
+    if (!mfd_remove_if_exists(tmp_dir, &local_error))
+        g_warning("Unable to delete the removed %s, cleaning up does: %s", version_dir, local_error->message);
+    if (rmdir(component_dir) < 0 && errno != ENOTEMPTY && errno != EEXIST && errno != ENOENT)
+        return glnx_throw_errno_prefix(error, "Unable to remove directory %s", component_dir);
     return TRUE;
+
+undo:
+    if (!mfd_store_writer_update_current(writer, component_dir, NULL, &local_error))
+        g_warning("Unable to make %s current again: %s", version_dir, local_error->message);
+    return FALSE;
 }
 
 /**
