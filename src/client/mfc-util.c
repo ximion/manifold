@@ -91,17 +91,14 @@ char *
 mfc_format_components(GPtrArray *components, gboolean with_header)
 {
     g_autoptr(GString) table = g_string_new(NULL);
-    g_autoptr(GPtrArray) versions = g_ptr_array_new_with_free_func(g_free);
     gsize id_width = with_header ? strlen("COMPONENT") : 0;
     gsize version_width = with_header ? strlen("VERSION") : 0;
 
     /* the columns are as wide as what they contain */
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
-        char *version = mf_build_full_version(mf_component_get_version(component),
-                                              mf_component_get_revision(component));
-
-        g_ptr_array_add(versions, version);
+        g_autofree char *version = mf_build_full_version(mf_component_get_version(component),
+                                                         mf_component_get_revision(component));
 
         id_width = MAX(id_width, strlen(mf_component_get_id(component)));
         version_width = MAX(version_width, strlen(version));
@@ -119,6 +116,8 @@ mfc_format_components(GPtrArray *components, gboolean with_header)
 
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
+        g_autofree char *version = mf_build_full_version(mf_component_get_version(component),
+                                                         mf_component_get_revision(component));
         g_autoptr(GString) flags = g_string_new(NULL);
 
         if (mf_component_is_sdk(component))
@@ -136,7 +135,7 @@ mfc_format_components(GPtrArray *components, gboolean with_header)
                                (int) id_width,
                                mf_component_get_id(component),
                                (int) version_width,
-                               (const char *) g_ptr_array_index(versions, i),
+                               version,
                                flags->str);
     }
 
