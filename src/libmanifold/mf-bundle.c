@@ -95,14 +95,16 @@ mf_blake3_hex(const blake3_hasher *hasher)
 }
 
 /**
- * mf_blake3_of_data:
+ * mf_blake3_of_bytes:
  *
- * Returns: the blake3 hash of a buffer, as hex
+ * Returns: the blake3 hash of the bytes, as hex
  */
 static char *
-mf_blake3_of_data(gconstpointer data, gsize size)
+mf_blake3_of_bytes(GBytes *bytes)
 {
     blake3_hasher hasher;
+    gsize size;
+    gconstpointer data = g_bytes_get_data(bytes, &size);
 
     blake3_hasher_init(&hasher);
     blake3_hasher_update(&hasher, data, size);
@@ -293,15 +295,11 @@ mf_bundle_reader_take_reference(MfBundleReader *reader, const char *name, const 
  * mf_zip_read_entry:
  * @budget: (inout): how much metadata we may still read, which we lower by the size of the file
  *
- * Read a small file of the bundle into memory, with a terminating NUL.
+ * Read a small file of the bundle into memory. A NUL follows the data,
+ * outside of the bytes, so text can be parsed right from them.
  */
-static char *
-mf_zip_read_entry(zip_t *zip,
-                  guint64 index,
-                  const char *name,
-                  guint64 *budget,
-                  gsize *ret_size,
-                  GError **error)
+static GBytes *
+mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, GError **error)
 {
     g_autofree char *data = NULL;
     zip_stat_t st;
@@ -358,8 +356,7 @@ mf_zip_read_entry(zip_t *zip,
     }
 
     data[total] = '\0';
-    *ret_size = total;
-    return g_steal_pointer(&data);
+    return g_bytes_new_take(g_steal_pointer(&data), total);
 }
 
 /**
@@ -369,22 +366,17 @@ mf_zip_read_entry(zip_t *zip,
  * that the manifest refers to its image file.
  */
 static MfBundleImage *
-mf_bundle_reader_parse_manifest(MfBundleReader *reader,
-                                const char *name,
-                                const char *data,
-                                gsize size,
-                                GError **error)
+mf_bundle_reader_parse_manifest(MfBundleReader *reader, const char *name, GBytes *data, GError **error)
 {
     MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
     g_autoptr(MfBundleImage) image = NULL;
-    g_autoptr(GBytes) bytes = g_bytes_new(data, size);
     MfBundleEntry *image_entry;
     const char *image_name;
     zip_stat_t st;
 
     image = g_object_new(MF_TYPE_BUNDLE_IMAGE, NULL);
     image->manifest_name = g_strdup(name);
-    image->manifest = mf_manifest_new_from_bytes(bytes, error);
+    image->manifest = mf_manifest_new_from_bytes(data, error);
     if (image->manifest == NULL) {
         g_prefix_error(error, "%s: ", name);
         return NULL;
@@ -421,23 +413,21 @@ mf_bundle_reader_parse_manifest(MfBundleReader *reader,
  * index, and return its contents. We also record that the index refers to
  * the file.
  */
-static char *
+static GBytes *
 mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
                                      sd_json_variant *entry,
                                      char **ret_name,
-                                     gsize *ret_size,
                                      GError **error)
 {
     MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
     MfBundleEntry *archive_entry;
-    g_autofree char *data = NULL;
+    g_autoptr(GBytes) data = NULL;
     g_autofree char *actual_sha256 = NULL;
     g_autofree char *actual_blake3 = NULL;
     const char *name;
     const char *expected_sha256;
     const char *expected_blake3;
     guint64 size;
-    gsize actual_size;
 
     if (!sd_json_variant_is_object(entry)) {
         g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "%s: file entry is not an object", INDEX_NAME);
@@ -464,13 +454,13 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
     if (archive_entry == NULL)
         return NULL;
 
-    data = mf_zip_read_entry(priv->zip, archive_entry->index, name, &reader->budget, &actual_size, error);
+    data = mf_zip_read_entry(priv->zip, archive_entry->index, name, &reader->budget, error);
     if (data == NULL)
         return NULL;
 
-    actual_sha256 = g_compute_checksum_for_data(G_CHECKSUM_SHA256, (const guchar *) data, actual_size);
-    actual_blake3 = mf_blake3_of_data(data, actual_size);
-    if (actual_size != size || g_strcmp0(actual_sha256, expected_sha256) != 0 ||
+    actual_sha256 = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, data);
+    actual_blake3 = mf_blake3_of_bytes(data);
+    if (g_bytes_get_size(data) != size || g_strcmp0(actual_sha256, expected_sha256) != 0 ||
         g_strcmp0(actual_blake3, expected_blake3) != 0) {
         g_set_error(error,
                     MF_ERROR,
@@ -481,7 +471,6 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
     }
 
     *ret_name = g_strdup(name);
-    *ret_size = actual_size;
     return g_steal_pointer(&data);
 }
 
@@ -553,12 +542,11 @@ static gboolean
 mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
 {
     MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
-    g_autofree char *index_data = NULL;
+    g_autoptr(GBytes) index_data = NULL;
     g_autoptr(GHashTable) contents = NULL;
     g_autoptr(sd_json_variant) index = NULL;
     MfBundleEntry *index_entry;
     sd_json_variant *files;
-    gsize index_size;
     guint64 format;
 
     contents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
@@ -570,15 +558,13 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
     /* the index cannot list itself */
     index_entry->referenced = TRUE;
 
-    index_data = mf_zip_read_entry(priv->zip,
-                                   index_entry->index,
-                                   INDEX_NAME,
-                                   &reader->budget,
-                                   &index_size,
-                                   error);
+    index_data = mf_zip_read_entry(priv->zip, index_entry->index, INDEX_NAME, &reader->budget, error);
     if (index_data == NULL)
         return FALSE;
-    index = mf_json_parse_object(index_data, INDEX_NAME, MF_ERROR_INVALID_BUNDLE, error);
+    index = mf_json_parse_object(g_bytes_get_data(index_data, NULL),
+                                 INDEX_NAME,
+                                 MF_ERROR_INVALID_BUNDLE,
+                                 error);
     if (index == NULL)
         return FALSE;
 
@@ -607,27 +593,20 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
 
     for (size_t i = 0; i < sd_json_variant_elements(files); i++) {
         g_autofree char *name = NULL;
-        g_autofree char *data = NULL;
-        gsize size;
+        g_autoptr(GBytes) data = NULL;
 
-        data = mf_bundle_reader_verify_indexed_file(reader,
-                                                    sd_json_variant_by_index(files, i),
-                                                    &name,
-                                                    &size,
-                                                    error);
+        data = mf_bundle_reader_verify_indexed_file(reader, sd_json_variant_by_index(files, i), &name, error);
         if (data == NULL)
             return FALSE;
 
         if (g_str_has_suffix(name, MANIFEST_SUFFIX)) {
-            MfBundleImage *image = mf_bundle_reader_parse_manifest(reader, name, data, size, error);
+            MfBundleImage *image = mf_bundle_reader_parse_manifest(reader, name, data, error);
 
             if (image == NULL)
                 return FALSE;
             g_ptr_array_add(priv->images, image);
         } else {
-            g_hash_table_insert(contents,
-                                g_steal_pointer(&name),
-                                g_bytes_new_take(g_steal_pointer(&data), size));
+            g_hash_table_insert(contents, g_steal_pointer(&name), g_steal_pointer(&data));
         }
     }
 
