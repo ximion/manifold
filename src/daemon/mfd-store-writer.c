@@ -281,6 +281,7 @@ mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_di
  * once it is complete, so it appears as a whole.
  *
  * Then we point the `current` link of the component at its newest version.
+ * The version is installed by then, so if that fails, we only warn about it.
  *
  * A version that is installed already stays as it is, except that we mark it
  * as "manual" if @mode is "manual" now.
@@ -308,6 +309,7 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     g_autofree char *tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
     g_autofree char *final_dir = g_build_filename(component_dir, version_name, NULL);
     g_autoptr(GError) cleanup_error = NULL;
+    g_autoptr(GError) current_error = NULL;
     gconstpointer manifest_data;
     gsize manifest_size;
     gboolean ret = FALSE;
@@ -378,7 +380,11 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
            component_id,
            version,
            mode == MF_INSTALL_MODE_AUTO ? " as a dependency" : "");
-    ret = mfd_store_writer_update_current(writer, component_dir, error);
+    ret = TRUE;
+    if (!mfd_store_writer_update_current(writer, component_dir, &current_error))
+        g_warning("Unable to make the newest version of %s current: %s",
+                  component_id,
+                  current_error->message);
 
     /* invalidate the cached data */
     mf_store_invalidate(writer->store);
