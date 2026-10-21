@@ -10,9 +10,11 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/openat2.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 #include <libglnx.h>
@@ -560,6 +562,24 @@ mfr_tree_teardown(MfrTree *tree)
 }
 
 /**
+ * mfr_tree_has_program:
+ * @path: the program, absolute within the tree
+ *
+ * Whether the tree has an executable file at @path. Links are followed as
+ * if the tree was the root, as they are once the program runs in it.
+ */
+static gboolean
+mfr_tree_has_program(MfrTree *tree, const char *path)
+{
+    struct open_how how = {.flags = O_PATH | O_CLOEXEC, .resolve = RESOLVE_IN_ROOT};
+    glnx_autofd int root_fd = open(tree->mount_path, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    glnx_autofd int fd = root_fd >= 0 ? (int) syscall(SYS_openat2, root_fd, path, &how, sizeof(how)) : -1;
+    struct stat st;
+
+    return fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && (st.st_mode & 0111) != 0;
+}
+
+/**
  * mfr_tree_assemble_internal:
  *
  * Mount a tree, from the images of its layers and its capture.
@@ -571,7 +591,6 @@ mfr_tree_assemble_internal(MfrTree *tree, const char *const *image_paths, GError
     g_autofree char *work_dir = g_build_filename(tree->cache_dir, WORK_NAME, NULL);
     g_autofree char *lower = NULL;
     g_autofree char *app_dir = g_build_filename(image_paths[MFR_LAYER_APP], "app", NULL);
-    g_autofree char *path = NULL;
     g_autoptr(GPtrArray) lowers = g_ptr_array_new();
 
     /* overlayfs wants the highest layer first: the overrides, then the runtime of the
@@ -605,9 +624,8 @@ mfr_tree_assemble_internal(MfrTree *tree, const char *const *image_paths, GError
         return FALSE;
 
     tree->executable = g_build_filename("/app/bin", tree->app->command, NULL);
-    path = g_build_filename(tree->mount_path, tree->executable, NULL);
-    if (!g_file_test(path, G_FILE_TEST_IS_EXECUTABLE))
-        return glnx_throw(error, "The application has no program /app/bin/%s", tree->app->command);
+    if (!mfr_tree_has_program(tree, tree->executable))
+        return glnx_throw(error, "The application has no program %s", tree->executable);
 
     return TRUE;
 }
