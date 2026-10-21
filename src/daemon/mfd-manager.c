@@ -228,11 +228,14 @@ mfd_on_copy_progress(guint64 bytes_copied, gpointer user_data)
 /**
  * MfdInstallPlan:
  *
- * Verified plan to install a component from a bundle.
+ * How we install one image of a bundle as a component, once the image
+ * passed every check.
  */
 typedef struct {
+    MfBundleImage *image; /* the image of the bundle, which outlives the plan */
     MfInstallMode mode;
-    gboolean skip;
+    gboolean skip;           /* installed already, there is nothing to do */
+    gboolean add_image;      /* the image is not in the store yet */
     const char *subdir;      /* of the store, where the component goes */
     const char *base_subdir; /* of the store, where the base is */
     char *base_component_id; /* NULL for a core */
@@ -444,6 +447,8 @@ mfd_manager_plan_image_install(MfdManager *manager,
         return FALSE;
     }
 
+    iplan->image = image;
+    iplan->add_image = !mf_store_has_image(manager->store, verity_hash);
     iplan->mode = dependency || mf_component_kind_is_always_auto(kind, sdk) ? MF_INSTALL_MODE_AUTO
                                                                             : MF_INSTALL_MODE_MANUAL;
     iplan->subdir = mf_store_subdir_for_kind(kind, sdk);
@@ -912,8 +917,7 @@ mfd_manager_plan_removal(MfdManager *manager,
 
 /**
  * mfd_manager_plan_supersede:
- * @images: (element-type MfBundleImage): the images of the bundle that was installed
- * @plans: the install plan of each of @images
+ * @plans: (element-type MfdInstallPlan): the plans of the installation
  *
  * Work out what an installation supersedes: the older versions and revisions
  * of every component it installed, if they are marked as auto and nothing
@@ -924,7 +928,7 @@ mfd_manager_plan_removal(MfdManager *manager,
  * Returns: (transfer full): the plan, or %NULL on error
  */
 static MfdRemovalPlan *
-mfd_manager_plan_supersede(MfdManager *manager, GPtrArray *images, GArray *plans, GError **error)
+mfd_manager_plan_supersede(MfdManager *manager, GArray *plans, GError **error)
 {
     g_autoptr(MfdRemovalPlan) rmplan = mfd_removal_plan_new();
     g_autoptr(GPtrArray) installed = NULL;
@@ -942,10 +946,11 @@ mfd_manager_plan_supersede(MfdManager *manager, GPtrArray *images, GArray *plans
 
         if (mf_component_get_install_mode(component) != MF_INSTALL_MODE_AUTO)
             continue;
-        for (guint j = 0; j < images->len; j++) {
-            MfManifest *manifest = mf_bundle_image_get_manifest(g_ptr_array_index(images, j));
+        for (guint j = 0; j < plans->len; j++) {
+            MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, j);
+            MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
 
-            if (!g_array_index(plans, MfdInstallPlan, j).skip &&
+            if (!plan->skip &&
                 g_str_equal(mf_component_get_id(component), mf_manifest_get_component_id(manifest)) &&
                 mf_version_compare_with_rev(mf_component_get_version(component),
                                             mf_component_get_revision(component),
@@ -1091,21 +1096,19 @@ mfd_manager_install_bundle(MfdManager *manager,
     }
 
     /* copy the images first, then add the referrals and metadata */
-    for (guint i = 0; i < images->len; i++) {
-        MfManifest *manifest = mf_bundle_image_get_manifest(g_ptr_array_index(images, i));
-
-        if (!mf_store_has_image(manager->store, mf_manifest_get_verity_hash(manifest)))
+    for (guint i = 0; i < plans->len; i++) {
+        if (g_array_index(plans, MfdInstallPlan, i).add_image)
             tracker.total++;
     }
-    for (guint i = 0; i < images->len; i++) {
-        MfBundleImage *image = g_ptr_array_index(images, i);
-        MfManifest *manifest = mf_bundle_image_get_manifest(image);
+    for (guint i = 0; i < plans->len; i++) {
+        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
+        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
         const char *verity_hash = mf_manifest_get_verity_hash(manifest);
         const char *component_id = mf_manifest_get_component_id(manifest);
         const char *version = mf_manifest_get_version(manifest);
         guint64 image_size = mf_manifest_get_image_size(manifest);
 
-        if (mf_store_has_image(manager->store, verity_hash)) {
+        if (!plan->add_image) {
             g_info("Image %s of %s %s is in the store already", verity_hash, component_id, version);
             continue;
         }
@@ -1114,7 +1117,7 @@ mfd_manager_install_bundle(MfdManager *manager,
         mfd_progress_begin_item(&tracker, MF_ACTION_INSTALL, component_id, version, image_size);
         if (!mfd_store_writer_add_image(manager->writer,
                                         bundle,
-                                        image,
+                                        plan->image,
                                         mfd_on_copy_progress,
                                         &tracker,
                                         error))
@@ -1123,12 +1126,11 @@ mfd_manager_install_bundle(MfdManager *manager,
         bytes_added += image_size;
     }
 
-    for (guint i = 0; i < images->len; i++) {
-        MfBundleImage *image = g_ptr_array_index(images, i);
-        MfManifest *manifest = mf_bundle_image_get_manifest(image);
+    for (guint i = 0; i < plans->len; i++) {
+        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
+        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
         const char *component_id = mf_manifest_get_component_id(manifest);
         const char *version = mf_manifest_get_version(manifest);
-        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
         g_autoptr(GError) local_error = NULL;
 
         if (plan->skip)
@@ -1145,7 +1147,7 @@ mfd_manager_install_bundle(MfdManager *manager,
                                                 plan->base_version,
                                                 plan->base_revision,
                                                 mf_manifest_get_data(manifest),
-                                                mf_bundle_image_get_metainfo(image),
+                                                mf_bundle_image_get_metainfo(plan->image),
                                                 plan->mode,
                                                 &local_error)) {
             if (g_error_matches(local_error, MF_ERROR, MF_ERROR_ALREADY_INSTALLED))
@@ -1158,7 +1160,7 @@ mfd_manager_install_bundle(MfdManager *manager,
 
     /* what is superseded goes, but the installation stands even if it can not be removed */
     result = mf_result_new();
-    rmplan = mfd_manager_plan_supersede(manager, images, plans, &supersede_error);
+    rmplan = mfd_manager_plan_supersede(manager, plans, &supersede_error);
     if (rmplan != NULL)
         tracker.total += rmplan->items->len;
     if (rmplan == NULL || !mfd_manager_execute_removal(manager, rmplan, &tracker, result, &supersede_error))
@@ -1166,11 +1168,12 @@ mfd_manager_install_bundle(MfdManager *manager,
 
     /* emit the components of the bundle that were installed now as results, not the
      * dependencies that were there already */
-    for (guint i = 0; i < images->len; i++) {
-        MfManifest *manifest = mf_bundle_image_get_manifest(g_ptr_array_index(images, i));
+    for (guint i = 0; i < plans->len; i++) {
+        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
+        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
         g_autoptr(MfComponent) component = NULL;
 
-        if (g_array_index(plans, MfdInstallPlan, i).skip)
+        if (plan->skip)
             continue;
         component = mfd_manager_get_installed(manager,
                                               mf_manifest_get_component_id(manifest),
