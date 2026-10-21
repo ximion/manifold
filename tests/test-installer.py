@@ -397,6 +397,18 @@ class InstallerTest(unittest.TestCase):
             self.installed(), [(CORE_ID, '13.4', 'manual'), (CORE_ID + '.sdk', '13.4', 'manual')]
         )
 
+    def test_removal_reports_components(self):
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+        replies = self.daemon.call(
+            'org.freedesktop.manifold.RemoveComponent', {'componentId': APP_ID}, more=True
+        )
+        items = {
+            (r['progress']['item']['action'], r['progress']['item']['subject'])
+            for r in replies[:-1]
+        }
+        self.assertEqual(items, {('remove', APP_ID), ('cleanup', self.kit.component)})
+
     def test_kit_installed_on_purpose_stays(self):
         self.manifold('install', self.core_bundle)
         self.manifold('install', self.app_bundle)
@@ -495,8 +507,9 @@ class InstallerTest(unittest.TestCase):
 
         with open(stray, 'wb') as f:
             f.write(b'x' * 4096)
+        # removing images alone reports no progress, as a hash means nothing to a user
         replies = self.daemon.call('org.freedesktop.manifold.Cleanup', more=True)
-        self.assertEqual([r['progress']['percent'] for r in replies[:-1]], [0, 100])
+        self.assertEqual(len(replies), 1)
         self.assertEqual(replies[-1]['result']['removedImages'], ['f' * 64])
         self.assertEqual(replies[-1]['result']['bytesFreed'], 4096)
 

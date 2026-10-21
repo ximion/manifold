@@ -39,19 +39,34 @@ G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfdErrorDetail,
                                  mfd_error_detail_clear)
 
 /**
+ * MfdRemovalItem:
+ * @component: a version of a component that will be deleted
+ * @version_dir: (type filename): the version directory of @component
+ * @action: why it is deleted: %MF_ACTION_REMOVE if it was asked for,
+ *   %MF_ACTION_CLEANUP if nothing needs it anymore
+ *
+ * One version a removal deletes.
+ */
+typedef struct {
+    MfComponent *component;
+    char        *version_dir;
+    MfAction     action;
+} MfdRemovalItem;
+
+/**
  * MfdRemovalPlan:
- * @components: (element-type MfComponent): the versions that will be deleted
- * @dirs: (element-type filename): the version directory of each of @components
+ * @items: (element-type MfdRemovalItem): the versions that will be deleted
+ * @item_dirs: (element-type filename): the version directories of @items, as a set
  * @images: (element-type utf8): the root hashes of the images that will be removed
  * @image_bytes: how much disk space the images take up
  *
  * What a removal will remove, or has removed, and the state needed to apply it.
  */
 typedef struct {
-    GPtrArray *components;
-    GPtrArray *dirs;
-    GPtrArray *images;
-    guint64    image_bytes;
+    GPtrArray  *items;
+    GHashTable *item_dirs;
+    GPtrArray  *images;
+    guint64     image_bytes;
 } MfdRemovalPlan;
 
 void mfd_removal_plan_free(MfdRemovalPlan *rmplan);

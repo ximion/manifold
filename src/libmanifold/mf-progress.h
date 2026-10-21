@@ -18,7 +18,7 @@ G_BEGIN_DECLS
  * MfAction:
  * @MF_ACTION_UNKNOWN: Unknown action.
  * @MF_ACTION_INSTALL: A component is installed.
- * @MF_ACTION_REMOVE: A component is removed.
+ * @MF_ACTION_REMOVE: A component is removed on request.
  * @MF_ACTION_CLEANUP: A component nothing uses is removed.
  *
  * What action Manifold performs.

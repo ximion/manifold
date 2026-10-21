@@ -65,7 +65,7 @@ mf_action_from_string(const char *action_str)
 /**
  * mf_item_progress_new:
  * @action: what is done to the item
- * @subject: the component or image the item is about
+ * @subject: the component the item is about
  * @version: (nullable): the version of the component
  *
  * Creates the progress of an item that was not started yet.
@@ -143,8 +143,7 @@ mf_item_progress_get_action(const MfItemProgress *item)
  * mf_item_progress_get_subject:
  * @item: an #MfItemProgress
  *
- * Returns: the identifier of the component that is acted on, or the root hash
- *   of the image for %MF_ACTION_CLEANUP
+ * Returns: the identifier of the component that is acted on
  */
 const char *
 mf_item_progress_get_subject(const MfItemProgress *item)

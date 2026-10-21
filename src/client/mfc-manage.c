@@ -38,7 +38,7 @@ mfc_on_progress(const MfProgress *progress, gpointer user_data)
         label = g_strdup_printf("Removing %s %s", subject, version ? version : "");
         break;
     case MF_ACTION_CLEANUP:
-        label = g_strdup_printf("Cleaning up %.12s", subject);
+        label = g_strdup_printf("Cleaning up %s %s", subject, version ? version : "");
         break;
     default:
         label = g_strdup(subject);
