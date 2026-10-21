@@ -241,6 +241,35 @@ class InstallerTest(unittest.TestCase):
         self.assertNotIn(self.app.verity_hash, self.stored_images())
         self.assertNotIn(self.kit.verity_hash, self.stored_images())
 
+    def test_superseding_install_reports_progress_once(self):
+        kit = Image(
+            self.kit.component,
+            'kit',
+            self.kit.version,
+            revision=self.kit.revision + 1,
+            base=self.core,
+            seed='rebuilt kit',
+        )
+        app = Image(
+            APP_ID, 'app', '0.1.0', revision=self.app.revision + 1, base=kit, seed='rebuilt app'
+        )
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+
+        with open(self.bundle('rebuild', [kit, app]), 'rb') as f:
+            replies = self.daemon.call(
+                'org.freedesktop.manifold.InstallFile',
+                {'bundleFileDescriptor': 0},
+                more=True,
+                fd=f.fileno(),
+            )
+        progress = [r['progress'] for r in replies[:-1]]
+        self.assertIn('cleanup', [p['item']['action'] for p in progress if 'item' in p])
+        # removing what the installation supersedes does not start the progress over
+        percents = [p['percent'] for p in progress]
+        self.assertEqual(percents, sorted(percents))
+        self.assertEqual(percents[-1], 100)
+
     def test_rebuild_keeps_what_was_installed_on_purpose(self):
         core = Image(CORE_ID, 'core', '13.4', revision=self.core.revision + 1, seed='rebuilt core')
         # without its SDK, which would keep the old core as its exact base
@@ -357,10 +386,13 @@ class InstallerTest(unittest.TestCase):
                 more=True,
                 fd=f.fileno(),
             )
-        items = [r['progress']['item'] for r in replies[:-1]]
+        items = [r['progress']['item'] for r in replies[:-1] if 'item' in r['progress']]
         self.assertEqual([i['action'] for i in items], ['install'] * 4)
         self.assertEqual([i['percent'] for i in items], [0, 100, 0, 100])
-        self.assertEqual([r['progress']['percent'] for r in replies[:-1]], [0, 50, 50, 100])
+        # the metadata, and removing what is superseded, count as one item more
+        self.assertEqual(
+            [round(r['progress']['percent']) for r in replies[:-1]], [0, 33, 33, 67, 100]
+        )
         self.assertEqual(items[0]['bytesTotal'], len(self.core.data))
         result = replies[-1]['result']
         self.assertEqual(result['bytesAdded'], len(self.core.data) + len(self.sdk.data))

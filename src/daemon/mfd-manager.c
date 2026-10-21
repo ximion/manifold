@@ -209,6 +209,28 @@ mfd_progress_end_item(MfdProgressTracker *tracker)
 }
 
 /**
+ * mfd_progress_split_last_item:
+ * @n_items: the number of items to split the last item into
+ *
+ * Split the last item of the operation into @n_items items, which together
+ * take the share of the progress that the last item had. We only know how
+ * many items there are once the last item begins: removing what an
+ * installation supersedes is one item, which consists of one item for every
+ * component it removes. With no items, the last item is done right away.
+ */
+static void
+mfd_progress_split_last_item(MfdProgressTracker *tracker, guint n_items)
+{
+    if (n_items == 0) {
+        tracker->done = tracker->total;
+        mfd_progress_report(tracker);
+        return;
+    }
+    tracker->total *= n_items;
+    tracker->done *= n_items;
+}
+
+/**
  * mfd_on_copy_progress:
  *
  * Report the progress of copying an image, see mfd_store_writer_add_image().
@@ -1197,7 +1219,9 @@ mfd_manager_install_bundle(MfdManager *manager,
             return NULL;
     }
 
-    /* copy the images first, then add the referrals and metadata */
+    /* copy the images first, then add the referrals and metadata, and remove what that
+     * supersedes, which counts as one item more */
+    tracker.total = 1;
     for (guint i = 0; i < plans->len; i++) {
         if (g_array_index(plans, MfdInstallPlan, i).add_image)
             tracker.total++;
@@ -1255,8 +1279,7 @@ mfd_manager_install_bundle(MfdManager *manager,
     /* what is superseded goes, but the installation stands even if it can not be removed */
     result = mf_result_new();
     rmplan = mfd_manager_plan_supersede(manager, plans, &supersede_error);
-    if (rmplan != NULL)
-        tracker.total += rmplan->items->len;
+    mfd_progress_split_last_item(&tracker, rmplan != NULL ? rmplan->items->len : 0);
     if (rmplan == NULL || !mfd_manager_execute_removal(manager, rmplan, &tracker, result, &supersede_error))
         g_warning("Unable to remove what the installation supersedes: %s", supersede_error->message);
 
