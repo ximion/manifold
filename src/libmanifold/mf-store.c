@@ -530,6 +530,59 @@ mf_store_read_component_at(const char *root, const char *component_id, const cha
 }
 
 /**
+ * mf_base_link_new:
+ * @subdir: the subdirectory of the store the base is in
+ * @component_id: the identifier of the base
+ * @version_name: (nullable): the version directory of the base, or %NULL
+ *   to follow its current version
+ *
+ * Returns: (transfer full): a new #MfBaseLink
+ */
+MfBaseLink *
+mf_base_link_new(const char *subdir, const char *component_id, const char *version_name)
+{
+    MfBaseLink *link = g_new0(MfBaseLink, 1);
+
+    link->subdir = g_strdup(subdir);
+    link->component_id = g_strdup(component_id);
+    link->version_name = g_strdup(version_name);
+    return link;
+}
+
+/**
+ * mf_base_link_free:
+ */
+void
+mf_base_link_free(MfBaseLink *link)
+{
+    if (link == NULL)
+        return;
+    g_free(link->subdir);
+    g_free(link->component_id);
+    g_free(link->version_name);
+    g_free(link);
+}
+
+/**
+ * mf_base_link_get_target:
+ *
+ * The target of a `base` link, relative to the version directory it is in:
+ * `../../../<subdir>/<component>/<version or current>`, which
+ * mf_store_read_base_link_at() reads back.
+ *
+ * Returns: (transfer full): the target
+ */
+char *
+mf_base_link_get_target(const MfBaseLink *link)
+{
+    return g_build_filename(MF_STORE_COMPONENT_TO_ROOT,
+                            link->subdir,
+                            link->component_id,
+                            link->version_name != NULL ? link->version_name : MF_STORE_CURRENT_NAME,
+                            NULL);
+}
+
+/**
  * mf_store_read_base_link_at:
  * @root: the root directory of a store
  * @component: an installed component
@@ -537,11 +590,10 @@ mf_store_read_component_at(const char *root, const char *component_id, const cha
  *
  * Read the `base` link of a component, without reading what it names.
  *
- * Returns: (transfer full): the subdirectory of the store, the component and
- *   the version directory or `current` the link names, or %NULL if the
+ * Returns: (transfer full): what the link names, or %NULL if the
  *   component has no base or the link is not valid
  */
-char **
+MfBaseLink *
 mf_store_read_base_link_at(const char *root, MfComponent *component, GError **error)
 {
     g_autofree char *version_dir = mf_component_dir_at(root, component);
@@ -565,7 +617,7 @@ mf_store_read_base_link_at(const char *root, MfComponent *component, GError **er
         return NULL;
     }
 
-    /* ../../../<dir>/<component>/<current or version> */
+    /* as written by mf_base_link_get_target() */
     if (!g_str_has_prefix(target, COMPONENT_TO_ROOT_PREFIX)) {
         g_set_error(error,
                     MF_ERROR,
@@ -588,7 +640,9 @@ mf_store_read_base_link_at(const char *root, MfComponent *component, GError **er
         return NULL;
     }
 
-    return g_steal_pointer(&parts);
+    return mf_base_link_new(parts[0],
+                            parts[1],
+                            g_str_equal(parts[2], MF_STORE_CURRENT_NAME) ? NULL : parts[2]);
 }
 
 /**
@@ -606,13 +660,13 @@ mf_store_read_base_link_at(const char *root, MfComponent *component, GError **er
 MfComponent *
 mf_store_read_base_at(const char *root, MfComponent *component, GError **error)
 {
-    g_auto(GStrv) parts = mf_store_read_base_link_at(root, component, error);
+    g_autoptr(MfBaseLink) base = mf_store_read_base_link_at(root, component, error);
 
-    if (parts == NULL)
+    if (base == NULL)
         return NULL;
-    if (g_str_equal(parts[2], MF_STORE_CURRENT_NAME))
-        return mf_store_read_component_at(root, parts[1], NULL, error);
-    return mf_read_version_dir_at(root, parts[0], parts[1], parts[2], error);
+    if (base->version_name == NULL)
+        return mf_store_read_component_at(root, base->component_id, NULL, error);
+    return mf_read_version_dir_at(root, base->subdir, base->component_id, base->version_name, error);
 }
 
 /**
@@ -887,16 +941,16 @@ mf_store_get_component(MfStore *store, const char *component_id, const char *ver
 MfComponent *
 mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
 {
-    g_auto(GStrv) parts = NULL;
+    g_autoptr(MfBaseLink) base = NULL;
 
     g_return_val_if_fail(MF_IS_STORE(store), NULL);
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
 
-    parts = mf_store_read_base_link_at(GET_PRIVATE(store)->path, component, error);
-    if (parts == NULL)
+    base = mf_store_read_base_link_at(GET_PRIVATE(store)->path, component, error);
+    if (base == NULL)
         return NULL;
-    if (g_str_equal(parts[2], MF_STORE_CURRENT_NAME))
-        return mf_store_get_component(store, parts[1], NULL, error);
+    if (base->version_name == NULL)
+        return mf_store_get_component(store, base->component_id, NULL, error);
 
     GPtrArray *components = mf_store_ensure_loaded(store, error);
     if (components == NULL)
@@ -905,13 +959,13 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
         MfComponent *candidate = g_ptr_array_index(components, i);
         g_autofree char *version_name = NULL;
 
-        if (!g_str_equal(mf_component_get_id(candidate), parts[1]) ||
+        if (!g_str_equal(mf_component_get_id(candidate), base->component_id) ||
             !g_str_equal(
                 mf_store_subdir_for_kind(mf_component_get_kind(candidate), mf_component_is_sdk(candidate)),
-                parts[0]))
+                base->subdir))
             continue;
         version_name = mf_component_make_version_dir_name(candidate);
-        if (g_str_equal(version_name, parts[2]))
+        if (g_str_equal(version_name, base->version_name))
             return g_object_ref(candidate);
     }
 
@@ -920,8 +974,8 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
                 MF_ERROR_NOT_FOUND,
                 "The base of %s, %s %s, is not installed",
                 mf_component_get_id(component),
-                parts[1],
-                parts[2]);
+                base->component_id,
+                base->version_name);
     return NULL;
 }
 

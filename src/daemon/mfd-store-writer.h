@@ -10,6 +10,8 @@
 
 #include <manifold.h>
 
+#include "mf-store-private.h"
+
 G_BEGIN_DECLS
 
 #define MFD_TYPE_STORE_WRITER (mfd_store_writer_get_type())
@@ -30,20 +32,12 @@ gboolean        mfd_store_writer_remove_image(MfdStoreWriter *writer,
                                               const char     *verity_hash,
                                               GError        **error);
 
-gboolean        mfd_store_writer_install_component(MfdStoreWriter *writer,
-                                                   const char     *subdir,
-                                                   const char     *component_id,
-                                                   const char     *version,
-                                                   guint64         revision,
-                                                   const char     *verity_hash,
-                                                   const char     *base_subdir,
-                                                   const char     *base_component_id,
-                                                   const char     *base_version,
-                                                   guint64         base_revision,
-                                                   GBytes         *manifest,
-                                                   GBytes         *metainfo,
-                                                   MfInstallMode   mode,
-                                                   GError        **error);
+gboolean        mfd_store_writer_install_component(MfdStoreWriter   *writer,
+                                                   MfManifest       *manifest,
+                                                   const MfBaseLink *base,
+                                                   GBytes           *metainfo,
+                                                   MfInstallMode     mode,
+                                                   GError          **error);
 gboolean        mfd_store_writer_remove_version_dir(MfdStoreWriter *writer,
                                                     const char     *version_dir,
                                                     GError        **error);

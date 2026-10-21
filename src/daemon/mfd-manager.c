@@ -13,6 +13,7 @@
 #include "mf-result-private.h"
 #include "mf-store-private.h"
 #include "mf-progress-private.h"
+#include "mf-utils-private.h"
 
 #include "mfd-store-writer.h"
 
@@ -234,13 +235,9 @@ mfd_on_copy_progress(guint64 bytes_copied, gpointer user_data)
 typedef struct {
     MfBundleImage *image; /* the image of the bundle, which outlives the plan */
     MfInstallMode mode;
-    gboolean skip;           /* installed already, there is nothing to do */
-    gboolean add_image;      /* the image is not in the store yet */
-    const char *subdir;      /* of the store, where the component goes */
-    const char *base_subdir; /* of the store, where the base is */
-    char *base_component_id; /* NULL for a core */
-    char *base_version;      /* NULL to use what is current */
-    guint64 base_revision;
+    gboolean skip;      /* installed already, there is nothing to do */
+    gboolean add_image; /* the image is not in the store yet */
+    MfBaseLink *base;   /* what the component builds on, NULL for a core */
 } MfdInstallPlan;
 
 /**
@@ -249,8 +246,7 @@ typedef struct {
 static void
 mfd_install_plan_clear(MfdInstallPlan *iplan)
 {
-    g_free(iplan->base_component_id);
-    g_free(iplan->base_version);
+    g_clear_pointer(&iplan->base, mf_base_link_free);
 }
 
 /**
@@ -322,6 +318,7 @@ mfd_manager_resolve_dependency(MfdManager *manager,
 {
     MfBundleImage *image = mf_bundle_find_image_for_identity(bundle, identity);
     g_autoptr(MfComponent) installed = mf_store_find_identity(manager->store, identity, NULL);
+    g_autofree char *version_name = NULL;
     gboolean current;
 
     if (image != NULL) {
@@ -342,23 +339,24 @@ mfd_manager_resolve_dependency(MfdManager *manager,
                                                                     revision,
                                                                     mf_component_get_version(newest),
                                                                     mf_component_get_revision(newest)) >= 0;
+            version_name = current ? NULL : mf_build_full_version(version, revision);
             *ret_kind = mf_manifest_get_kind(manifest);
-            iplan->base_subdir = mf_store_subdir_for_kind(*ret_kind, mf_manifest_is_sdk(manifest));
-            iplan->base_component_id = g_strdup(component_id);
-            iplan->base_version = current ? NULL : g_strdup(version);
-            iplan->base_revision = current ? 0 : revision;
+            iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, mf_manifest_is_sdk(manifest)),
+                                           component_id,
+                                           version_name);
             return TRUE;
         }
     }
 
     if (installed == NULL)
         return FALSE;
-    current = mf_component_is_current(installed);
     *ret_kind = mf_component_get_kind(installed);
-    iplan->base_subdir = mf_store_subdir_for_kind(*ret_kind, mf_component_is_sdk(installed));
-    iplan->base_component_id = g_strdup(mf_component_get_id(installed));
-    iplan->base_version = current ? NULL : g_strdup(mf_component_get_version(installed));
-    iplan->base_revision = current ? 0 : mf_component_get_revision(installed);
+    if (!mf_component_is_current(installed))
+        version_name = mf_build_full_version(mf_component_get_version(installed),
+                                             mf_component_get_revision(installed));
+    iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, mf_component_is_sdk(installed)),
+                                   mf_component_get_id(installed),
+                                   version_name);
     return TRUE;
 }
 
@@ -451,7 +449,6 @@ mfd_manager_plan_image_install(MfdManager *manager,
     iplan->add_image = !mf_store_has_image(manager->store, verity_hash);
     iplan->mode = dependency || mf_component_kind_is_always_auto(kind, sdk) ? MF_INSTALL_MODE_AUTO
                                                                             : MF_INSTALL_MODE_MANUAL;
-    iplan->subdir = mf_store_subdir_for_kind(kind, sdk);
 
     existing = mfd_manager_get_installed(manager, component_id, version, mf_manifest_get_revision(manifest));
     if (existing != NULL) {
@@ -530,11 +527,12 @@ mfd_manager_plan_image_install(MfdManager *manager,
      * mfd_manager_resolve_dependency(). A platform and an SDK need the exact
      * version they were built against */
     if (base_id != NULL && (sdk || kind == MF_COMPONENT_KIND_PLATFORM)) {
-        g_free(iplan->base_component_id);
-        g_free(iplan->base_version);
-        iplan->base_component_id = g_strdup(base_id);
-        iplan->base_version = g_strdup(mf_manifest_get_base_version(manifest));
-        iplan->base_revision = mf_manifest_get_base_revision(manifest);
+        g_autofree char *version_name = mf_build_full_version(mf_manifest_get_base_version(manifest),
+                                                              mf_manifest_get_base_revision(manifest));
+        MfBaseLink *pinned = mf_base_link_new(iplan->base->subdir, base_id, version_name);
+
+        mf_base_link_free(iplan->base);
+        iplan->base = pinned;
     }
 
     return TRUE;
@@ -674,29 +672,27 @@ mfd_manager_find_used_dirs(MfdManager *manager, GPtrArray *installed, GHashTable
 
     for (guint i = 0; i < installed->len; i++) {
         MfdInstalledVersion *version = g_ptr_array_index(installed, i);
-        g_auto(GStrv) parts = NULL;
+        g_autoptr(MfBaseLink) base = NULL;
+        g_autofree char *component_dir = NULL;
+        g_autofree char *version_name = NULL;
 
         if (g_hash_table_contains(rm_pending, version->version_dir))
             continue;
-        parts = mf_store_read_base_link_at(root, version->component, NULL);
-        if (parts == NULL)
+        base = mf_store_read_base_link_at(root, version->component, NULL);
+        if (base == NULL)
             continue;
-        /* a link to `current` keeps the version it names, to prevent accidental downgrades */
-        if (g_str_equal(parts[2], MF_STORE_CURRENT_NAME)) {
-            g_autofree char *current_path = g_build_filename(root,
-                                                             parts[0],
-                                                             parts[1],
-                                                             MF_STORE_CURRENT_NAME,
-                                                             NULL);
-            char *target = g_file_read_link(current_path, NULL);
+        component_dir = g_build_filename(root, base->subdir, base->component_id, NULL);
+        version_name = g_strdup(base->version_name);
+        if (version_name == NULL) {
+            /* a link to `current` keeps the version it names, to prevent accidental downgrades */
+            g_autofree char *current_path = g_build_filename(component_dir, MF_STORE_CURRENT_NAME, NULL);
 
-            if (target == NULL)
+            version_name = g_file_read_link(current_path, NULL);
+            if (version_name == NULL)
                 continue;
-            g_free(parts[2]);
-            parts[2] = target;
         }
         g_hash_table_insert(used,
-                            g_build_filename(root, parts[0], parts[1], parts[2], NULL),
+                            g_build_filename(component_dir, version_name, NULL),
                             (gpointer) mf_component_get_id(version->component));
     }
 
@@ -1137,16 +1133,8 @@ mfd_manager_install_bundle(MfdManager *manager,
             continue;
 
         if (!mfd_store_writer_install_component(manager->writer,
-                                                plan->subdir,
-                                                component_id,
-                                                version,
-                                                mf_manifest_get_revision(manifest),
-                                                mf_manifest_get_verity_hash(manifest),
-                                                plan->base_subdir,
-                                                plan->base_component_id,
-                                                plan->base_version,
-                                                plan->base_revision,
-                                                mf_manifest_get_data(manifest),
+                                                manifest,
+                                                plan->base,
                                                 mf_bundle_image_get_metainfo(plan->image),
                                                 plan->mode,
                                                 &local_error)) {

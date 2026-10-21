@@ -270,17 +270,8 @@ mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_di
 /**
  * mfd_store_writer_install_component:
  * @writer: the #MfdStoreWriter
- * @subdir: the subdirectory of the store the component is installed into
- * @component_id: the component ID to install
- * @version: the version of the component to install
- * @revision: the revision of the version
- * @verity_hash: the root hash of the component's image
- * @base_subdir: the subdirectory of the store the base is installed into
- * @base_component_id: (nullable): the base to link, or %NULL for a core
- * @base_version: (nullable): the exact version of the base to link, or
- *   %NULL to link what is current of it
- * @base_revision: the revision of that exact version
  * @manifest: the manifest of the component, as it was in the bundle
+ * @base: (nullable): what the component builds on, or %NULL for a core
  * @metainfo: the MetaInfo of the component, sanitized
  * @mode: whether the component is a potential target for automatic removal
  *
@@ -299,20 +290,17 @@ mfd_store_writer_update_current(MfdStoreWriter *writer, const char *component_di
  */
 gboolean
 mfd_store_writer_install_component(MfdStoreWriter *writer,
-                                   const char *subdir,
-                                   const char *component_id,
-                                   const char *version,
-                                   guint64 revision,
-                                   const char *verity_hash,
-                                   const char *base_subdir,
-                                   const char *base_component_id,
-                                   const char *base_version,
-                                   guint64 base_revision,
-                                   GBytes *manifest,
+                                   MfManifest *manifest,
+                                   const MfBaseLink *base,
                                    GBytes *metainfo,
                                    MfInstallMode mode,
                                    GError **error)
 {
+    const char *subdir = mf_store_subdir_for_kind(mf_manifest_get_kind(manifest),
+                                                  mf_manifest_is_sdk(manifest));
+    const char *component_id = mf_manifest_get_component_id(manifest);
+    const char *version = mf_manifest_get_version(manifest);
+    guint64 revision = mf_manifest_get_revision(manifest);
     g_autofree char *component_dir = mfd_store_writer_get_path(writer, subdir, component_id);
     g_autofree char *metainfo_name = g_strconcat(component_id, MF_METAINFO_SUFFIX, NULL);
     g_autofree char *version_name = mf_build_full_version(version, revision);
@@ -343,28 +331,21 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     }
 
     {
-        g_autofree char *file_name = mfd_get_image_file_name(verity_hash);
+        g_autofree char *file_name = mfd_get_image_file_name(mf_manifest_get_verity_hash(manifest));
         g_autofree char *target = g_build_filename(MF_STORE_COMPONENT_TO_IMAGES, file_name, NULL);
         g_autofree char *path = g_build_filename(tmp_dir, mf_store_image_link_for_subdir(subdir), NULL);
 
         if (!mfd_make_symlink(target, path, error))
             goto out;
     }
-    if (base_component_id != NULL) {
-        /* the layer below: either "current" or the exact version */
-        g_autofree char *base_name = base_version != NULL ? mf_build_full_version(base_version, base_revision)
-                                                          : g_strdup(MF_STORE_CURRENT_NAME);
-        g_autofree char *target = g_build_filename(MF_STORE_COMPONENT_TO_ROOT,
-                                                   base_subdir,
-                                                   base_component_id,
-                                                   base_name,
-                                                   NULL);
+    if (base != NULL) {
+        g_autofree char *target = mf_base_link_get_target(base);
         g_autofree char *path = g_build_filename(tmp_dir, MF_STORE_BASE_LINK, NULL);
 
         if (!mfd_make_symlink(target, path, error))
             goto out;
     }
-    manifest_data = g_bytes_get_data(manifest, &manifest_size);
+    manifest_data = g_bytes_get_data(mf_manifest_get_data(manifest), &manifest_size);
     if (!mfd_write_marker(tmp_dir, MF_STORE_MANIFEST_NAME, manifest_data, (gssize) manifest_size, error))
         goto out;
     if (!mfd_write_marker(tmp_dir,

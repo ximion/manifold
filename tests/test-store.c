@@ -36,19 +36,30 @@ mft_add_image(const char *hash, gsize size)
 /**
  * mft_manifest_of:
  *
- * Make a manifest that passes the checks of the install daemon. The values
- * of the image section are fake.
+ * Make a manifest that passes the checks of the install daemon, of an image
+ * with the root hash @hash. The other values of the image section are fake.
  */
-static GBytes *
-mft_manifest_of(const char *component_id, const char *kind, const char *version, const char *base_id)
+static MfManifest *
+mft_manifest_of(const char *component_id,
+                const char *kind,
+                const char *version,
+                guint64 revision,
+                const char *hash,
+                const char *base_id)
 {
     char *json = mft_manifest_json(&(MftManifest){.component_id = component_id,
                                                   .kind = kind,
                                                   .version = version,
+                                                  .revision = revision,
                                                   .sdk = g_str_has_suffix(component_id, ".sdk"),
+                                                  .verity_root_hash = hash,
                                                   .base_id = base_id});
+    g_autoptr(GBytes) bytes = g_bytes_new_take(json, strlen(json));
+    g_autoptr(GError) error = NULL;
+    MfManifest *manifest = mf_manifest_new_from_bytes(bytes, &error);
 
-    return g_bytes_new_take(json, strlen(json));
+    g_assert_no_error(error);
+    return manifest;
 }
 
 static GBytes *
@@ -74,24 +85,15 @@ mft_install_runtime(const char *component_id,
                     const char *base_version,
                     MfInstallMode mode)
 {
-    g_autoptr(GBytes) manifest = mft_manifest_of(component_id, kind, version, base_id);
+    g_autoptr(MfManifest) manifest = mft_manifest_of(component_id, kind, version, 1, hash, base_id);
     g_autoptr(GBytes) metainfo = mft_metainfo_of(component_id);
+    g_autofree char *base_version_name = base_version != NULL ? g_strconcat(base_version, "-1", NULL) : NULL;
+    g_autoptr(MfBaseLink) base = NULL;
     g_autoptr(GError) error = NULL;
 
-    g_assert_true(mfd_store_writer_install_component(writer,
-                                                     MF_STORE_RUNTIMES_SUBDIR,
-                                                     component_id,
-                                                     version,
-                                                     1,
-                                                     hash,
-                                                     MF_STORE_RUNTIMES_SUBDIR,
-                                                     base_id,
-                                                     base_version,
-                                                     1,
-                                                     manifest,
-                                                     metainfo,
-                                                     mode,
-                                                     &error));
+    if (base_id != NULL)
+        base = mf_base_link_new(MF_STORE_RUNTIMES_SUBDIR, base_id, base_version_name);
+    g_assert_true(mfd_store_writer_install_component(writer, manifest, base, metainfo, mode, &error));
     g_assert_no_error(error);
 }
 
@@ -102,24 +104,13 @@ mft_install_app_revision(const char *component_id,
                          const char *hash,
                          const char *kit_id)
 {
-    g_autoptr(GBytes) manifest = mft_manifest_of(component_id, "app", version, kit_id);
+    g_autoptr(MfManifest) manifest = mft_manifest_of(component_id, "app", version, revision, hash, kit_id);
     g_autoptr(GBytes) metainfo = mft_metainfo_of(component_id);
+    g_autoptr(MfBaseLink) base = mf_base_link_new(MF_STORE_RUNTIMES_SUBDIR, kit_id, NULL);
     g_autoptr(GError) error = NULL;
 
-    g_assert_true(mfd_store_writer_install_component(writer,
-                                                     MF_STORE_APPS_SUBDIR,
-                                                     component_id,
-                                                     version,
-                                                     revision,
-                                                     hash,
-                                                     MF_STORE_RUNTIMES_SUBDIR,
-                                                     kit_id,
-                                                     NULL,
-                                                     0,
-                                                     manifest,
-                                                     metainfo,
-                                                     MF_INSTALL_MODE_AUTO,
-                                                     &error));
+    g_assert_true(
+        mfd_store_writer_install_component(writer, manifest, base, metainfo, MF_INSTALL_MODE_AUTO, &error));
     g_assert_no_error(error);
 }
 
@@ -252,7 +243,7 @@ test_install_runtime(Fixture *f, gconstpointer user_data)
     g_autofree char *origin = NULL;
     g_autofree char *mode = NULL;
     g_autofree char *manifest = NULL;
-    g_autoptr(GBytes) expected_manifest = mft_manifest_of(TEST_CORE_ID, "core", "13.4", NULL);
+    g_autoptr(MfManifest) expected_manifest = mft_manifest_of(TEST_CORE_ID, "core", "13.4", 1, hash, NULL);
     g_autoptr(GPtrArray) components = NULL;
     MfComponent *core;
 
@@ -267,7 +258,7 @@ test_install_runtime(Fixture *f, gconstpointer user_data)
     mode = mft_read_file(RUNTIMES "/" TEST_CORE_ID "/13.4-1/mode");
     g_assert_cmpstr(mode, ==, "manual\n");
     manifest = mft_read_file(RUNTIMES "/" TEST_CORE_ID "/13.4-1/manifest.json");
-    g_assert_cmpstr(manifest, ==, g_bytes_get_data(expected_manifest, NULL));
+    g_assert_cmpstr(manifest, ==, g_bytes_get_data(mf_manifest_get_data(expected_manifest), NULL));
     mft_assert_link(RUNTIMES "/" TEST_CORE_ID "/current", "13.4-1");
 
     /* check how the store lists it */

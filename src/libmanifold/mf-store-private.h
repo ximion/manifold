@@ -64,6 +64,32 @@ MfComponent *mf_store_find_identity(MfStore    *store,
                                     const char *identity,
                                     GError    **error);
 
+/**
+ * MfBaseLink:
+ * @subdir: the subdirectory of the store the base is in
+ * @component_id: the identifier of the base
+ * @version_name: the version directory of the base the link names,
+ *   `<version>-<revision>`, or %NULL if it follows the current version
+ *
+ * What the `base` link of a version of a component names.
+ */
+typedef struct {
+    char *subdir;
+    char *component_id;
+    char *version_name;
+} MfBaseLink;
+
+MF_INTERNAL_VISIBLE
+MfBaseLink *mf_base_link_new(const char *subdir,
+                             const char *component_id,
+                             const char *version_name);
+MF_INTERNAL_VISIBLE
+void        mf_base_link_free(MfBaseLink *link);
+MF_INTERNAL_VISIBLE
+char       *mf_base_link_get_target(const MfBaseLink *link);
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(MfBaseLink, mf_base_link_free)
+
 /* direct access to one store root, without loading it */
 MF_INTERNAL_VISIBLE
 MfComponent *mf_store_read_component_at(const char *root,
@@ -75,9 +101,9 @@ MfComponent *mf_store_read_base_at(const char  *root,
                                    MfComponent *component,
                                    GError     **error);
 MF_INTERNAL_VISIBLE
-char **mf_store_read_base_link_at(const char  *root,
-                                  MfComponent *component,
-                                  GError     **error);
+MfBaseLink *mf_store_read_base_link_at(const char  *root,
+                                       MfComponent *component,
+                                       GError     **error);
 MF_INTERNAL_VISIBLE
 char *mf_store_image_path_at(const char *root,
                              const char *verity_hash);
