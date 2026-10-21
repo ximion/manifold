@@ -13,7 +13,6 @@
 #include <glib-object.h>
 
 #include "mf-component.h"
-#include "mf-manifest.h"
 
 G_BEGIN_DECLS
 
@@ -45,12 +44,7 @@ MfComponent *mf_store_get_base(MfStore     *store,
                                MfComponent *component,
                                GError     **error);
 
-char        *mf_store_get_component_dir(MfStore     *store,
-                                        MfComponent *component);
 char        *mf_store_get_image_path(MfStore     *store,
                                      MfComponent *component);
-MfManifest  *mf_store_get_manifest(MfStore     *store,
-                                   MfComponent *component,
-                                   GError     **error);
 
 G_END_DECLS

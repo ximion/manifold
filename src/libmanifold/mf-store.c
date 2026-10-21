@@ -12,6 +12,7 @@
 
 #include "mf-component-private.h"
 #include "mf-error.h"
+#include "mf-manifest.h"
 #include "mf-utils.h"
 #include "mf-utils-private.h"
 
@@ -313,13 +314,20 @@ mf_read_image_link(const char *version_dir, const char *link_name, GError **erro
 }
 
 /**
- * mf_read_manifest_at:
+ * mf_store_read_manifest_at:
+ * @version_dir: the version directory of a component
+ * @component_id: the component the manifest has to describe
+ * @version: the version the manifest has to describe
+ * @error: a #GError
  *
  * Returns: (transfer full): the manifest of a version directory, if it is
  *   the manifest of that component and version, or %NULL on error
  */
-static MfManifest *
-mf_read_manifest_at(const char *version_dir, const char *component_id, const char *version, GError **error)
+MfManifest *
+mf_store_read_manifest_at(const char *version_dir,
+                          const char *component_id,
+                          const char *version,
+                          GError **error)
 {
     g_autofree char *manifest_path = g_build_filename(version_dir, MF_STORE_MANIFEST_NAME, NULL);
     g_autoptr(MfManifest) manifest = NULL;
@@ -373,7 +381,7 @@ mf_read_version_dir_at(const char *root,
     verity_hash = mf_read_image_link(version_dir, mf_store_image_link_for_subdir(subdir), error);
     if (verity_hash == NULL)
         return NULL;
-    manifest = mf_read_manifest_at(version_dir, component_id, version, error);
+    manifest = mf_store_read_manifest_at(version_dir, component_id, version, error);
     if (manifest == NULL)
         return NULL;
 
@@ -390,7 +398,8 @@ mf_read_version_dir_at(const char *root,
                                  verity_hash,
                                  g_strcmp0(current_target, version_name) == 0,
                                  mode != NULL ? mf_install_mode_from_string(mode) : MF_INSTALL_MODE_AUTO,
-                                 origin != NULL ? origin : MF_STORE_LOCAL_ORIGIN);
+                                 origin != NULL ? origin : MF_STORE_LOCAL_ORIGIN,
+                                 version_dir);
     mf_component_set_manifest(component, manifest);
     return component;
 }
@@ -474,20 +483,6 @@ mf_version_dir_name_at(const char *root,
 }
 
 /**
- * mf_component_dir_at:
- */
-static char *
-mf_component_dir_at(const char *root, MfComponent *component)
-{
-    return g_build_filename(
-        root,
-        mf_store_subdir_for_kind(mf_component_get_kind(component), mf_component_is_sdk(component)),
-        mf_component_get_id(component),
-        mf_component_get_full_version(component),
-        NULL);
-}
-
-/**
  * mf_store_read_component_at:
  * @root: the root directory of a store
  * @component_id: identifier of a component
@@ -557,7 +552,7 @@ mf_base_link_free(MfBaseLink *link)
  *
  * The target of a `base` link, relative to the version directory it is in:
  * `../../../<subdir>/<component>/<version or current>`, which
- * mf_store_read_base_link_at() reads back.
+ * mf_store_read_base_link() reads back.
  *
  * Returns: (transfer full): the target
  */
@@ -572,9 +567,8 @@ mf_base_link_get_target(const MfBaseLink *link)
 }
 
 /**
- * mf_store_read_base_link_at:
- * @root: the root directory of a store
- * @component: an installed component
+ * mf_store_read_base_link:
+ * @component: a component read from a store
  * @error: a #GError
  *
  * Read the `base` link of a component, without reading what it names.
@@ -583,14 +577,24 @@ mf_base_link_get_target(const MfBaseLink *link)
  *   component has no base or the link is not valid
  */
 MfBaseLink *
-mf_store_read_base_link_at(const char *root, MfComponent *component, GError **error)
+mf_store_read_base_link(MfComponent *component, GError **error)
 {
-    g_autofree char *version_dir = mf_component_dir_at(root, component);
-    g_autofree char *link_path = g_build_filename(version_dir, MF_STORE_BASE_LINK, NULL);
+    const char *version_dir = mf_component_get_dir(component);
+    g_autofree char *link_path = NULL;
     g_autofree char *target = NULL;
     g_auto(GStrv) parts = NULL;
     g_autoptr(GError) local_error = NULL;
 
+    if (version_dir == NULL) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    "%s %s was not read from a store",
+                    mf_component_get_id(component),
+                    mf_component_get_version(component));
+        return NULL;
+    }
+    link_path = g_build_filename(version_dir, MF_STORE_BASE_LINK, NULL);
     target = g_file_read_link(link_path, &local_error);
     if (g_error_matches(local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
         g_set_error(error,
@@ -649,7 +653,7 @@ mf_store_read_base_link_at(const char *root, MfComponent *component, GError **er
 MfComponent *
 mf_store_read_base_at(const char *root, MfComponent *component, GError **error)
 {
-    g_autoptr(MfBaseLink) base = mf_store_read_base_link_at(root, component, error);
+    g_autoptr(MfBaseLink) base = mf_store_read_base_link(component, error);
 
     if (base == NULL)
         return NULL;
@@ -931,11 +935,12 @@ MfComponent *
 mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
 {
     g_autoptr(MfBaseLink) base = NULL;
+    g_autofree char *base_dir = NULL;
 
     g_return_val_if_fail(MF_IS_STORE(store), NULL);
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
 
-    base = mf_store_read_base_link_at(GET_PRIVATE(store)->path, component, error);
+    base = mf_store_read_base_link(component, error);
     if (base == NULL)
         return NULL;
     if (base->version_name == NULL)
@@ -944,15 +949,15 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
     GPtrArray *components = mf_store_ensure_loaded(store, error);
     if (components == NULL)
         return NULL;
+    base_dir = g_build_filename(GET_PRIVATE(store)->path,
+                                base->subdir,
+                                base->component_id,
+                                base->version_name,
+                                NULL);
     for (guint i = 0; i < components->len; i++) {
         MfComponent *candidate = g_ptr_array_index(components, i);
 
-        if (!g_str_equal(mf_component_get_id(candidate), base->component_id) ||
-            !g_str_equal(
-                mf_store_subdir_for_kind(mf_component_get_kind(candidate), mf_component_is_sdk(candidate)),
-                base->subdir))
-            continue;
-        if (g_str_equal(mf_component_get_full_version(candidate), base->version_name))
+        if (g_str_equal(mf_component_get_dir(candidate), base_dir))
             return g_object_ref(candidate);
     }
 
@@ -1012,22 +1017,6 @@ mf_store_find_identity(MfStore *store, const char *identity, GError **error)
 }
 
 /**
- * mf_store_get_component_dir:
- * @store: an #MfStore
- * @component: an installed component
- *
- * Returns: (transfer full): the directory of the version in the store
- */
-char *
-mf_store_get_component_dir(MfStore *store, MfComponent *component)
-{
-    g_return_val_if_fail(MF_IS_STORE(store), NULL);
-    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
-
-    return mf_component_dir_at(GET_PRIVATE(store)->path, component);
-}
-
-/**
  * mf_store_get_image_path:
  * @store: an #MfStore
  * @component: an installed component
@@ -1041,52 +1030,6 @@ mf_store_get_image_path(MfStore *store, MfComponent *component)
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
 
     return mf_store_image_path_at(GET_PRIVATE(store)->path, mf_component_get_verity_hash(component));
-}
-
-/**
- * mf_store_get_manifest:
- * @store: an #MfStore
- * @component: an installed component of @store
- * @error: a #GError
- *
- * Get the manifest a component was installed with, which describes it in
- * full. A component read from the store carries it already; for any
- * other, such as one the install daemon reported, it is read from the
- * component's version directory.
- *
- * Returns: (transfer full): the manifest, or %NULL on error
- */
-MfManifest *
-mf_store_get_manifest(MfStore *store, MfComponent *component, GError **error)
-{
-    g_autofree char *version_dir = NULL;
-    MfManifest *manifest;
-
-    g_return_val_if_fail(MF_IS_STORE(store), NULL);
-    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
-
-    manifest = mf_component_peek_manifest(component);
-    if (manifest != NULL)
-        return g_object_ref(manifest);
-
-    version_dir = mf_component_dir_at(GET_PRIVATE(store)->path, component);
-    if (!g_file_test(version_dir, G_FILE_TEST_IS_DIR)) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_NOT_FOUND,
-                    "%s %s is not installed",
-                    mf_component_get_id(component),
-                    mf_component_get_version(component));
-        return NULL;
-    }
-    manifest = mf_read_manifest_at(version_dir,
-                                   mf_component_get_id(component),
-                                   mf_component_get_version(component),
-                                   error);
-    if (manifest == NULL)
-        return NULL;
-    mf_component_set_manifest(component, manifest);
-    return manifest;
 }
 
 /**

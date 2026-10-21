@@ -38,13 +38,13 @@ gboolean        mfd_store_writer_install_component(MfdStoreWriter   *writer,
                                                    GBytes           *metainfo,
                                                    MfInstallMode     mode,
                                                    GError          **error);
-gboolean        mfd_store_writer_remove_version_dir(MfdStoreWriter *writer,
-                                                    const char     *version_dir,
-                                                    GError        **error);
+gboolean        mfd_store_writer_remove_component(MfdStoreWriter *writer,
+                                                  MfComponent    *component,
+                                                  GError        **error);
 gboolean        mfd_store_writer_remove_cruft(MfdStoreWriter *writer,
                                               GError        **error);
 gboolean        mfd_store_writer_set_mode(MfdStoreWriter *writer,
-                                          const char     *version_dir,
+                                          MfComponent    *component,
                                           MfInstallMode   mode,
                                           GError        **error);
 

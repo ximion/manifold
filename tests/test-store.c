@@ -485,8 +485,10 @@ test_plan_removal(Fixture *f, gconstpointer user_data)
     app_removal = mfd_manager_plan_removal(manager, TEST_APP_ID, NULL, NULL, &error);
     g_assert_no_error(error);
     g_assert_cmpuint(app_removal->items->len, ==, 2);
-    g_assert_cmpstr(mft_removal_item(app_removal, 0)->version_dir, ==, APPS "/" TEST_APP_ID "/0.1.0-1");
-    g_assert_cmpstr(mft_removal_item(app_removal, 1)->version_dir,
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(app_removal, 0)->component),
+                    ==,
+                    APPS "/" TEST_APP_ID "/0.1.0-1");
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(app_removal, 1)->component),
                     ==,
                     RUNTIMES "/" TEST_KIT_ID "/20260112T0238-1");
     g_assert_cmpstr(mf_component_get_id(mft_removal_item(app_removal, 1)->component), ==, TEST_KIT_ID);
@@ -600,7 +602,7 @@ test_old_dependency_goes(Fixture *f, gconstpointer user_data)
     cleanup = mfd_manager_plan_removal(manager, NULL, NULL, NULL, &error);
     g_assert_no_error(error);
     g_assert_cmpuint(cleanup->items->len, ==, 1);
-    g_assert_cmpstr(mft_removal_item(cleanup, 0)->version_dir,
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(cleanup, 0)->component),
                     ==,
                     RUNTIMES "/" TEST_KIT_ID "/20260112T0238-1");
     g_assert_cmpuint(cleanup->images->len, ==, 1);
@@ -637,8 +639,10 @@ test_dependency_chain_removal(Fixture *f, gconstpointer user_data)
     cleanup = mfd_manager_plan_removal(manager, NULL, NULL, NULL, &error);
     g_assert_no_error(error);
     g_assert_cmpuint(cleanup->items->len, ==, 2);
-    g_assert_cmpstr(mft_removal_item(cleanup, 0)->version_dir, ==, APPS "/" TEST_APP_ID "/0.0.1-1");
-    g_assert_cmpstr(mft_removal_item(cleanup, 1)->version_dir,
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(cleanup, 0)->component),
+                    ==,
+                    APPS "/" TEST_APP_ID "/0.0.1-1");
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(cleanup, 1)->component),
                     ==,
                     RUNTIMES "/" TEST_CORE_ID ".0123456789abcdef/20251201T0000-1");
     g_assert_cmpuint(cleanup->images->len, ==, 2);
@@ -672,13 +676,17 @@ test_newest_app_stays(Fixture *f, gconstpointer user_data)
     cleanup = mfd_manager_plan_removal(manager, NULL, NULL, NULL, &error);
     g_assert_no_error(error);
     g_assert_cmpuint(cleanup->items->len, ==, 1);
-    g_assert_cmpstr(mft_removal_item(cleanup, 0)->version_dir, ==, APPS "/" TEST_APP_ID "/0.2.0-1");
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(cleanup, 0)->component),
+                    ==,
+                    APPS "/" TEST_APP_ID "/0.2.0-1");
 
     /* without 0.3.0, 0.2.0 is the newest version, and stays */
     removal = mfd_manager_plan_removal(manager, TEST_APP_ID, "0.3.0", NULL, &error);
     g_assert_no_error(error);
     g_assert_cmpuint(removal->items->len, ==, 1);
-    g_assert_cmpstr(mft_removal_item(removal, 0)->version_dir, ==, APPS "/" TEST_APP_ID "/0.3.0-1");
+    g_assert_cmpstr(mf_component_get_dir(mft_removal_item(removal, 0)->component),
+                    ==,
+                    APPS "/" TEST_APP_ID "/0.3.0-1");
 }
 
 /**

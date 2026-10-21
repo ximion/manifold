@@ -402,25 +402,35 @@ out:
 }
 
 /**
- * mfd_store_writer_remove_version_dir:
+ * mfd_store_writer_remove_component:
+ * @writer: the #MfdStoreWriter
+ * @component: an installed version of a component, read from the store
  *
- * Remove a version directory, and the directory of the component if that
- * was its last version. Before the version goes, `current` of the component
- * is pointed at the newest other version, so it never points at nothing.
+ * Remove the version directory of a component, and the directory of the
+ * component if that was its last version. Before we remove the version, we
+ * point the `current` link of the component at the newest other version, so
+ * the link never points at nothing.
  *
  * We remove the version from the store by renaming its directory to a hidden
  * name, and then delete that. If deleting fails, we only warn about it, and
  * the next cleanup deletes it.
  */
 gboolean
-mfd_store_writer_remove_version_dir(MfdStoreWriter *writer, const char *version_dir, GError **error)
+mfd_store_writer_remove_component(MfdStoreWriter *writer, MfComponent *component, GError **error)
 {
-    g_autofree char *component_dir = g_path_get_dirname(version_dir);
-    g_autofree char *version_name = g_path_get_basename(version_dir);
-    g_autofree char *tmp_name = g_strconcat(MF_TMP_PREFIX, version_name, NULL);
-    g_autofree char *tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
+    const char *version_dir = mf_component_get_dir(component);
+    g_autofree char *component_dir = NULL;
+    g_autofree char *version_name = NULL;
+    g_autofree char *tmp_name = NULL;
+    g_autofree char *tmp_dir = NULL;
     g_autoptr(GError) local_error = NULL;
 
+    g_return_val_if_fail(version_dir != NULL, FALSE);
+
+    component_dir = g_path_get_dirname(version_dir);
+    version_name = g_path_get_basename(version_dir);
+    tmp_name = g_strconcat(MF_TMP_PREFIX, version_name, NULL);
+    tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
     g_info("Removing %s", version_dir);
     if (!mfd_remove_if_exists(tmp_dir, error))
         return FALSE;
@@ -449,15 +459,19 @@ undo:
 /**
  * mfd_store_writer_set_mode:
  * @writer: the #MfdStoreWriter
- * @version_dir: the version directory of a component
+ * @component: an installed version of a component, read from the store
  * @mode: the install mode to record
  *
  * Record whether a version is kept until it is removed explicitly, or
  * removed once it is not needed anymore.
  */
 gboolean
-mfd_store_writer_set_mode(MfdStoreWriter *writer, const char *version_dir, MfInstallMode mode, GError **error)
+mfd_store_writer_set_mode(MfdStoreWriter *writer, MfComponent *component, MfInstallMode mode, GError **error)
 {
+    const char *version_dir = mf_component_get_dir(component);
+
+    g_return_val_if_fail(version_dir != NULL, FALSE);
+
     if (!mfd_write_word(version_dir, MF_STORE_MODE_NAME, mf_install_mode_to_string(mode), error))
         return FALSE;
     mf_store_invalidate(writer->store);

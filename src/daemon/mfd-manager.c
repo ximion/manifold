@@ -716,7 +716,6 @@ static void
 mfd_removal_item_free(MfdRemovalItem *item)
 {
     g_object_unref(item->component);
-    g_free(item->version_dir);
     g_free(item);
 }
 
@@ -729,7 +728,7 @@ mfd_removal_plan_free(MfdRemovalPlan *rmplan)
     if (rmplan == NULL)
         return;
 
-    g_hash_table_unref(rmplan->item_dirs);
+    g_hash_table_unref(rmplan->cpts_set);
     g_ptr_array_unref(rmplan->items);
     g_ptr_array_unref(rmplan->images);
     g_free(rmplan);
@@ -746,110 +745,69 @@ mfd_removal_plan_new(void)
     MfdRemovalPlan *rmplan = g_new0(MfdRemovalPlan, 1);
 
     rmplan->items = g_ptr_array_new_with_free_func((GDestroyNotify) mfd_removal_item_free);
-    /* the set holds the version directories of the items, which own them */
-    rmplan->item_dirs = g_hash_table_new(g_str_hash, g_str_equal);
+    /* the set holds the components of the items, which own them */
+    rmplan->cpts_set = g_hash_table_new(g_direct_hash, g_direct_equal);
     rmplan->images = g_ptr_array_new_with_free_func(g_free);
     return rmplan;
 }
 
 /**
- * MfdInstalledVersion:
- * @component: an installed version of a component
- * @version_dir: its version directory
- *
- * What removals are planned against.
- */
-typedef struct {
-    MfComponent *component;
-    char *version_dir;
-} MfdInstalledVersion;
-
-/**
- * mfd_installed_version_free:
- */
-static void
-mfd_installed_version_free(MfdInstalledVersion *version)
-{
-    g_object_unref(version->component);
-    g_free(version->version_dir);
-    g_free(version);
-}
-
-/**
- * mfd_manager_list_installed:
- *
- * List every installed version, reading every manifest once.
- *
- * Returns: (transfer full) (element-type MfdInstalledVersion): the versions, or %NULL on error
- */
-static GPtrArray *
-mfd_manager_list_installed(MfdManager *manager, GError **error)
-{
-    g_autoptr(GPtrArray) components = NULL;
-    GPtrArray *installed;
-
-    components = mf_store_list_components(manager->store, NULL, MF_COMPONENT_KIND_UNKNOWN, error);
-    if (components == NULL)
-        return NULL;
-
-    installed = g_ptr_array_new_with_free_func((GDestroyNotify) mfd_installed_version_free);
-    for (guint i = 0; i < components->len; i++) {
-        MfdInstalledVersion *version = g_new0(MfdInstalledVersion, 1);
-
-        version->component = g_object_ref(g_ptr_array_index(components, i));
-        version->version_dir = mf_store_get_component_dir(manager->store, version->component);
-        g_ptr_array_add(installed, version);
-    }
-
-    return installed;
-}
-
-/**
  * mfd_removal_plan_add_item:
  * @rmplan: the #MfdRemovalPlan
- * @version: the version that goes
- * @action: why it goes, see #MfdRemovalItem
+ * @component: the version that will be removed
+ * @action: why it will be removed, see #MfdRemovalItem
  *
  * Add a component to a removal plan.
  */
 static void
-mfd_removal_plan_add_item(MfdRemovalPlan *rmplan, const MfdInstalledVersion *version, MfAction action)
+mfd_removal_plan_add_item(MfdRemovalPlan *rmplan, MfComponent *component, MfAction action)
 {
     MfdRemovalItem *item = g_new0(MfdRemovalItem, 1);
 
-    item->component = g_object_ref(version->component);
-    item->version_dir = g_strdup(version->version_dir);
+    item->component = g_object_ref(component);
     item->action = action;
     g_ptr_array_add(rmplan->items, item);
-    g_hash_table_add(rmplan->item_dirs, item->version_dir);
+    g_hash_table_add(rmplan->cpts_set, item->component);
 }
 
 /**
- * mfd_manager_find_used_dirs:
- * @installed: (element-type MfdInstalledVersion): what is installed
- * @rm_pending: version directories whose links do not count
+ * mfd_manager_find_used:
+ * @installed: (element-type MfComponent): every installed version
+ * @rm_pending: (element-type MfComponent): versions that should be ignored because they will be removed
  *
- * Find what the `base` links of the versions that stay refer to. A link
- * to `current` refers to the version `current` names, so nothing gets
- * downgraded under it. A base that can not be read is not protected.
+ * Find the versions that the `base` links of the other installed versions
+ * point to. A link to `current` keeps the version that `current` points to
+ * now: if we removed it, `current` would move to an older version, and the
+ * versions that link to it would build on that one. We do not keep a base
+ * whose link we can not read.
  *
- * Returns: a table of every version directory a link names, mapped to the component-ID that links to it
+ * Returns: every version a link points to, mapped to a version that links to it
  */
 static GHashTable *
-mfd_manager_find_used_dirs(MfdManager *manager, GPtrArray *installed, GHashTable *rm_pending)
+mfd_manager_find_used(MfdManager *manager, GPtrArray *installed, GHashTable *rm_pending)
 {
     const char *root = mf_store_get_path(manager->store);
-    GHashTable *used = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    /* the version directory of every installed version, mapped to that version */
+    g_autoptr(GHashTable) by_dir = g_hash_table_new(g_str_hash, g_str_equal);
+    GHashTable *used = g_hash_table_new(g_direct_hash, g_direct_equal);
 
     for (guint i = 0; i < installed->len; i++) {
-        MfdInstalledVersion *version = g_ptr_array_index(installed, i);
+        MfComponent *component = g_ptr_array_index(installed, i);
+
+        g_hash_table_insert(by_dir, (gpointer) mf_component_get_dir(component), component);
+    }
+
+    for (guint i = 0; i < installed->len; i++) {
+        MfComponent *component = g_ptr_array_index(installed, i);
         g_autoptr(MfBaseLink) base = NULL;
         g_autofree char *component_dir = NULL;
         g_autofree char *version_name = NULL;
+        g_autofree char *base_dir = NULL;
+        MfComponent *linked;
 
-        if (g_hash_table_contains(rm_pending, version->version_dir))
+        if (g_hash_table_contains(rm_pending, component))
             continue;
-        base = mf_store_read_base_link_at(root, version->component, NULL);
+        base = mf_store_read_base_link(component, NULL);
         if (base == NULL)
             continue;
         component_dir = g_build_filename(root, base->subdir, base->component_id, NULL);
@@ -862,9 +820,10 @@ mfd_manager_find_used_dirs(MfdManager *manager, GPtrArray *installed, GHashTable
             if (version_name == NULL)
                 continue;
         }
-        g_hash_table_insert(used,
-                            g_build_filename(component_dir, version_name, NULL),
-                            (gpointer) mf_component_get_id(version->component));
+        base_dir = g_build_filename(component_dir, version_name, NULL);
+        linked = g_hash_table_lookup(by_dir, base_dir);
+        if (linked != NULL)
+            g_hash_table_insert(used, linked, component);
     }
 
     return used;
@@ -872,8 +831,8 @@ mfd_manager_find_used_dirs(MfdManager *manager, GPtrArray *installed, GHashTable
 
 /**
  * mfd_find_used_images:
- * @installed: (element-type MfdInstalledVersion): what is installed
- * @rm_pending: version directories whose links do not count
+ * @installed: (element-type MfComponent): every installed version
+ * @rm_pending: (element-type MfComponent): versions pending deletion
  *
  * Returns: a set of the root hash of every image that is (or will be) still in use
  */
@@ -883,10 +842,10 @@ mfd_find_used_images(GPtrArray *installed, GHashTable *rm_pending)
     GHashTable *used = g_hash_table_new(g_str_hash, g_str_equal);
 
     for (guint i = 0; i < installed->len; i++) {
-        MfdInstalledVersion *version = g_ptr_array_index(installed, i);
+        MfComponent *component = g_ptr_array_index(installed, i);
 
-        if (!g_hash_table_contains(rm_pending, version->version_dir))
-            g_hash_table_add(used, (gpointer) mf_component_get_verity_hash(version->component));
+        if (!g_hash_table_contains(rm_pending, component))
+            g_hash_table_add(used, (gpointer) mf_component_get_verity_hash(component));
     }
 
     return used;
@@ -894,43 +853,42 @@ mfd_find_used_images(GPtrArray *installed, GHashTable *rm_pending)
 
 /**
  * mfd_find_newest_apps:
- * @installed: (element-type MfdInstalledVersion): what is installed
- * @rm_pending: version directories that go
+ * @installed: (element-type MfComponent): every installed version
+ * @rm_pending: (element-type MfComponent): versions that will be removed
  *
- * Find the newest version of every application and plugin that stays,
- * which is kept whatever its install mode is.
+ * Find the newest version of every application and plugin that is not
+ * planned for removal. That version is kept whatever its install mode is.
  *
- * Returns: a set of their version directories
+ * Returns: a set of those versions
  */
 static GHashTable *
 mfd_find_newest_apps(GPtrArray *installed, GHashTable *rm_pending)
 {
     /* the component-ID mapped to its newest version */
     g_autoptr(GHashTable) newest = g_hash_table_new(g_str_hash, g_str_equal);
-    GHashTable *kept = g_hash_table_new(g_str_hash, g_str_equal);
+    GHashTable *kept = g_hash_table_new(g_direct_hash, g_direct_equal);
     GHashTableIter iter;
     gpointer value;
 
     for (guint i = 0; i < installed->len; i++) {
-        MfdInstalledVersion *version = g_ptr_array_index(installed, i);
-        MfComponent *component = version->component;
-        MfdInstalledVersion *other;
+        MfComponent *component = g_ptr_array_index(installed, i);
+        MfComponent *other;
 
         if (!mf_component_kind_is_always_auto(mf_component_get_kind(component),
                                               mf_component_is_sdk(component)) ||
-            g_hash_table_contains(rm_pending, version->version_dir))
+            g_hash_table_contains(rm_pending, component))
             continue;
         other = g_hash_table_lookup(newest, mf_component_get_id(component));
         if (other == NULL || mf_version_compare_with_rev(mf_component_get_version(component),
                                                          mf_component_get_revision(component),
-                                                         mf_component_get_version(other->component),
-                                                         mf_component_get_revision(other->component)) > 0)
-            g_hash_table_insert(newest, (gpointer) mf_component_get_id(component), version);
+                                                         mf_component_get_version(other),
+                                                         mf_component_get_revision(other)) > 0)
+            g_hash_table_insert(newest, (gpointer) mf_component_get_id(component), component);
     }
 
     g_hash_table_iter_init(&iter, newest);
     while (g_hash_table_iter_next(&iter, NULL, &value))
-        g_hash_table_add(kept, ((MfdInstalledVersion *) value)->version_dir);
+        g_hash_table_add(kept, value);
 
     return kept;
 }
@@ -938,8 +896,8 @@ mfd_find_newest_apps(GPtrArray *installed, GHashTable *rm_pending)
 /**
  * mfd_manager_complete_removal_plan:
  * @rmplan: the removal plan, which may already list versions planned for removal
- * @installed: (element-type MfdInstalledVersion): every installed version
- * @requested: the version directories the removal was requested for
+ * @installed: (element-type MfComponent): every installed version
+ * @requested: (element-type MfComponent): the versions the removal was requested for
  *
  * Work out everything a removal will delete, in the order it has to go.
  *
@@ -970,22 +928,21 @@ mfd_manager_complete_removal_plan(MfdManager *manager,
     /* the newest version of an application or plugin that was not requested is kept, even if it is auto */
     newest_apps = mfd_find_newest_apps(installed, requested);
     do {
-        /* the version directories that the versions not planned for removal yet link to */
-        g_autoptr(GHashTable) used = mfd_manager_find_used_dirs(manager, installed, rmplan->item_dirs);
+        /* the versions that are linked to by versions not planned for removal yet */
+        g_autoptr(GHashTable) used = mfd_manager_find_used(manager, installed, rmplan->cpts_set);
 
         added = FALSE;
         for (guint i = 0; i < installed->len; i++) {
-            MfdInstalledVersion *version = g_ptr_array_index(installed, i);
+            MfComponent *component = g_ptr_array_index(installed, i);
 
-            if (g_hash_table_contains(rmplan->item_dirs, version->version_dir) ||
-                g_hash_table_contains(used, version->version_dir))
+            if (g_hash_table_contains(rmplan->cpts_set, component) || g_hash_table_contains(used, component))
                 continue;
-            if (g_hash_table_contains(requested, version->version_dir)) {
-                mfd_removal_plan_add_item(rmplan, version, MF_ACTION_REMOVE);
-            } else if (mf_component_get_install_mode(version->component) == MF_INSTALL_MODE_AUTO &&
-                       !g_hash_table_contains(newest_apps, version->version_dir)) {
-                g_info("%s is not needed anymore", version->version_dir);
-                mfd_removal_plan_add_item(rmplan, version, MF_ACTION_CLEANUP);
+            if (g_hash_table_contains(requested, component)) {
+                mfd_removal_plan_add_item(rmplan, component, MF_ACTION_REMOVE);
+            } else if (mf_component_get_install_mode(component) == MF_INSTALL_MODE_AUTO &&
+                       !g_hash_table_contains(newest_apps, component)) {
+                g_info("%s is not needed anymore", mf_component_get_dir(component));
+                mfd_removal_plan_add_item(rmplan, component, MF_ACTION_CLEANUP);
             } else {
                 /* kept: marked manual, or the newest version of an application or plugin */
                 continue;
@@ -997,7 +954,7 @@ mfd_manager_complete_removal_plan(MfdManager *manager,
     } while (added);
 
     /* plan to remove the images that no kept version uses */
-    images_used = mfd_find_used_images(installed, rmplan->item_dirs);
+    images_used = mfd_find_used_images(installed, rmplan->cpts_set);
     images_dir = g_build_filename(mf_store_get_path(manager->store), MF_STORE_IMAGES_SUBDIR, NULL);
     images = g_dir_open(images_dir, 0, error);
     if (images == NULL)
@@ -1104,12 +1061,12 @@ mfd_manager_plan_removal(MfdManager *manager,
 {
     g_autoptr(MfdRemovalPlan) rmplan = mfd_removal_plan_new();
     g_autoptr(GPtrArray) installed = NULL;
-    g_autoptr(GHashTable) requested = g_hash_table_new(g_str_hash, g_str_equal);
+    g_autoptr(GHashTable) requested = g_hash_table_new(g_direct_hash, g_direct_equal);
     gboolean full = FALSE;
 
     g_return_val_if_fail(MFD_IS_MANAGER(manager), NULL);
 
-    installed = mfd_manager_list_installed(manager, error);
+    installed = mf_store_list_components(manager->store, NULL, MF_COMPONENT_KIND_UNKNOWN, error);
     if (installed == NULL)
         return NULL;
 
@@ -1117,11 +1074,11 @@ mfd_manager_plan_removal(MfdManager *manager,
         if (!mfd_manager_resolve_version(manager, component_id, version, &full, error))
             return NULL;
         for (guint i = 0; i < installed->len; i++) {
-            MfdInstalledVersion *candidate = g_ptr_array_index(installed, i);
+            MfComponent *candidate = g_ptr_array_index(installed, i);
 
-            if (g_str_equal(mf_component_get_id(candidate->component), component_id) &&
-                (version == NULL || mfd_version_selects(candidate->component, version, full)))
-                g_hash_table_add(requested, candidate->version_dir);
+            if (g_str_equal(mf_component_get_id(candidate), component_id) &&
+                (version == NULL || mfd_version_selects(candidate, version, full)))
+                g_hash_table_add(requested, candidate);
         }
         if (g_hash_table_size(requested) == 0) {
             mfd_set_not_installed_error(error, ret_detail, component_id, version);
@@ -1134,15 +1091,15 @@ mfd_manager_plan_removal(MfdManager *manager,
 
     /* a requested version that is not planned for removal is still linked to by a kept version */
     for (guint i = 0; i < installed->len; i++) {
-        MfdInstalledVersion *candidate = g_ptr_array_index(installed, i);
+        MfComponent *candidate = g_ptr_array_index(installed, i);
         g_autoptr(GHashTable) used = NULL;
         const char *used_by;
 
-        if (!g_hash_table_contains(requested, candidate->version_dir) ||
-            g_hash_table_contains(rmplan->item_dirs, candidate->version_dir))
+        if (!g_hash_table_contains(requested, candidate) ||
+            g_hash_table_contains(rmplan->cpts_set, candidate))
             continue;
-        used = mfd_manager_find_used_dirs(manager, installed, rmplan->item_dirs);
-        used_by = g_hash_table_lookup(used, candidate->version_dir);
+        used = mfd_manager_find_used(manager, installed, rmplan->cpts_set);
+        used_by = mf_component_get_id(g_hash_table_lookup(used, candidate));
         if (ret_detail != NULL) {
             mfd_error_detail_clear(ret_detail);
             ret_detail->component_id = g_strdup(component_id);
@@ -1177,17 +1134,16 @@ mfd_manager_plan_supersede(MfdManager *manager, GArray *plans, GError **error)
 {
     g_autoptr(MfdRemovalPlan) rmplan = mfd_removal_plan_new();
     g_autoptr(GPtrArray) installed = NULL;
-    g_autoptr(GHashTable) superseded = g_hash_table_new(g_str_hash, g_str_equal);
+    g_autoptr(GHashTable) superseded = g_hash_table_new(g_direct_hash, g_direct_equal);
     g_autoptr(GHashTable) used = NULL;
     gboolean kept;
 
-    installed = mfd_manager_list_installed(manager, error);
+    installed = mf_store_list_components(manager->store, NULL, MF_COMPONENT_KIND_UNKNOWN, error);
     if (installed == NULL)
         return NULL;
 
     for (guint i = 0; i < installed->len; i++) {
-        MfdInstalledVersion *version = g_ptr_array_index(installed, i);
-        MfComponent *component = version->component;
+        MfComponent *component = g_ptr_array_index(installed, i);
 
         if (mf_component_get_install_mode(component) != MF_INSTALL_MODE_AUTO)
             continue;
@@ -1201,7 +1157,7 @@ mfd_manager_plan_supersede(MfdManager *manager, GArray *plans, GError **error)
                                             mf_component_get_revision(component),
                                             mf_manifest_get_version(manifest),
                                             mf_manifest_get_revision(manifest)) < 0) {
-                g_hash_table_add(superseded, version->version_dir);
+                g_hash_table_add(superseded, component);
                 break;
             }
         }
@@ -1211,28 +1167,30 @@ mfd_manager_plan_supersede(MfdManager *manager, GArray *plans, GError **error)
      * kept version may link to another superseded version in turn */
     do {
         GHashTableIter iter;
-        gpointer version_dir;
+        gpointer component;
 
         g_clear_pointer(&used, g_hash_table_unref);
-        used = mfd_manager_find_used_dirs(manager, installed, superseded);
+        used = mfd_manager_find_used(manager, installed, superseded);
         kept = FALSE;
         g_hash_table_iter_init(&iter, superseded);
-        while (g_hash_table_iter_next(&iter, &version_dir, NULL)) {
-            const char *used_by = g_hash_table_lookup(used, version_dir);
+        while (g_hash_table_iter_next(&iter, &component, NULL)) {
+            MfComponent *used_by = g_hash_table_lookup(used, component);
 
             if (used_by == NULL)
                 continue;
-            g_info("%s is superseded, but %s still builds on it", (const char *) version_dir, used_by);
+            g_info("%s is superseded, but %s still builds on it",
+                   mf_component_get_dir(component),
+                   mf_component_get_id(used_by));
             g_hash_table_iter_remove(&iter);
             kept = TRUE;
         }
     } while (kept);
 
     for (guint i = 0; i < installed->len; i++) {
-        MfdInstalledVersion *version = g_ptr_array_index(installed, i);
+        MfComponent *component = g_ptr_array_index(installed, i);
 
-        if (g_hash_table_contains(superseded, version->version_dir))
-            mfd_removal_plan_add_item(rmplan, version, MF_ACTION_CLEANUP);
+        if (g_hash_table_contains(superseded, component))
+            mfd_removal_plan_add_item(rmplan, component, MF_ACTION_CLEANUP);
     }
 
     /* an installation that supersedes nothing removes nothing else either */
@@ -1267,7 +1225,7 @@ mfd_manager_execute_removal(MfdManager *manager,
                                 mf_component_get_id(item->component),
                                 mf_component_get_version(item->component),
                                 0);
-        if (!mfd_store_writer_remove_version_dir(manager->writer, item->version_dir, error))
+        if (!mfd_store_writer_remove_component(manager->writer, item->component, error))
             return FALSE;
         mfd_progress_end_item(tracker);
         mf_result_add_removed(result, item->component);
@@ -1546,14 +1504,12 @@ mfd_manager_mark(MfdManager *manager,
 
     for (guint i = 0; i < components->len; i++) {
         MfComponent *component = g_ptr_array_index(components, i);
-        g_autofree char *version_dir = NULL;
 
         if (!mfd_manager_mark_selects(component, version, full))
             continue;
-        version_dir = mf_store_get_component_dir(manager->store, component);
-        if (!mfd_store_writer_set_mode(manager->writer, version_dir, mode, error))
+        if (!mfd_store_writer_set_mode(manager->writer, component, mode, error))
             return NULL;
-        g_info("Marked %s as %s", version_dir, mf_install_mode_to_string(mode));
+        g_info("Marked %s as %s", mf_component_get_dir(component), mf_install_mode_to_string(mode));
         n_marked++;
     }
     if (n_marked == 0) {

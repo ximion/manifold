@@ -101,9 +101,12 @@ MfComponent *mf_store_read_base_at(const char  *root,
                                    MfComponent *component,
                                    GError     **error);
 MF_INTERNAL_VISIBLE
-MfBaseLink *mf_store_read_base_link_at(const char  *root,
-                                       MfComponent *component,
-                                       GError     **error);
+MfBaseLink *mf_store_read_base_link(MfComponent *component,
+                                    GError     **error);
+MfManifest *mf_store_read_manifest_at(const char *version_dir,
+                                      const char *component_id,
+                                      const char *version,
+                                      GError    **error);
 MF_INTERNAL_VISIBLE
 char *mf_store_image_path_at(const char *root,
                              const char *verity_hash);

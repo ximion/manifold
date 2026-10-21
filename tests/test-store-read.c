@@ -104,7 +104,6 @@ test_get_current(Fixture *f, gconstpointer user_data)
     g_autoptr(MfComponent) core = mf_store_get_component(f->store, TEST_CORE_ID, NULL, &error);
     g_autoptr(MfComponent) app = NULL;
     g_autofree char *core_hash = mft_fake_hash(TEST_CORE_ID);
-    g_autofree char *dir = NULL;
     g_autofree char *image = NULL;
     g_autofree char *expected_image = g_strdup_printf("%s/images/by-verity/%s.raw", f->dir, core_hash);
 
@@ -118,8 +117,7 @@ test_get_current(Fixture *f, gconstpointer user_data)
     g_assert_cmpint(mf_component_get_install_mode(core), ==, MF_INSTALL_MODE_MANUAL);
     g_assert_cmpstr(mf_component_get_origin(core), ==, "local");
 
-    dir = mf_store_get_component_dir(f->store, core);
-    g_assert_true(g_str_has_suffix(dir, "/runtimes/" TEST_CORE_ID "/13.8-22810000"));
+    g_assert_true(g_str_has_suffix(mf_component_get_dir(core), "/runtimes/" TEST_CORE_ID "/13.8-22810000"));
     image = mf_store_image_path_at(mf_store_get_path(f->store), mf_component_get_verity_hash(core));
     g_assert_cmpstr(image, ==, expected_image);
 
@@ -140,18 +138,19 @@ test_get_version(Fixture *f, gconstpointer user_data)
     g_autoptr(GError) error = NULL;
     g_autoptr(MfComponent) old = mf_store_get_component(f->store, TEST_CORE_ID, "13.4", &error);
     g_autoptr(MfComponent) platform = NULL;
-    MfManifest *manifest;
+    g_autoptr(MfManifest) manifest = NULL;
 
     g_assert_no_error(error);
     g_assert_cmpstr(mf_component_get_version(old), ==, "13.4");
     g_assert_cmpuint(mf_component_get_revision(old), ==, 1);
     g_assert_false(mf_component_is_current(old));
 
-    /* the install mode and the manifest are read as well */
+    /* the install mode is read as well, and the manifest is the one of that version */
     platform = mf_store_get_component(f->store, TEST_PLATFORM_ID, "13.8", &error);
     g_assert_no_error(error);
     g_assert_cmpint(mf_component_get_install_mode(platform), ==, MF_INSTALL_MODE_AUTO);
-    manifest = mf_component_peek_manifest(platform);
+    manifest = mf_component_fetch_manifest(platform, &error);
+    g_assert_no_error(error);
     g_assert_cmpstr(mf_manifest_get_base_id(manifest), ==, TEST_CORE_ID);
     g_assert_cmpuint(mf_manifest_get_data_offset(manifest), ==, 20480);
 
@@ -251,7 +250,6 @@ test_sdk_app_is_a_runtime(Fixture *f, gconstpointer user_data)
     g_autoptr(GError) error = NULL;
     g_autoptr(MfComponent) sdk = NULL;
     g_autoptr(MfComponent) base = NULL;
-    g_autofree char *dir = NULL;
 
     mft_write_runtime(f,
                       &(MftManifest){.component_id = TEST_APP_SDK_ID,
@@ -266,8 +264,7 @@ test_sdk_app_is_a_runtime(Fixture *f, gconstpointer user_data)
     g_assert_cmpint(mf_component_get_kind(sdk), ==, MF_COMPONENT_KIND_APP);
     g_assert_true(mf_component_is_sdk(sdk));
 
-    dir = mf_store_get_component_dir(f->store, sdk);
-    g_assert_true(g_str_has_suffix(dir, "/runtimes/" TEST_APP_SDK_ID "/0.1.0-1"));
+    g_assert_true(g_str_has_suffix(mf_component_get_dir(sdk), "/runtimes/" TEST_APP_SDK_ID "/0.1.0-1"));
     base = mf_store_get_base(f->store, sdk, &error);
     g_assert_no_error(error);
     g_assert_cmpstr(mf_component_get_id(base), ==, TEST_PLATFORM_ID);
@@ -392,56 +389,78 @@ test_manifest_must_be_sound(Fixture *f, gconstpointer user_data)
 }
 
 /**
- * test_get_manifest:
+ * mft_new_core:
+ * @dir: (nullable): the version directory to make the component for
+ *
+ * Make the component of the current core, as the install daemon describes
+ * it, without its manifest.
  */
-static void
-test_get_manifest(Fixture *f, gconstpointer user_data)
+static MfComponent *
+mft_new_core(const char *dir)
 {
-    g_autoptr(GError) error = NULL;
-    g_autoptr(MfComponent) platform = mf_store_get_component(f->store, TEST_PLATFORM_ID, NULL, &error);
-    g_autoptr(MfManifest) manifest = NULL;
-    g_autoptr(MfComponent) reported = NULL;
-    g_autoptr(MfComponent) other = NULL;
     g_autofree char *core_hash = mft_fake_hash(TEST_CORE_ID);
 
-    /* a component read from the store comes with its manifest */
-    g_assert_no_error(error);
-    manifest = mf_store_get_manifest(f->store, platform, &error);
-    g_assert_no_error(error);
-    g_assert_true(manifest == mf_component_peek_manifest(platform));
-    g_clear_object(&manifest);
+    return mf_component_new(TEST_CORE_ID,
+                            MF_COMPONENT_KIND_CORE,
+                            "13.8",
+                            22810000,
+                            FALSE,
+                            core_hash,
+                            core_hash,
+                            TRUE,
+                            MF_INSTALL_MODE_MANUAL,
+                            "local",
+                            dir);
+}
 
-    /* a component without a manifest, as made from a reply of the daemon, gets it read from the store */
-    reported = mf_component_new(TEST_CORE_ID,
-                                MF_COMPONENT_KIND_CORE,
-                                "13.8",
-                                22810000,
-                                FALSE,
-                                core_hash,
-                                core_hash,
-                                TRUE,
-                                MF_INSTALL_MODE_MANUAL,
-                                "local");
-    manifest = mf_store_get_manifest(f->store, reported, &error);
+/**
+ * test_fetch_manifest:
+ */
+static void
+test_fetch_manifest(Fixture *f, gconstpointer user_data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfComponent) core = mf_store_get_component(f->store, TEST_CORE_ID, NULL, &error);
+    g_autoptr(MfComponent) unread = NULL;
+    g_autoptr(MfComponent) removed = NULL;
+    g_autoptr(MfComponent) reported = NULL;
+    g_autoptr(MfManifest) manifest = NULL;
+    g_autoptr(MfManifest) again = NULL;
+
+    /* a component read from the store keeps the manifest the store read */
+    g_assert_no_error(error);
+    manifest = mf_component_fetch_manifest(core, &error);
     g_assert_no_error(error);
     g_assert_cmpstr(mf_manifest_get_component_id(manifest), ==, TEST_CORE_ID);
-    g_assert_cmpstr(mf_manifest_get_version(manifest), ==, "13.8");
-    g_assert_true(manifest == mf_component_peek_manifest(reported));
+    again = mf_component_fetch_manifest(core, &error);
+    g_assert_no_error(error);
+    g_assert_true(again == manifest);
+    g_clear_object(&manifest);
+    g_clear_object(&again);
 
-    /* a version that is not installed has no manifest to read */
-    other = mf_component_new(TEST_CORE_ID,
-                             MF_COMPONENT_KIND_CORE,
-                             "13.9",
-                             1,
-                             FALSE,
-                             core_hash,
-                             core_hash,
-                             FALSE,
-                             MF_INSTALL_MODE_MANUAL,
-                             "local");
-    g_assert_null(mf_store_get_manifest(f->store, other, &error));
+    /* a component without a manifest reads it from its version directory once, and keeps it */
+    unread = mft_new_core(mf_component_get_dir(core));
+    manifest = mf_component_fetch_manifest(unread, &error);
+    g_assert_no_error(error);
+    g_assert_cmpstr(mf_manifest_get_version(manifest), ==, "13.8");
+    mft_rm_rf(mf_component_get_dir(core));
+    again = mf_component_fetch_manifest(unread, &error);
+    g_assert_no_error(error);
+    g_assert_true(again == manifest);
+
+    /* without a manifest, a version that was removed is not installed anymore */
+    removed = mft_new_core(mf_component_get_dir(core));
+    g_assert_null(mf_component_fetch_manifest(removed, &error));
     g_assert_error(error, MF_ERROR, MF_ERROR_NOT_FOUND);
-    g_assert_cmpstr(error->message, ==, TEST_CORE_ID " 13.9 is not installed");
+    g_assert_cmpstr(error->message, ==, TEST_CORE_ID " 13.8 is not installed");
+    g_clear_error(&error);
+
+    /* a component the install daemon described was not read from a store, so it has no manifest */
+    reported = mft_new_core(NULL);
+    g_assert_null(mf_component_get_dir(reported));
+    g_assert_null(mf_component_fetch_manifest(reported, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_NOT_FOUND);
+    g_assert_cmpstr(error->message, ==, TEST_CORE_ID " 13.8 was not read from a store");
 }
 
 /**
@@ -487,7 +506,7 @@ main(int argc, char **argv)
     add_test("list", test_list);
     add_test("image-link-must-point-into-store", test_image_link_must_point_into_store);
     add_test("manifest-must-be-sound", test_manifest_must_be_sound);
-    add_test("get-manifest", test_get_manifest);
+    add_test("fetch-manifest", test_fetch_manifest);
     add_test("reload", test_reload);
 #undef add_test
 

@@ -14,6 +14,8 @@
 
 G_BEGIN_DECLS
 
+typedef struct _MfManifest MfManifest;
+
 /**
  * MfComponentKind:
  * @MF_COMPONENT_KIND_UNKNOWN: Not a known kind.
@@ -77,5 +79,8 @@ const char     *mf_component_get_verity_hash(MfComponent *component);
 gboolean        mf_component_is_current(MfComponent *component);
 MfInstallMode   mf_component_get_install_mode(MfComponent *component);
 const char     *mf_component_get_origin(MfComponent *component);
+const char     *mf_component_get_dir(MfComponent *component);
+MfManifest     *mf_component_fetch_manifest(MfComponent *component,
+                                            GError     **error);
 
 G_END_DECLS

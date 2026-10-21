@@ -11,7 +11,6 @@
 #include <libglnx.h>
 #include <manifold.h>
 
-#include "mf-component-private.h"
 #include "mf-store-private.h"
 
 constexpr char REVOKED_NAME[] = "revoked";
@@ -83,8 +82,10 @@ mfr_runtime_layer_kind_from_component_kind(MfComponentKind kind, MfrLayerKind *r
 static gboolean
 mfr_fill_layer(const char *root, MfComponent *component, MfrLayer *layer, GError **error)
 {
-    auto manifest = mf_component_peek_manifest(component);
+    g_autoptr(MfManifest) manifest = mf_component_fetch_manifest(component, error);
 
+    if (manifest == NULL)
+        return FALSE;
     if (!mf_manifest_has_image(manifest))
         return glnx_throw(error,
                           "The manifest of %s does not say where the partitions of its image are",
@@ -175,6 +176,7 @@ mfr_app_load(const char *component_id, GError **error)
 {
     g_autoptr(MfrApp) app = NULL;
     g_autoptr(MfComponent) component = NULL;
+    g_autoptr(MfManifest) manifest = NULL;
     g_autofree char *revoked_path = NULL;
 
     g_return_val_if_fail(mf_component_id_is_valid(component_id), NULL);
@@ -195,7 +197,9 @@ mfr_app_load(const char *component_id, GError **error)
         return NULL;
     }
 
-    auto manifest = mf_component_peek_manifest(component);
+    manifest = mf_component_fetch_manifest(component, error);
+    if (manifest == NULL)
+        return NULL;
     app = g_object_new(MFR_TYPE_APP, NULL);
     app->component_id = g_strdup(component_id);
     app->version = g_strdup(mf_component_get_version(component));

@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "mf-error.h"
+#include "mf-manifest.h"
 #include "mf-store-private.h"
 #include "mf-utils-private.h"
 
@@ -33,7 +34,8 @@ struct _MfComponent {
     gboolean current;
     MfInstallMode install_mode;
     char *origin;
-    MfManifest *manifest; /* (nullable) as read from storage */
+    char *dir;            /* (nullable) the metadata directory for this component version */
+    MfManifest *manifest; /* (nullable) kept once it was read */
 };
 
 G_DEFINE_FINAL_TYPE(MfComponent, mf_component, G_TYPE_OBJECT)
@@ -49,6 +51,7 @@ mf_component_finalize(GObject *object)
     g_free(component->identity);
     g_free(component->verity_hash);
     g_free(component->origin);
+    g_free(component->dir);
     g_clear_object(&component->manifest);
 
     G_OBJECT_CLASS(mf_component_parent_class)->finalize(object);
@@ -182,6 +185,8 @@ mf_component_id_is_valid(const char *component_id)
 
 /**
  * mf_component_new:
+ * @dir: (nullable): the version directory the component was read from, or
+ *   %NULL if it was not read from a store
  *
  * Returns: (transfer full): an installed Manifold component
  */
@@ -195,7 +200,8 @@ mf_component_new(const char *component_id,
                  const char *verity_hash,
                  gboolean current,
                  MfInstallMode install_mode,
-                 const char *origin)
+                 const char *origin,
+                 const char *dir)
 {
     MfComponent *component = g_object_new(MF_TYPE_COMPONENT, NULL);
 
@@ -209,6 +215,7 @@ mf_component_new(const char *component_id,
     component->current = current;
     component->install_mode = install_mode;
     component->origin = g_strdup(origin);
+    component->dir = g_strdup(dir);
 
     return component;
 }
@@ -371,6 +378,88 @@ mf_component_get_origin(MfComponent *component)
 }
 
 /**
+ * mf_component_get_dir:
+ * @component: an #MfComponent
+ *
+ * Get the version directory in the store that the component was read from.
+ *
+ * Returns: (type filename) (nullable): the directory, or %NULL if the
+ *   component was not read from a store, e.g. if the install daemon described it
+ */
+const char *
+mf_component_get_dir(MfComponent *component)
+{
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
+    return component->dir;
+}
+
+/**
+ * mf_component_fetch_manifest:
+ * @component: an #MfComponent
+ * @error: a #GError
+ *
+ * Get the manifest associated with this component, which describes it in
+ * full. If the component does not have it yet, it is read from the
+ * component's storage directory, and kept for the next call.
+ *
+ * Returns: (transfer full): the manifest, or %NULL on error.
+ */
+MfManifest *
+mf_component_fetch_manifest(MfComponent *component, GError **error)
+{
+    g_autoptr(GError) local_error = NULL;
+    MfManifest *manifest;
+
+    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
+
+    if (component->manifest != NULL)
+        return g_object_ref(component->manifest);
+    if (component->dir == NULL) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    "%s %s was not read from a store",
+                    component->component_id,
+                    component->version);
+        return NULL;
+    }
+    manifest = mf_store_read_manifest_at(component->dir,
+                                         component->component_id,
+                                         component->version,
+                                         &local_error);
+    if (g_error_matches(local_error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    "%s %s is not installed",
+                    component->component_id,
+                    component->version);
+        return NULL;
+    }
+    if (manifest == NULL) {
+        g_propagate_error(error, g_steal_pointer(&local_error));
+        return NULL;
+    }
+
+    component->manifest = manifest;
+    return g_object_ref(manifest);
+}
+
+/**
+ * mf_component_set_manifest:
+ * @manifest: the manifest the component was read from
+ *
+ * Keep the manifest with the component, so that mf_component_fetch_manifest()
+ * does not read it again.
+ */
+void
+mf_component_set_manifest(MfComponent *component, MfManifest *manifest)
+{
+    g_return_if_fail(MF_IS_COMPONENT(component));
+    g_set_object(&component->manifest, manifest);
+}
+
+/**
  * mf_component_new_from_reply:
  * @variant: a component, as the service describes it
  *
@@ -453,7 +542,8 @@ mf_component_new_from_reply(sd_json_variant *variant, GError **error)
                             fields.verity_hash,
                             fields.current,
                             mf_install_mode_from_string(fields.install_mode),
-                            fields.origin);
+                            fields.origin,
+                            NULL);
 }
 
 /**
@@ -476,29 +566,4 @@ mf_component_array_from_reply(sd_json_variant *list, GError **error)
     }
 
     return g_steal_pointer(&components);
-}
-
-/**
- * mf_component_set_manifest:
- * @manifest: (nullable): the manifest the component was read from
- *
- * Keep the manifest with the component, so that it is not read twice.
- */
-void
-mf_component_set_manifest(MfComponent *component, MfManifest *manifest)
-{
-    g_return_if_fail(MF_IS_COMPONENT(component));
-    g_set_object(&component->manifest, manifest);
-}
-
-/**
- * mf_component_peek_manifest:
- *
- * Returns: (transfer none) (nullable): the manifest the component was read from
- */
-MfManifest *
-mf_component_peek_manifest(MfComponent *component)
-{
-    g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
-    return component->manifest;
 }
