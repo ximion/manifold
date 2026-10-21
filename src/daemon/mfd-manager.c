@@ -296,6 +296,38 @@ mfd_set_not_installed_error(GError **error,
 }
 
 /**
+ * mfd_set_missing_base_error:
+ * @manifest: the manifest of the component whose base is missing
+ * @base_version: the version of the base, with its revision if only that exact revision will do
+ */
+static void
+mfd_set_missing_base_error(GError **error,
+                           MfdErrorDetail *ret_detail,
+                           MfManifest *manifest,
+                           const char *base_version)
+{
+    const char *component_id = mf_manifest_get_component_id(manifest);
+    const char *base_id = mf_manifest_get_base_id(manifest);
+    const char *base_identity = mf_manifest_get_base_identity(manifest);
+
+    if (ret_detail != NULL) {
+        mfd_error_detail_clear(ret_detail);
+        ret_detail->component_id = g_strdup(component_id);
+        ret_detail->base_id = g_strdup(base_id);
+        ret_detail->base_version = g_strdup(base_version);
+        ret_detail->identity = g_strdup(base_identity);
+    }
+    g_set_error(error,
+                MF_ERROR,
+                MF_ERROR_MISSING_BASE,
+                "%s needs base %s %s (identity %s), which is not installed",
+                component_id,
+                base_id,
+                base_version,
+                base_identity);
+}
+
+/**
  * mfd_set_wrong_architecture_error:
  */
 static void
@@ -432,6 +464,80 @@ mfd_manager_get_installed(MfdManager *manager,
 }
 
 /**
+ * mfd_bundle_find_exact_base:
+ *
+ * Returns: (transfer none) (nullable): the manifest of the image in the
+ *   bundle that has the component, version and revision @manifest names as its base
+ */
+static MfManifest *
+mfd_bundle_find_exact_base(MfBundle *bundle, MfManifest *manifest)
+{
+    GPtrArray *images = mf_bundle_get_images(bundle);
+
+    for (guint i = 0; i < images->len; i++) {
+        MfManifest *base = mf_bundle_image_get_manifest(g_ptr_array_index(images, i));
+
+        if (g_str_equal(mf_manifest_get_component_id(base), mf_manifest_get_base_id(manifest)) &&
+            g_str_equal(mf_manifest_get_version(base), mf_manifest_get_base_version(manifest)) &&
+            mf_manifest_get_revision(base) == mf_manifest_get_base_revision(manifest))
+            return base;
+    }
+
+    return NULL;
+}
+
+/**
+ * mfd_manager_resolve_exact_base:
+ * @manifest: the manifest of the component whose base to find
+ * @iplan: the plan whose base to set
+ * @ret_kind: (out): the kind of the base
+ *
+ * Find the exact version of the base a component was built against, in the
+ * bundle or in the store, and make it the base of @iplan. Another version
+ * that provides the same identity will not do.
+ *
+ * Returns: %TRUE if that version is there, and provides the identity the
+ *   component needs.
+ */
+static gboolean
+mfd_manager_resolve_exact_base(MfdManager *manager,
+                               MfBundle *bundle,
+                               MfManifest *manifest,
+                               MfdInstallPlan *iplan,
+                               MfComponentKind *ret_kind)
+{
+    const char *base_id = mf_manifest_get_base_id(manifest);
+    const char *base_version = mf_manifest_get_base_version(manifest);
+    guint64 base_revision = mf_manifest_get_base_revision(manifest);
+    MfManifest *in_bundle = mfd_bundle_find_exact_base(bundle, manifest);
+    g_autoptr(MfComponent) installed = NULL;
+    g_autofree char *version_name = NULL;
+    const char *identity;
+    MfComponentKind kind;
+    gboolean sdk;
+
+    if (in_bundle != NULL) {
+        identity = mf_manifest_get_identity(in_bundle);
+        kind = mf_manifest_get_kind(in_bundle);
+        sdk = mf_manifest_is_sdk(in_bundle);
+    } else {
+        installed = mfd_manager_get_installed(manager, base_id, base_version, base_revision);
+        if (installed == NULL)
+            return FALSE;
+        identity = mf_component_get_identity(installed);
+        kind = mf_component_get_kind(installed);
+        sdk = mf_component_is_sdk(installed);
+    }
+    if (g_strcmp0(identity, mf_manifest_get_base_identity(manifest)) != 0)
+        return FALSE;
+
+    version_name = mf_build_full_version(base_version, base_revision);
+    iplan->base = mf_base_link_new(mf_store_subdir_for_kind(kind, sdk), base_id, version_name);
+    *ret_kind = kind;
+    return TRUE;
+}
+
+/**
  * mfd_manager_plan_image_install:
  *
  * Plan how we install an image of the bundle: whether we add the image to
@@ -498,25 +604,26 @@ mfd_manager_plan_image_install(MfdManager *manager,
     }
 
     if (base_id != NULL) {
-        const char *base_identity = mf_manifest_get_base_identity(manifest);
+        const char *base_version = mf_manifest_get_base_version(manifest);
         MfComponentKind base_kind;
 
-        if (!mfd_manager_resolve_dependency(manager, bundle, base_identity, iplan, &base_kind)) {
-            if (ret_detail != NULL) {
-                mfd_error_detail_clear(ret_detail);
-                ret_detail->component_id = g_strdup(component_id);
-                ret_detail->base_id = g_strdup(base_id);
-                ret_detail->base_version = g_strdup(mf_manifest_get_base_version(manifest));
-                ret_detail->identity = g_strdup(base_identity);
+        /* a platform and an SDK need the exact version they were built against,
+         * everything else builds on whatever provides the identity of its base */
+        if (sdk || kind == MF_COMPONENT_KIND_PLATFORM) {
+            if (!mfd_manager_resolve_exact_base(manager, bundle, manifest, iplan, &base_kind)) {
+                g_autofree char *base_version_name = mf_build_full_version(
+                    base_version,
+                    mf_manifest_get_base_revision(manifest));
+
+                mfd_set_missing_base_error(error, ret_detail, manifest, base_version_name);
+                return FALSE;
             }
-            g_set_error(error,
-                        MF_ERROR,
-                        MF_ERROR_MISSING_BASE,
-                        "%s needs base %s %s (identity %s), which is not installed",
-                        component_id,
-                        base_id,
-                        mf_manifest_get_base_version(manifest),
-                        base_identity);
+        } else if (!mfd_manager_resolve_dependency(manager,
+                                                   bundle,
+                                                   mf_manifest_get_base_identity(manifest),
+                                                   iplan,
+                                                   &base_kind)) {
+            mfd_set_missing_base_error(error, ret_detail, manifest, base_version);
             return FALSE;
         }
 
@@ -543,18 +650,6 @@ mfd_manager_plan_image_install(MfdManager *manager,
                         mf_component_kind_to_string(base_kind));
             return FALSE;
         }
-    }
-
-    /* the layer directly below is what provides the base identity, see
-     * mfd_manager_resolve_dependency(). A platform and an SDK need the exact
-     * version they were built against */
-    if (base_id != NULL && (sdk || kind == MF_COMPONENT_KIND_PLATFORM)) {
-        g_autofree char *version_name = mf_build_full_version(mf_manifest_get_base_version(manifest),
-                                                              mf_manifest_get_base_revision(manifest));
-        MfBaseLink *pinned = mf_base_link_new(iplan->base->subdir, base_id, version_name);
-
-        mf_base_link_free(iplan->base);
-        iplan->base = pinned;
     }
 
     return TRUE;
