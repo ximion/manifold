@@ -199,7 +199,8 @@ mft_manifest_json(const MftManifest *m)
 /**
  * mft_write_version:
  * @root: the store, e.g. %MF_STORAGE_DIR
- * @subdir: where in the store the component goes, %MF_STORE_APPS_SUBDIR or %MF_STORE_RUNTIMES_SUBDIR
+ * @subdir: where in the store the component goes, %MF_STORE_APPS_SUBDIR, %MF_STORE_PLUGINS_SUBDIR
+ *   or %MF_STORE_RUNTIMES_SUBDIR
  * @manifest: the manifest of the component
  * @base_version_dir: the version directory of the base the base link names, %NULL for "current"
  * @mode: the install mode to record, or %NULL for none
@@ -222,10 +223,7 @@ mft_write_version(const char *root,
                                                     manifest->version,
                                                     manifest->revision != 0 ? manifest->revision : 1);
     g_autofree char *version_dir = g_build_filename(component_dir, version_name, NULL);
-    g_autofree char *image_link = g_build_filename(version_dir,
-                                                   g_str_equal(subdir, MF_STORE_APPS_SUBDIR) ? "app.raw"
-                                                                                             : "runtime.raw",
-                                                   NULL);
+    g_autofree char *image_link = g_build_filename(version_dir, mf_store_image_link_for_subdir(subdir), NULL);
     g_autofree char *image_target = g_strdup_printf("../../../" MF_STORE_IMAGES_SUBDIR "/%s.raw", hash);
     g_autofree char *image_name = g_strdup_printf("%s.raw", hash);
     g_autofree char *images_dir = g_build_filename(root, MF_STORE_IMAGES_SUBDIR, NULL);
