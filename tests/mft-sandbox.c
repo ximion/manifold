@@ -46,15 +46,15 @@ mft_skip(const char *what, int err)
 /**
  * mft_fail_unless_denied:
  *
- * A failure of something the host may not allow is a reason to skip, any
- * other failure is a bug.
+ * Skip the test if it failed at something the host does not allow, or limits
+ * to none (ENOSPC). Any other failure is a bug.
  */
 static void
 mft_fail_unless_denied(const char *what)
 {
     int err = errno;
 
-    if (err == EPERM || err == EACCES || err == ENOSYS || err == EINVAL)
+    if (err == EPERM || err == EACCES || err == ENOSYS || err == ENOSPC)
         mft_skip(what, err);
     g_error("Unable to %s: %s", what, g_strerror(err));
 }
@@ -81,8 +81,12 @@ mft_enter_user_namespace(void)
     g_autofree char *uid_map = g_strdup_printf("0 %u 1", (unsigned int) getuid());
     g_autofree char *gid_map = g_strdup_printf("0 %u 1", (unsigned int) getgid());
 
-    if (unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0)
+    if (unshare(CLONE_NEWUSER | CLONE_NEWNS) != 0) {
+        /* a kernel without user namespaces does not know the flag */
+        if (errno == EINVAL)
+            mft_skip("create a user namespace", errno);
         mft_fail_unless_denied("create a user namespace");
+    }
     mft_write_proc_file("setgroups", "deny");
     mft_write_proc_file("uid_map", uid_map);
     mft_write_proc_file("gid_map", gid_map);
