@@ -132,7 +132,8 @@ static SD_VARLINK_DEFINE_METHOD_FULL(
     SD_VARLINK_SUPPORTS_MORE,
     SD_VARLINK_FIELD_COMMENT("Identifier of the component to remove."),
     SD_VARLINK_DEFINE_INPUT(componentId, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("Version to remove. All versions are removed if this is not given."),
+    SD_VARLINK_FIELD_COMMENT("Version to remove, with all of its revisions, or '<version>-<rev>' to specify a revision explicitly. "
+                             "All versions are removed if this is not set."),
     SD_VARLINK_DEFINE_INPUT(version, SD_VARLINK_STRING, SD_VARLINK_NULLABLE),
     MF_TRANSACTION_FLAGS_INPUT,
     MF_OPERATION_OUTPUT);
@@ -147,7 +148,8 @@ static SD_VARLINK_DEFINE_METHOD(
     MarkComponent,
     SD_VARLINK_FIELD_COMMENT("Identifier of the component to mark."),
     SD_VARLINK_DEFINE_INPUT(componentId, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("Version to mark, with all of its revisions. The current version is marked if this is not given."),
+    SD_VARLINK_FIELD_COMMENT("Version to mark, with all of its revisions, or '<version>-<rev>' to specify a revision too. "
+                             "The current version is marked if this is not set."),
     SD_VARLINK_DEFINE_INPUT(version, SD_VARLINK_STRING, SD_VARLINK_NULLABLE),
     SD_VARLINK_FIELD_COMMENT("The install mode to record."),
     SD_VARLINK_DEFINE_INPUT_BY_TYPE(mode, InstallMode, 0),

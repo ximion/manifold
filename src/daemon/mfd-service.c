@@ -426,7 +426,8 @@ mfd_varlink_method_install_file(sd_varlink *link,
 /**
  * mfd_service_remove:
  * @component_id: (nullable): the component to remove, or %NULL to clean up
- * @version: (nullable): the version to remove, or %NULL for all versions
+ * @version: (nullable): the version to remove, with all of its revisions, or
+ *   `<version>-<rev>` to specify the revision too, or %NULL for all versions
  *
  * Remove a component (and/or any remaining cruft) and reply to the call.
  */

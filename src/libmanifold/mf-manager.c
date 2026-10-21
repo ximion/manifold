@@ -832,7 +832,8 @@ mf_manager_install_file(MfManager *manager,
  * mf_manager_remove_component_async:
  * @manager: an #MfManager
  * @component_id: identifier of the component to remove
- * @version: (nullable): the version to remove, or %NULL for all versions
+ * @version: (nullable): the version to remove, with all of its revisions, `<version>-<rev>`
+ *     to specify the revision too, or %NULL for all versions
  * @progress_func: (nullable) (scope notified): called whenever the service reports progress
  * @progress_data: passed to @progress_func
  * @cancellable: (nullable): a #GCancellable
@@ -892,7 +893,8 @@ mf_manager_remove_component_finish(MfManager *manager, GAsyncResult *result, GEr
  * mf_manager_remove_component:
  * @manager: an #MfManager
  * @component_id: identifier of the component to remove
- * @version: (nullable): the version to remove, or %NULL for all versions
+ * @version: (nullable): the version to remove, with all of its revisions, `<version>-<rev>`
+ *     to specify the revision too, or %NULL for all versions
  * @progress_func: (nullable) (scope call): called whenever the service reports progress
  * @progress_data: passed to @progress_func
  * @cancellable: (nullable): a #GCancellable
@@ -1011,7 +1013,8 @@ mf_manager_cleanup(MfManager *manager,
  * mf_manager_mark_component_async:
  * @manager: an #MfManager
  * @component_id: identifier of the component to mark
- * @version: (nullable): the version to mark, with all of its revisions, or %NULL for the current one
+ * @version: (nullable): the version to mark, with all of its revisions, `<version>-<rev>`
+ *     to specify the revision too, or %NULL for the current one
  * @mode: %MF_INSTALL_MODE_MANUAL to keep the version until it is removed explicitly,
  *   or %MF_INSTALL_MODE_AUTO to remove it once it is not needed anymore
  * @cancellable: (nullable): a #GCancellable
@@ -1080,7 +1083,8 @@ mf_manager_mark_component_finish(MfManager *manager, GAsyncResult *result, GErro
  * mf_manager_mark_component:
  * @manager: an #MfManager
  * @component_id: identifier of the component to mark
- * @version: (nullable): the version to mark, with all of its revisions, or %NULL for the current one
+ * @version: (nullable): the version to mark, with all of its revisions, `<version>-<rev>`
+ *     to specify the revision too, or %NULL for the current one
  * @mode: the install mode to record
  * @cancellable: (nullable): a #GCancellable
  * @error: a #GError

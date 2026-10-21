@@ -548,6 +548,50 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(self.manifold('list', APP_ID).count(APP_ID), 1)
         self.assertIn((APP_ID, '0.1.0', 'auto'), self.installed())
 
+    def test_version_with_revision_names_one(self):
+        rebuilt = Image(
+            APP_ID,
+            'app',
+            '0.1.0',
+            revision=self.app.revision + 1,
+            base=self.kit,
+            seed='rebuilt app',
+        )
+        old = f'0.1.0-{self.app.revision}'
+        new = f'0.1.0-{rebuilt.revision}'
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+        # kept, so that the rebuild does not supersede it
+        self.manifold('mark', 'manual', APP_ID)
+        self.manifold('install', self.bundle('rebuild', [self.kit, rebuilt]))
+        self.assertEqual(self.version_dirs('apps', APP_ID), [old, new])
+
+        # a version with its revision names that revision, a bare version all of its revisions
+        self.manifold('mark', 'manual', APP_ID, new)
+        self.assertEqual(
+            [i for i in self.installed() if i[0] == APP_ID], [(APP_ID, '0.1.0', 'manual')] * 2
+        )
+        self.manifold('mark', 'auto', APP_ID, '0.1.0')
+        self.assertEqual(
+            [i for i in self.installed() if i[0] == APP_ID], [(APP_ID, '0.1.0', 'auto')] * 2
+        )
+        self.manifold('remove', APP_ID, old)
+        self.assertEqual(self.version_dirs('apps', APP_ID), [new])
+
+    def test_version_that_could_be_either_is_refused(self):
+        # a version that ends like a revision, so that it is the full version of the other app too
+        dashed = Image(
+            APP_ID, 'app', f'0.1.0-{self.app.revision}', base=self.kit, seed='dashed app'
+        )
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.app_bundle)
+        self.manifold('mark', 'manual', APP_ID)
+        self.manifold('install', self.bundle('dashed', [self.kit, dashed]))
+
+        out = self.manifold('remove', APP_ID, f'0.1.0-{self.app.revision}', expect=1)
+        self.assertIn('is ambiguous', out)
+        self.assertEqual(len(self.version_dirs('apps', APP_ID)), 2)
+
     def test_cleanup_keeps_the_newest_app_version(self):
         self.manifold('install', self.core_bundle)
         self.manifold('install', self.app2_bundle)
