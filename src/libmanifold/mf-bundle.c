@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <zip.h>
@@ -656,13 +657,16 @@ mf_bundle_new_from_fd(int fd, GError **error)
     gpointer entry_name;
     gpointer entry_ptr;
     zip_int64_t n_entries;
+    zip_source_t *source;
+    zip_error_t zerr;
+    FILE *file;
     int fd_copy;
-    int zip_errno = 0;
 
     g_return_val_if_fail(fd >= 0, NULL);
 
-    /* libzip takes ownership of the descriptor it opens, and we do not own ours */
-    fd_copy = dup(fd);
+    /* we do not own the descriptor, so the archive gets a copy, which it closes. zip_fdopen()
+     * would make the copy without close-on-exec, and children would inherit it. */
+    fd_copy = fcntl(fd, F_DUPFD_CLOEXEC, 3);
     if (fd_copy < 0) {
         g_set_error(error,
                     MF_ERROR,
@@ -671,21 +675,30 @@ mf_bundle_new_from_fd(int fd, GError **error)
                     g_strerror(errno));
         return NULL;
     }
+    file = fdopen(fd_copy, "rb");
+    if (file == NULL) {
+        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "Unable to read the bundle: %s", g_strerror(errno));
+        close(fd_copy);
+        return NULL;
+    }
 
     bundle = g_object_new(MF_TYPE_BUNDLE, NULL);
     priv = GET_PRIVATE(bundle);
     reader.bundle = bundle;
 
-    priv->zip = zip_fdopen(fd_copy, ZIP_RDONLY, &zip_errno);
+    zip_error_init(&zerr);
+    /* a length of -1 reads to the end */
+    source = zip_source_filep_create(file, 0, -1, &zerr);
+    if (source == NULL)
+        fclose(file);
+    else if ((priv->zip = zip_open_from_source(source, ZIP_RDONLY, &zerr)) == NULL)
+        zip_source_free(source);
     if (priv->zip == NULL) {
-        zip_error_t zerr;
-
-        close(fd_copy);
-        zip_error_init_with_code(&zerr, zip_errno);
         mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, &zerr, "Not a bundle");
         zip_error_fini(&zerr);
         return NULL;
     }
+    zip_error_fini(&zerr);
 
     /* what is in the archive */
     reader.entries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
