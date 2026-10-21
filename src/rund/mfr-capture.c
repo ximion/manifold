@@ -1349,6 +1349,30 @@ mfr_capture_job_install_loader_manifests(MfrCaptureJob *job, GPtrArray *groups, 
 }
 
 /**
+ * mfr_capture_job_link_to_host:
+ * @relative_link: where the link goes, relative to the tree
+ * @host_path: the absolute path on the host it points to
+ *
+ * Link a path of the tree to one of the host.
+ */
+static gboolean
+mfr_capture_job_link_to_host(MfrCaptureJob *job,
+                             const char *relative_link,
+                             const char *host_path,
+                             GError **error)
+{
+    g_autofree char *link = g_build_filename(job->overrides_dir, relative_link, NULL);
+    g_autofree char *target = g_build_filename(MFR_HOST_DIR, host_path, NULL);
+    g_autofree char *parent = g_path_get_dirname(link);
+
+    if (!glnx_shutil_mkdir_p_at(AT_FDCWD, parent, 0755, NULL, error))
+        return FALSE;
+    if (symlink(target, link) != 0)
+        return glnx_throw_errno_prefix(error, "Unable to link %s", link);
+    return TRUE;
+}
+
+/**
  * mfr_capture_job_link_host_path:
  *
  * Link a path of the tree to the host's, if the host has it and it passes @test.
@@ -1357,17 +1381,10 @@ static gboolean
 mfr_capture_job_link_host_path(MfrCaptureJob *job, const char *relative_path, GFileTest test, GError **error)
 {
     g_autofree char *host_path = g_build_filename("/", relative_path, NULL);
-    g_autofree char *link = g_build_filename(job->overrides_dir, relative_path, NULL);
-    g_autofree char *target = g_build_filename(MFR_HOST_DIR, relative_path, NULL);
-    g_autofree char *parent = g_path_get_dirname(link);
 
     if (!g_file_test(host_path, test))
         return TRUE;
-    if (!glnx_shutil_mkdir_p_at(AT_FDCWD, parent, 0755, NULL, error))
-        return FALSE;
-    if (symlink(target, link) != 0)
-        return glnx_throw_errno_prefix(error, "Unable to link %s", link);
-    return TRUE;
+    return mfr_capture_job_link_to_host(job, relative_path, host_path, error);
 }
 
 /**
@@ -1413,29 +1430,49 @@ mfr_capture_job_ask_tool(MfrCaptureJob *job, const char *option, GError **error)
 }
 
 /**
- * mfr_capture_job_resolve_core_ld_so:
+ * mfr_capture_job_resolve_core_path:
+ * @path: an absolute path, as the tree sees it
  *
- * Resolve the dynamic linker path @ld_so within the core. It is usually a
- * symbolic link, and the override has to replace the file it ends at, not a
- * directory on the way.
+ * Resolve @path within the core. An override has to replace what the path
+ * ends at, not a link of the core on the way, which would hide everything
+ * the link leads to.
  *
  * Returns: (transfer full): the path, relative to the core
  */
 static char *
-mfr_capture_job_resolve_core_ld_so(MfrCaptureJob *job, const char *ld_so)
+mfr_capture_job_resolve_core_path(MfrCaptureJob *job, const char *path)
 {
     /* links are followed as if the core was the root, so an absolute one stays within it */
     struct open_how how = {.flags = O_PATH | O_CLOEXEC, .resolve = RESOLVE_IN_ROOT};
     glnx_autofd int core_fd = open(job->core_mount, O_PATH | O_DIRECTORY | O_CLOEXEC);
-    glnx_autofd int fd = core_fd >= 0 ? (int) syscall(SYS_openat2, core_fd, ld_so, &how, sizeof(how)) : -1;
+    glnx_autofd int fd = core_fd >= 0 ? (int) syscall(SYS_openat2, core_fd, path, &how, sizeof(how)) : -1;
     g_autofree char *fd_path = g_strdup_printf("/proc/self/fd/%d", fd);
     g_autofree char *resolved = fd >= 0 ? g_file_read_link(fd_path, NULL) : NULL;
 
     if (resolved != NULL && g_str_has_prefix(resolved, job->core_mount) &&
         resolved[strlen(job->core_mount)] == '/')
         return g_strdup(resolved + strlen(job->core_mount) + 1);
-    /* missing in the core: use the interoperable path as-is */
-    return g_strdup(g_path_skip_root(ld_so));
+    /* missing in the core: use the path as-is */
+    return g_strdup(g_path_skip_root(path));
+}
+
+/**
+ * mfr_capture_job_get_host_libc_dir:
+ *
+ * Returns: (transfer full) (nullable): the canonical directory of the
+ *   libc.so.6 the main run took from the host
+ */
+static char *
+mfr_capture_job_get_host_libc_dir(MfrCaptureJob *job)
+{
+    g_autofree char *link = g_build_filename(job->libdir, "libc.so.6", NULL);
+    g_autofree char *target = g_file_read_link(link, NULL);
+    g_autofree char *dir = NULL;
+
+    if (target == NULL || !g_str_has_prefix(target, MFR_HOST_DIR "/"))
+        return NULL;
+    dir = g_path_get_dirname(target + strlen(MFR_HOST_DIR));
+    return realpath(dir, NULL);
 }
 
 /**
@@ -1452,9 +1489,10 @@ mfr_capture_job_link_host_glibc_runtime(MfrCaptureJob *job, GError **error)
     g_autofree char *resolved = NULL;
     g_autofree char *ld_so_in_core = NULL;
     g_autofree char *link = NULL;
-    g_autofree char *link_dir = NULL;
-    g_autofree char *target = NULL;
+    g_autofree char *libc_dir = NULL;
+    g_autofree char *libc_dir_in_core = NULL;
     g_autofree char *gconv = NULL;
+    g_autofree char *gconv_in_core = NULL;
 
     if (!mfr_capture_job_check_captured(job, "libc.so.6")) {
         g_info("glibc comes from the image, keeping its dynamic linker");
@@ -1470,23 +1508,28 @@ mfr_capture_job_link_host_glibc_runtime(MfrCaptureJob *job, GError **error)
     if (resolved == NULL)
         return FALSE;
 
-    ld_so_in_core = mfr_capture_job_resolve_core_ld_so(job, ld_so);
+    ld_so_in_core = mfr_capture_job_resolve_core_path(job, ld_so);
     link = g_build_filename(job->overrides_dir, ld_so_in_core, NULL);
-    link_dir = g_path_get_dirname(link);
-    target = g_build_filename(MFR_HOST_DIR, resolved, NULL);
-    if (!glnx_shutil_mkdir_p_at(AT_FDCWD, link_dir, 0755, NULL, error))
-        return FALSE;
     /* the main run may have linked it as part of the glibc family */
     (void) unlink(link);
-    if (symlink(target, link) != 0)
-        return glnx_throw_errno_prefix(error, "Unable to link %s", link);
-    g_info("Dynamic linker comes from the host: %s replaces %s", target, ld_so_in_core);
+    if (!mfr_capture_job_link_to_host(job, ld_so_in_core, resolved, error))
+        return FALSE;
+    g_info("Dynamic linker comes from the host: %s replaces %s", resolved, ld_so_in_core);
+
+    /* glibc looks for its conversion modules next to itself, in whatever the host calls its libdir */
+    libc_dir = mfr_capture_job_get_host_libc_dir(job);
+    if (libc_dir == NULL)
+        return glnx_throw(error, "Unable to find the directory of the host's libc.so.6");
+    gconv = g_build_filename(libc_dir, "gconv", NULL);
+    libc_dir_in_core = mfr_capture_job_resolve_core_path(job, libc_dir);
+    gconv_in_core = g_build_filename(libc_dir_in_core, "gconv", NULL);
 
     /* a link to a directory of the host replaces the image's directory in the overlay */
-    gconv = g_build_filename("usr/lib", job->tuple, "gconv", NULL);
     if (!mfr_capture_job_link_host_dir(job, "usr/lib/locale", error) ||
-        !mfr_capture_job_link_host_dir(job, "usr/share/i18n", error) ||
-        !mfr_capture_job_link_host_dir(job, gconv, error))
+        !mfr_capture_job_link_host_dir(job, "usr/share/i18n", error))
+        return FALSE;
+    if (g_file_test(gconv, G_FILE_TEST_IS_DIR) &&
+        !mfr_capture_job_link_to_host(job, gconv_in_core, gconv, error))
         return FALSE;
     for (size_t i = 0; i < G_N_ELEMENTS(GLIBC_EXECUTABLES); i++) {
         if (!mfr_capture_job_link_host_executable(job, GLIBC_EXECUTABLES[i], error))
