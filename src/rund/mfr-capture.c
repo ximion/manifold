@@ -971,6 +971,12 @@ mfr_capture_job_resolve_library_path(MfrCaptureJob *job,
     if (!plan->kind->is_json)
         /* shared between architectures: resolved through ld.so.cache */
         return g_strdup(library_path);
+    /* The main run captured every library a manifest names by SONAME, but only
+     * if the host has it for this architecture. Without a link to it in the
+     * libdir, the manifest is for another architecture, e.g. a 32-bit driver,
+     * and is left out. */
+    if (!mfr_capture_job_check_captured(job, library_path))
+        return NULL;
     return g_build_filename(job->tree_libdir, library_path, NULL);
 }
 
