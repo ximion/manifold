@@ -551,6 +551,22 @@ class InstallerTest(unittest.TestCase):
             f'{APP_ID} 9.9.9 is not installed', self.manifold('remove', APP_ID, '9.9.9', expect=1)
         )
 
+    def test_cruft_that_builds_on_it_goes_first(self):
+        self.manifold('install', self.core_bundle)
+        # nothing builds on the SDK, so once it is marked auto, it is cruft that builds on the core
+        self.manifold('mark', 'auto', CORE_ID + '.sdk')
+        replies = self.daemon.call(
+            'org.freedesktop.manifold.RemoveComponent', {'componentId': CORE_ID}, more=True
+        )
+        items = [
+            (r['progress']['item']['action'], r['progress']['item']['subject'])
+            for r in replies[:-1]
+        ]
+        self.assertEqual(
+            list(dict.fromkeys(items)), [('cleanup', CORE_ID + '.sdk'), ('remove', CORE_ID)]
+        )
+        self.assertEqual(self.installed(), [])
+
     def test_several_versions(self):
         # an older version installed after a newer one replaces nothing
         self.manifold('install', self.core_bundle)
