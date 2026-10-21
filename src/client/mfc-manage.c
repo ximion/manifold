@@ -155,7 +155,7 @@ mfc_run_install_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
  * which one to remove.
  *
  * Returns: the exit code. With %MFC_EXIT_SUCCESS, @ret_version holds the
- *   chosen version, or %NULL if all versions were chosen
+ *   chosen version as `<version>-<rev>`, or %NULL if all versions were chosen
  */
 static int
 mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version)
@@ -190,7 +190,7 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
 
         g_print("  [%u] %s%s\n",
                 i + 1,
-                mf_component_get_version(component),
+                mf_component_get_full_version(component),
                 mf_component_is_current(component) ? " (current)" : "");
     }
     g_print("  [%u] all of them\n", versions->len + 1);
@@ -203,7 +203,7 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
     if (choice <= versions->len) {
         MfComponent *component = g_ptr_array_index(versions, choice - 1);
 
-        *ret_version = g_strdup(mf_component_get_version(component));
+        *ret_version = g_strdup(mf_component_get_full_version(component));
     }
 
     return MFC_EXIT_SUCCESS;
