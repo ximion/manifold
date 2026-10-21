@@ -1102,6 +1102,7 @@ mf_manager_mark_component(MfManager *manager,
 
     g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
     g_return_val_if_fail(component_id != NULL, NULL);
+    g_return_val_if_fail(mode == MF_INSTALL_MODE_MANUAL || mode == MF_INSTALL_MODE_AUTO, NULL);
 
     mf_sync_call_begin(&sync);
     mf_manager_mark_component_async(manager,
