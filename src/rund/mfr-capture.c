@@ -434,6 +434,51 @@ mfr_capture_class_init(MfrCaptureClass *klass)
 }
 
 /**
+ * MfrDriverList:
+ *
+ * The drivers of one kind found on the host. A driver found in a directory
+ * searched later does not replace one of the same name found before.
+ */
+typedef struct {
+    GPtrArray *paths;  /* host paths, in the order found */
+    GHashTable *names; /* their base names, as a set */
+} MfrDriverList;
+
+/**
+ * mfr_driver_list_init:
+ */
+static void
+mfr_driver_list_init(MfrDriverList *list)
+{
+    list->paths = g_ptr_array_new_with_free_func(g_free);
+    list->names = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+}
+
+/**
+ * mfr_driver_list_clear:
+ */
+static void
+mfr_driver_list_clear(MfrDriverList *list)
+{
+    g_clear_pointer(&list->paths, g_ptr_array_unref);
+    g_clear_pointer(&list->names, g_hash_table_unref);
+}
+
+/**
+ * mfr_driver_list_add:
+ *
+ * Add the driver @name in the host directory @dir, unless one of that name
+ * was found already.
+ */
+static void
+mfr_driver_list_add(MfrDriverList *list, const char *dir, const char *name)
+{
+    if (!g_hash_table_add(list->names, g_strdup(name)))
+        return;
+    g_ptr_array_add(list->paths, g_build_filename(dir, name, NULL));
+}
+
+/**
  * MfrCaptureJob:
  *
  * What we need to know and keep track of while we make a capture.
@@ -447,8 +492,8 @@ typedef struct {
     char *tree_libdir;  /* /usr/lib/<tuple> */
     GHashTable *env;    /* variable -> GPtrArray of values */
     GHashTable *placed; /* host path of a driver -> path in the tree */
-    /* host paths of the drivers of each kind */
-    GPtrArray *drivers[G_N_ELEMENTS(DRIVER_SUBDIRS)];
+    /* the drivers of each kind */
+    MfrDriverList drivers[G_N_ELEMENTS(DRIVER_SUBDIRS)];
     /* the host directories the drivers are looked for in */
     GPtrArray *host_dirs;
 } MfrCaptureJob;
@@ -595,13 +640,11 @@ mfr_read_nvidia_version(void)
 
 /**
  * mfr_capture_job_add_drivers_in:
- * @seen: the names of the drivers of this kind found so far
  *
- * Add the drivers of one kind in a host directory to the job, unless one
- * of the same name was found in a directory searched before.
+ * Add the drivers of one kind in a host directory to the job.
  */
 static void
-mfr_capture_job_add_drivers_in(MfrCaptureJob *job, size_t subdir_index, const char *dir, GHashTable *seen)
+mfr_capture_job_add_drivers_in(MfrCaptureJob *job, size_t subdir_index, const char *dir)
 {
     g_autoptr(GDir) entries = g_dir_open(dir, 0, NULL);
     g_autoptr(GPtrArray) names = g_ptr_array_new();
@@ -618,15 +661,13 @@ mfr_capture_job_add_drivers_in(MfrCaptureJob *job, size_t subdir_index, const ch
         for (size_t i = 0; DRIVER_SUBDIRS[subdir_index].suffixes[i] != NULL; i++)
             wanted |= g_str_has_suffix(name, DRIVER_SUBDIRS[subdir_index].suffixes[i]);
         /* nvidia-vaapi-driver depends on GStreamer, which is more than a capture can carry */
-        if (wanted && !g_str_equal(name, "nvidia_drv_video.so") && !g_hash_table_contains(seen, name))
+        if (wanted && !g_str_equal(name, "nvidia_drv_video.so"))
             g_ptr_array_add(names, (char *) name);
     }
     g_ptr_array_sort_values(names, (GCompareFunc) g_strcmp0);
 
-    for (guint i = 0; i < names->len; i++) {
-        g_hash_table_add(seen, g_strdup(g_ptr_array_index(names, i)));
-        g_ptr_array_add(job->drivers[subdir_index], g_build_filename(dir, g_ptr_array_index(names, i), NULL));
-    }
+    for (guint i = 0; i < names->len; i++)
+        mfr_driver_list_add(&job->drivers[subdir_index], dir, g_ptr_array_index(names, i));
 }
 
 /**
@@ -660,8 +701,6 @@ mfr_capture_job_find_drivers(MfrCaptureJob *job, GError **error)
         return FALSE;
 
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
-        g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-
         for (size_t j = 0; DRIVER_SUBDIRS[i].loaders[j] != NULL; j++) {
             g_autofree char *link = g_build_filename(links_dir.path, DRIVER_SUBDIRS[i].loaders[j], NULL);
             g_autofree char *loader = g_file_read_link(link, NULL);
@@ -679,7 +718,7 @@ mfr_capture_job_find_drivers(MfrCaptureJob *job, GError **error)
             for (size_t k = 0; DRIVER_SUBDIRS[i].lookups[k] != NULL; k++) {
                 g_autofree char *dir = g_build_filename(libdir, DRIVER_SUBDIRS[i].lookups[k], NULL);
 
-                mfr_capture_job_add_drivers_in(job, i, dir, seen);
+                mfr_capture_job_add_drivers_in(job, i, dir);
             }
         }
     }
@@ -724,10 +763,10 @@ mfr_capture_job_register_patterns(MfrCaptureJob *job, GPtrArray *argv)
 
     /* the dependencies of the vendor drivers; the drivers come separately */
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
-        for (guint j = 0; j < job->drivers[i]->len; j++)
+        for (guint j = 0; j < job->drivers[i].paths->len; j++)
             g_ptr_array_add(argv,
                             g_strdup_printf("only-dependencies:if-exists:if-same-abi:path:%s",
-                                            (char *) g_ptr_array_index(job->drivers[i], j)));
+                                            (char *) g_ptr_array_index(job->drivers[i].paths, j)));
     }
 }
 
@@ -748,7 +787,7 @@ static gboolean
 mfr_capture_job_capture_drivers(MfrCaptureJob *job, GError **error)
 {
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++) {
-        GPtrArray *drivers = job->drivers[i];
+        GPtrArray *drivers = job->drivers[i].paths;
         g_autofree char *dest = g_build_filename(job->libdir, DRIVER_SUBDIRS[i].subdir, NULL);
         g_autoptr(GPtrArray) argv = NULL;
 
@@ -1481,13 +1520,35 @@ mfr_stamp_add_dir(sd_json_variant **dirs, const char *path)
 }
 
 /**
+ * MfrStampTargets:
+ *
+ * The host files the links of a capture point at, each recorded once.
+ */
+typedef struct {
+    sd_json_variant *entries; /* path, size and modification time of each */
+    GHashTable *paths;        /* their paths, as a set */
+} MfrStampTargets;
+
+/**
+ * mfr_stamp_targets_clear:
+ */
+static void
+mfr_stamp_targets_clear(MfrStampTargets *targets)
+{
+    g_clear_pointer(&targets->entries, sd_json_variant_unref);
+    g_clear_pointer(&targets->paths, g_hash_table_unref);
+}
+
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfrStampTargets, mfr_stamp_targets_clear)
+
+/**
  * mfr_stamp_add_link_targets:
  *
- * Add every host file a link below @dir points at to the stamp entries
- * @targets, with its size and modification time. @seen skips duplicates.
+ * Add every host file a link below @dir points at to @targets, with its
+ * size and modification time.
  */
 static gboolean
-mfr_stamp_add_link_targets(const char *dir, GHashTable *seen, sd_json_variant **targets, GError **error)
+mfr_stamp_add_link_targets(const char *dir, MfrStampTargets *targets, GError **error)
 {
     g_auto(GLnxDirFdIterator) iter = {0};
     struct dirent *entry;
@@ -1504,7 +1565,7 @@ mfr_stamp_add_link_targets(const char *dir, GHashTable *seen, sd_json_variant **
 
         path = g_build_filename(dir, entry->d_name, NULL);
         if (entry->d_type == DT_DIR) {
-            if (!mfr_stamp_add_link_targets(path, seen, targets, error))
+            if (!mfr_stamp_add_link_targets(path, targets, error))
                 return FALSE;
         } else if (entry->d_type == DT_LNK) {
             g_autofree char *target = g_file_read_link(path, NULL);
@@ -1515,11 +1576,11 @@ mfr_stamp_add_link_targets(const char *dir, GHashTable *seen, sd_json_variant **
             if (target == NULL || !g_str_has_prefix(target, MFR_HOST_DIR))
                 continue;
             host_path = target + strlen(MFR_HOST_DIR);
-            if (!g_hash_table_add(seen, g_strdup(host_path)))
+            if (!g_hash_table_add(targets->paths, g_strdup(host_path)))
                 continue;
             if (stat(host_path, &st) != 0)
                 return glnx_throw_errno_prefix(error, "Captured %s is missing on the host", host_path);
-            r = sd_json_variant_append_arraybo(targets,
+            r = sd_json_variant_append_arraybo(&targets->entries,
                                                SD_JSON_BUILD_PAIR_STRING("path", host_path),
                                                SD_JSON_BUILD_PAIR_UNSIGNED("size", (guint64) st.st_size),
                                                SD_JSON_BUILD_PAIR_UNSIGNED("mtime", mfr_stat_mtime_ns(&st)));
@@ -1541,8 +1602,9 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
 {
     g_autoptr(sd_json_variant) stamp = NULL;
     g_autoptr(sd_json_variant) dirs = NULL;
-    g_autoptr(sd_json_variant) targets = NULL;
-    g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_auto(MfrStampTargets) targets = {
+        .paths = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL),
+    };
     g_autofree char *host_libdir = g_build_filename("/usr/lib", job->tuple, NULL);
     g_autofree char *id = g_uuid_string_random();
     g_autofree char *path = g_build_filename(dir, STAMP_NAME, NULL);
@@ -1556,10 +1618,10 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
         if (!g_str_equal(host_dir, host_libdir) && mfr_stamp_add_dir(&dirs, host_dir) < 0)
             return glnx_throw(error, "Unable to record directories");
     }
-    if (!mfr_stamp_add_link_targets(job->overrides_dir, seen, &targets, error))
+    if (!mfr_stamp_add_link_targets(job->overrides_dir, &targets, error))
         return FALSE;
-    if (targets == NULL)
-        r = sd_json_variant_new_array(&targets, NULL, 0);
+    if (targets.entries == NULL)
+        r = sd_json_variant_new_array(&targets.entries, NULL, 0);
     else
         r = 0;
     if (r >= 0)
@@ -1567,7 +1629,7 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
                            SD_JSON_BUILD_PAIR_STRING("id", id),
                            SD_JSON_BUILD_PAIR_STRING("tuple", job->tuple),
                            SD_JSON_BUILD_PAIR_VARIANT("dirs", dirs),
-                           SD_JSON_BUILD_PAIR_VARIANT("targets", targets));
+                           SD_JSON_BUILD_PAIR_VARIANT("targets", targets.entries));
     if (r < 0)
         return glnx_throw(error, "Unable to build stamp: %s", g_strerror(-r));
 
@@ -1629,7 +1691,7 @@ mfr_capture_build(const char *dir, const char *core_mount, const char *tuple, GE
     job.placed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     job.host_dirs = g_ptr_array_new_with_free_func(g_free);
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++)
-        job.drivers[i] = g_ptr_array_new_with_free_func(g_free);
+        mfr_driver_list_init(&job.drivers[i]);
 
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, job.libdir, 0755, NULL, error))
         goto out;
@@ -1669,7 +1731,7 @@ out:
     g_hash_table_unref(job.placed);
     g_ptr_array_unref(job.host_dirs);
     for (size_t i = 0; i < G_N_ELEMENTS(DRIVER_SUBDIRS); i++)
-        g_ptr_array_unref(job.drivers[i]);
+        mfr_driver_list_clear(&job.drivers[i]);
     return ret;
 }
 
