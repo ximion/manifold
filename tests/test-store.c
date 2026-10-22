@@ -33,35 +33,6 @@ mft_add_image(const char *hash, gsize size)
     g_assert_true(g_file_set_contents(path, data, (gssize) size, NULL));
 }
 
-/**
- * mft_manifest_of:
- *
- * Make a manifest that passes the checks of the install daemon, of an image
- * with the root hash @hash. The other values of the image section are fake.
- */
-static MfManifest *
-mft_manifest_of(const char *component_id,
-                const char *kind,
-                const char *version,
-                guint64 revision,
-                const char *hash,
-                const char *base_id)
-{
-    char *json = mft_manifest_json(&(MftManifest){.component_id = component_id,
-                                                  .kind = kind,
-                                                  .version = version,
-                                                  .revision = revision,
-                                                  .sdk = g_str_has_suffix(component_id, ".sdk"),
-                                                  .verity_root_hash = hash,
-                                                  .base_id = base_id});
-    g_autoptr(GBytes) bytes = g_bytes_new_take(json, strlen(json));
-    g_autoptr(GError) error = NULL;
-    MfManifest *manifest = mf_manifest_new_from_bytes(bytes, &error);
-
-    g_assert_no_error(error);
-    return manifest;
-}
-
 static GBytes *
 mft_metainfo_of(const char *component_id)
 {
@@ -71,53 +42,29 @@ mft_metainfo_of(const char *component_id)
 }
 
 /**
- * mft_install_runtime:
+ * mft_install:
+ * @manifest: the manifest of the component, whose image is the one with its verity_root_hash
+ * @base_version_dir: the version directory of the base the base link names, %NULL for "current"
+ * @mode: the install mode to record
  *
- * Install a runtime. With a @base_version, it is pinned to that exact
- * version of its base, otherwise it follows the current version of the base.
+ * Install a component with the store writer, as the install daemon does. The
+ * base of the component is a runtime.
  */
 static void
-mft_install_runtime(const char *component_id,
-                    const char *kind,
-                    const char *version,
-                    const char *hash,
-                    const char *base_id,
-                    const char *base_version,
-                    MfInstallMode mode)
+mft_install(const MftTestManifest *manifest, const char *base_version_dir, MfInstallMode mode)
 {
-    g_autoptr(MfManifest) manifest = mft_manifest_of(component_id, kind, version, 1, hash, base_id);
-    g_autoptr(GBytes) metainfo = mft_metainfo_of(component_id);
-    g_autofree char *base_version_name = base_version != NULL ? g_strconcat(base_version, "-1", NULL) : NULL;
+    char *json = mft_manifest_json(manifest);
+    g_autoptr(GBytes) bytes = g_bytes_new_take(json, strlen(json));
+    g_autoptr(GBytes) metainfo = mft_metainfo_of(manifest->component_id);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfManifest) parsed = mf_manifest_new_from_bytes(bytes, &error);
     g_autoptr(MfBaseLink) base = NULL;
-    g_autoptr(GError) error = NULL;
 
-    if (base_id != NULL)
-        base = mf_base_link_new(MF_STORE_RUNTIMES_SUBDIR, base_id, base_version_name);
-    g_assert_true(mfd_store_writer_install_component(writer, manifest, base, metainfo, mode, &error));
     g_assert_no_error(error);
-}
-
-static void
-mft_install_app_revision(const char *component_id,
-                         const char *version,
-                         guint64 revision,
-                         const char *hash,
-                         const char *kit_id)
-{
-    g_autoptr(MfManifest) manifest = mft_manifest_of(component_id, "app", version, revision, hash, kit_id);
-    g_autoptr(GBytes) metainfo = mft_metainfo_of(component_id);
-    g_autoptr(MfBaseLink) base = mf_base_link_new(MF_STORE_RUNTIMES_SUBDIR, kit_id, NULL);
-    g_autoptr(GError) error = NULL;
-
-    g_assert_true(
-        mfd_store_writer_install_component(writer, manifest, base, metainfo, MF_INSTALL_MODE_AUTO, &error));
+    if (manifest->base_id != NULL)
+        base = mf_base_link_new(MF_STORE_RUNTIMES_SUBDIR, manifest->base_id, base_version_dir);
+    g_assert_true(mfd_store_writer_install_component(writer, parsed, base, metainfo, mode, &error));
     g_assert_no_error(error);
-}
-
-static void
-mft_install_app(const char *component_id, const char *version, const char *hash, const char *kit_id)
-{
-    mft_install_app_revision(component_id, version, 1, hash, kit_id);
 }
 
 /* every test starts with an empty store; these are the root hashes of the images of the
@@ -140,15 +87,26 @@ mft_install_usual(Fixture *f)
     mft_add_image(f->core_hash, 4096);
     mft_add_image(f->kit_hash, 2048);
     mft_add_image(f->app_hash, 1024);
-    mft_install_runtime(TEST_CORE_ID, "core", "13.4", f->core_hash, NULL, NULL, MF_INSTALL_MODE_MANUAL);
-    mft_install_runtime(TEST_KIT_ID,
-                        "kit",
-                        "20260112T0238",
-                        f->kit_hash,
-                        TEST_CORE_ID,
-                        NULL,
-                        MF_INSTALL_MODE_AUTO);
-    mft_install_app(TEST_APP_ID, "0.1.0", f->app_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_CORE_ID,
+                                   .kind = "core",
+                                   .version = "13.4",
+                                   .verity_root_hash = f->core_hash},
+                NULL,
+                MF_INSTALL_MODE_MANUAL);
+    mft_install(&(MftTestManifest){.component_id = TEST_KIT_ID,
+                                   .kind = "kit",
+                                   .version = "20260112T0238",
+                                   .verity_root_hash = f->kit_hash,
+                                   .base_id = TEST_CORE_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.1.0",
+                                   .verity_root_hash = f->app_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
 }
 
 static void
@@ -243,12 +201,16 @@ test_install_runtime(Fixture *f, gconstpointer user_data)
     g_autofree char *origin = NULL;
     g_autofree char *mode = NULL;
     g_autofree char *manifest = NULL;
-    g_autoptr(MfManifest) expected_manifest = mft_manifest_of(TEST_CORE_ID, "core", "13.4", 1, hash, NULL);
+    MftTestManifest core_manifest = {.component_id = TEST_CORE_ID,
+                                     .kind = "core",
+                                     .version = "13.4",
+                                     .verity_root_hash = hash};
+    g_autofree char *expected_manifest = mft_manifest_json(&core_manifest);
     g_autoptr(GPtrArray) components = NULL;
     MfComponent *core;
 
     mft_add_image(hash, 4096);
-    mft_install_runtime(TEST_CORE_ID, "core", "13.4", hash, NULL, NULL, MF_INSTALL_MODE_MANUAL);
+    mft_install(&core_manifest, NULL, MF_INSTALL_MODE_MANUAL);
 
     /* check the version directory and its contents */
     mft_assert_link(RUNTIMES "/" TEST_CORE_ID "/13.4-1/runtime.raw", expected_link);
@@ -258,7 +220,7 @@ test_install_runtime(Fixture *f, gconstpointer user_data)
     mode = mft_read_file(RUNTIMES "/" TEST_CORE_ID "/13.4-1/mode");
     g_assert_cmpstr(mode, ==, "manual\n");
     manifest = mft_read_file(RUNTIMES "/" TEST_CORE_ID "/13.4-1/manifest.json");
-    g_assert_cmpstr(manifest, ==, g_bytes_get_data(mf_manifest_get_data(expected_manifest), NULL));
+    g_assert_cmpstr(manifest, ==, expected_manifest);
     mft_assert_link(RUNTIMES "/" TEST_CORE_ID "/current", "13.4-1");
 
     /* check how the store lists it */
@@ -293,7 +255,14 @@ test_install_app_with_dependency(Fixture *f, gconstpointer user_data)
     mft_install_usual(f);
     /* install an SDK that is pinned to one exact version of the core */
     mft_add_image(sdk_hash, 512);
-    mft_install_runtime(TEST_SDK_ID, "core", "13.4", sdk_hash, TEST_CORE_ID, "13.4", MF_INSTALL_MODE_MANUAL);
+    mft_install(&(MftTestManifest){.component_id = TEST_SDK_ID,
+                                   .kind = "core",
+                                   .version = "13.4",
+                                   .sdk = TRUE,
+                                   .verity_root_hash = sdk_hash,
+                                   .base_id = TEST_CORE_ID},
+                "13.4-1",
+                MF_INSTALL_MODE_MANUAL);
 
     /* a base link points to the current version of the base, or to an exact version if pinned */
     mft_assert_link(APPS "/" TEST_APP_ID "/0.1.0-1/base", "../../../runtimes/" TEST_KIT_ID "/current");
@@ -332,22 +301,22 @@ test_install_again(Fixture *f, gconstpointer user_data)
 
     /* installing an automatically installed dependency manually switches it to manual mode;
      * installing it automatically again does not switch it back */
-    mft_install_runtime(TEST_KIT_ID,
-                        "kit",
-                        "20260112T0238",
-                        f->kit_hash,
-                        TEST_CORE_ID,
-                        NULL,
-                        MF_INSTALL_MODE_MANUAL);
+    mft_install(&(MftTestManifest){.component_id = TEST_KIT_ID,
+                                   .kind = "kit",
+                                   .version = "20260112T0238",
+                                   .verity_root_hash = f->kit_hash,
+                                   .base_id = TEST_CORE_ID},
+                NULL,
+                MF_INSTALL_MODE_MANUAL);
     mode = mft_read_file(RUNTIMES "/" TEST_KIT_ID "/20260112T0238-1/mode");
     g_assert_cmpstr(mode, ==, "manual\n");
-    mft_install_runtime(TEST_KIT_ID,
-                        "kit",
-                        "20260112T0238",
-                        f->kit_hash,
-                        TEST_CORE_ID,
-                        NULL,
-                        MF_INSTALL_MODE_AUTO);
+    mft_install(&(MftTestManifest){.component_id = TEST_KIT_ID,
+                                   .kind = "kit",
+                                   .version = "20260112T0238",
+                                   .verity_root_hash = f->kit_hash,
+                                   .base_id = TEST_CORE_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     g_clear_pointer(&mode, g_free);
     mode = mft_read_file(RUNTIMES "/" TEST_KIT_ID "/20260112T0238-1/mode");
     g_assert_cmpstr(mode, ==, "manual\n");
@@ -355,7 +324,13 @@ test_install_again(Fixture *f, gconstpointer user_data)
     g_assert_cmpint(mf_component_get_install_mode(kit), ==, MF_INSTALL_MODE_MANUAL);
 
     /* installing an app version that is already installed does not add another version */
-    mft_install_app(TEST_APP_ID, "0.1.0", f->app_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.1.0",
+                                   .verity_root_hash = f->app_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     g_assert_cmpuint(mft_count_versions(TEST_APP_ID), ==, 1);
 }
 
@@ -399,7 +374,12 @@ test_resolve_identity(Fixture *f, gconstpointer user_data)
 
     /* if several versions have the identity, the current version is found */
     mft_add_image(core2_hash, 4096);
-    mft_install_runtime(TEST_CORE_ID, "core", "13.6", core2_hash, NULL, NULL, MF_INSTALL_MODE_MANUAL);
+    mft_install(&(MftTestManifest){.component_id = TEST_CORE_ID,
+                                   .kind = "core",
+                                   .version = "13.6",
+                                   .verity_root_hash = core2_hash},
+                NULL,
+                MF_INSTALL_MODE_MANUAL);
     current = mf_store_find_identity(store, core_identity, &error);
     g_assert_no_error(error);
     g_assert_cmpstr(mf_component_get_version(current), ==, "13.6");
@@ -429,17 +409,49 @@ test_current_is_newest(Fixture *f, gconstpointer user_data)
     mft_add_image(v2_hash, 1024);
     mft_add_image(v10_hash, 1024);
 
-    mft_install_app(TEST_APP_ID, "0.2.0", v2_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.2.0",
+                                   .verity_root_hash = v2_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     mft_assert_link(APPS "/" TEST_APP_ID "/current", "0.2.0-1");
     /* versions are compared by version rules, not as strings: 0.10.0 is newer than 0.2.0,
      * and installing the older 0.3.0 afterwards does not change current */
-    mft_install_app(TEST_APP_ID, "0.10.0", v10_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.10.0",
+                                   .verity_root_hash = v10_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     mft_assert_link(APPS "/" TEST_APP_ID "/current", "0.10.0-1");
-    mft_install_app(TEST_APP_ID, "0.3.0", f->app_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.3.0",
+                                   .verity_root_hash = f->app_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     mft_assert_link(APPS "/" TEST_APP_ID "/current", "0.10.0-1");
     /* a rebuild of the same version has a higher revision, and the highest revision becomes current */
-    mft_install_app_revision(TEST_APP_ID, "0.10.0", 22910000, v10_hash, TEST_KIT_ID);
-    mft_install_app_revision(TEST_APP_ID, "0.10.0", 22910119, v10_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.10.0",
+                                   .revision = 22910000,
+                                   .verity_root_hash = v10_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.10.0",
+                                   .revision = 22910119,
+                                   .verity_root_hash = v10_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     mft_assert_link(APPS "/" TEST_APP_ID "/current", "0.10.0-22910119");
     g_assert_cmpuint(mft_count_versions(TEST_APP_ID), ==, 6);
 
@@ -540,8 +552,20 @@ test_exact_base_stays(Fixture *f, gconstpointer user_data)
     mft_install_usual(f);
     mft_add_image(sdk_hash, 512);
     mft_add_image(core2_hash, 4096);
-    mft_install_runtime(TEST_CORE_ID, "core", "13.6", core2_hash, NULL, NULL, MF_INSTALL_MODE_MANUAL);
-    mft_install_runtime(TEST_SDK_ID, "core", "13.4", sdk_hash, TEST_CORE_ID, "13.4", MF_INSTALL_MODE_MANUAL);
+    mft_install(&(MftTestManifest){.component_id = TEST_CORE_ID,
+                                   .kind = "core",
+                                   .version = "13.6",
+                                   .verity_root_hash = core2_hash},
+                NULL,
+                MF_INSTALL_MODE_MANUAL);
+    mft_install(&(MftTestManifest){.component_id = TEST_SDK_ID,
+                                   .kind = "core",
+                                   .version = "13.4",
+                                   .sdk = TRUE,
+                                   .verity_root_hash = sdk_hash,
+                                   .base_id = TEST_CORE_ID},
+                "13.4-1",
+                MF_INSTALL_MODE_MANUAL);
 
     /* core 13.4 can not be removed, as the SDK is pinned to it, even though 13.6 is installed too */
     g_assert_null(mfd_manager_plan_removal(manager, TEST_CORE_ID, "13.4", &detail, &error));
@@ -568,7 +592,13 @@ test_shared_dependency_stays(Fixture *f, gconstpointer user_data)
 
     mft_install_usual(f);
     mft_add_image(other_hash, 1024);
-    mft_install_app("com.example.other", "1.0", other_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = "com.example.other",
+                                   .kind = "app",
+                                   .version = "1.0",
+                                   .verity_root_hash = other_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
 
     removal = mfd_manager_plan_removal(manager, TEST_APP_ID, NULL, NULL, &error);
     g_assert_no_error(error);
@@ -589,13 +619,13 @@ test_old_dependency_goes(Fixture *f, gconstpointer user_data)
 
     mft_install_usual(f);
     mft_add_image(kit2_hash, 2048);
-    mft_install_runtime(TEST_KIT_ID,
-                        "kit",
-                        "20261101T0000",
-                        kit2_hash,
-                        TEST_CORE_ID,
-                        NULL,
-                        MF_INSTALL_MODE_AUTO);
+    mft_install(&(MftTestManifest){.component_id = TEST_KIT_ID,
+                                   .kind = "kit",
+                                   .version = "20261101T0000",
+                                   .verity_root_hash = kit2_hash,
+                                   .base_id = TEST_CORE_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
 
     /* the app follows the current version of the kit, so the old kit version is no longer
      * needed, and a cleanup removes it */
@@ -627,14 +657,20 @@ test_dependency_chain_removal(Fixture *f, gconstpointer user_data)
     mft_install_usual(f);
     mft_add_image(old_kit_hash, 2048);
     mft_add_image(old_app_hash, 1024);
-    mft_install_runtime(TEST_CORE_ID ".0123456789abcdef",
-                        "kit",
-                        "20251201T0000",
-                        old_kit_hash,
-                        TEST_CORE_ID,
-                        NULL,
-                        MF_INSTALL_MODE_AUTO);
-    mft_install_app(TEST_APP_ID, "0.0.1", old_app_hash, TEST_CORE_ID ".0123456789abcdef");
+    mft_install(&(MftTestManifest){.component_id = TEST_CORE_ID ".0123456789abcdef",
+                                   .kind = "kit",
+                                   .version = "20251201T0000",
+                                   .verity_root_hash = old_kit_hash,
+                                   .base_id = TEST_CORE_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.0.1",
+                                   .verity_root_hash = old_app_hash,
+                                   .base_id = TEST_CORE_ID ".0123456789abcdef"},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
 
     cleanup = mfd_manager_plan_removal(manager, NULL, NULL, NULL, &error);
     g_assert_no_error(error);
@@ -667,8 +703,20 @@ test_newest_app_stays(Fixture *f, gconstpointer user_data)
     mft_install_usual(f);
     mft_add_image(v2_hash, 1024);
     mft_add_image(v3_hash, 1024);
-    mft_install_app(TEST_APP_ID, "0.2.0", v2_hash, TEST_KIT_ID);
-    mft_install_app(TEST_APP_ID, "0.3.0", v3_hash, TEST_KIT_ID);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.2.0",
+                                   .verity_root_hash = v2_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
+    mft_install(&(MftTestManifest){.component_id = TEST_APP_ID,
+                                   .kind = "app",
+                                   .version = "0.3.0",
+                                   .verity_root_hash = v3_hash,
+                                   .base_id = TEST_KIT_ID},
+                NULL,
+                MF_INSTALL_MODE_AUTO);
     mft_write_file(APPS "/" TEST_APP_ID "/0.1.0-1/mode", "manual\n");
     g_assert_true(mf_store_load(store, &error));
     g_assert_no_error(error);

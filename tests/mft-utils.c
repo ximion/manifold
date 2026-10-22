@@ -125,7 +125,7 @@ mft_metainfo_xml(const char *component_id)
  * Write out a manifest as JSON.
  */
 char *
-mft_manifest_json(const MftManifest *m)
+mft_manifest_json(const MftTestManifest *m)
 {
     g_autofree char *identity = mft_fake_hash(m->component_id);
     g_autofree char *base = NULL;
@@ -212,7 +212,7 @@ mft_manifest_json(const MftManifest *m)
 void
 mft_write_version(const char *root,
                   const char *subdir,
-                  const MftManifest *manifest,
+                  const MftTestManifest *manifest,
                   const char *base_version_dir,
                   const char *mode)
 {

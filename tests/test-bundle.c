@@ -96,7 +96,7 @@ mft_image_manifest_json(const TestImage *image, gboolean wrong_blake3)
     g_autofree char *verity_hash = mft_fake_hash(sha256);
     const TestImage *base = image->base;
 
-    return mft_manifest_json(&(MftManifest){
+    return mft_manifest_json(&(MftTestManifest){
         .component_id = image->component_id,
         .kind = image->kind,
         .version = image->version,

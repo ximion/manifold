@@ -67,14 +67,14 @@ typedef struct {
     const char *verity_root_hash; /* default: the identity */
     guint64     data_offset;      /* default: 20480 */
     guint64     hash_offset;      /* default: 22528 */
-} MftManifest;
+} MftTestManifest;
 
-char *mft_manifest_json(const MftManifest *manifest);
+char *mft_manifest_json(const MftTestManifest *manifest);
 
-void  mft_write_version(const char        *root,
-                        const char        *subdir,
-                        const MftManifest *manifest,
-                        const char        *base_version_dir,
-                        const char        *mode);
+void  mft_write_version(const char            *root,
+                        const char            *subdir,
+                        const MftTestManifest *manifest,
+                        const char            *base_version_dir,
+                        const char            *mode);
 
 G_END_DECLS
