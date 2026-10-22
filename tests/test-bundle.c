@@ -262,13 +262,20 @@ mft_teardown(Fixture *f, gconstpointer user_data)
     g_bytes_unref(f->app.data);
 }
 
+/* what a copy reported as its progress */
+typedef struct {
+    guint64 bytes_copied;
+    guint n_reports;
+} CopyProgress;
+
 static void
 mft_count_progress(guint64 bytes_copied, gpointer user_data)
 {
-    guint64 *last = user_data;
+    CopyProgress *progress = user_data;
 
-    g_assert_cmpuint(bytes_copied, >, *last);
-    *last = bytes_copied;
+    g_assert_cmpuint(bytes_copied, >, progress->bytes_copied);
+    progress->bytes_copied = bytes_copied;
+    progress->n_reports++;
 }
 
 /*
@@ -356,33 +363,42 @@ test_core_has_no_base(Fixture *f, gconstpointer user_data)
 static void
 test_copy_image(Fixture *f, gconstpointer user_data)
 {
-    g_autofree char *path = mft_write_bundle(f,
-                                             "app.manifold",
-                                             (const TestImage *[]){&f->kit, &f->app, NULL},
-                                             &(BundleFlaws){});
+    /* mf_bundle_copy_image() copies 1 MiB at a time: this image takes three pieces, the last of which is not full */
+    gsize image_size = 2 * 1024 * 1024 + 12288;
+    g_autofree char *path = NULL;
     g_autofree char *copy_path = g_build_filename(f->dir, "copy.raw", NULL);
     g_autoptr(GError) error = NULL;
-    g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+    g_autoptr(MfBundle) bundle = NULL;
     g_autofree char *copied = NULL;
     gsize copied_size;
-    guint64 last_progress = 0;
+    CopyProgress progress = {};
     int fd;
 
+    g_bytes_unref(f->app.data);
+    f->app.data = mft_fake_image_data("app", image_size);
+    path = mft_write_bundle(f,
+                            "app.manifold",
+                            (const TestImage *[]){&f->kit, &f->app, NULL},
+                            &(BundleFlaws){});
+    bundle = mft_open_bundle(path, &error);
     g_assert_no_error(error);
+
     fd = open(copy_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
     g_assert_cmpint(fd, >=, 0);
     g_assert_true(mf_bundle_copy_image(bundle,
                                        mft_find_image(bundle, TEST_APP_ID),
                                        fd,
                                        mft_count_progress,
-                                       &last_progress,
+                                       &progress,
                                        &error));
     g_assert_no_error(error);
     close(fd);
 
-    g_assert_cmpuint(last_progress, ==, 12288);
+    /* the progress is reported after every piece */
+    g_assert_cmpuint(progress.n_reports, ==, 3);
+    g_assert_cmpuint(progress.bytes_copied, ==, image_size);
     g_assert_true(g_file_get_contents(copy_path, &copied, &copied_size, NULL));
-    g_assert_cmpmem(copied, copied_size, g_bytes_get_data(f->app.data, NULL), 12288);
+    g_assert_cmpmem(copied, copied_size, g_bytes_get_data(f->app.data, NULL), image_size);
 }
 
 /**
