@@ -490,6 +490,12 @@ mfd_varlink_method_remove_component(sd_varlink *link,
     if (r != 0)
         return r;
 
+    /* a malformed call is refused before polkit may ask the user for a password */
+    if (!mf_component_id_is_valid(p.component_id))
+        return sd_varlink_error_invalid_parameter_name(link, "componentId");
+    if (p.version != NULL && !mf_version_is_valid(p.version))
+        return sd_varlink_error_invalid_parameter_name(link, "version");
+
     r = mfd_policy_check_authorized(link,
                                     MF_VARLINK_METHOD_REMOVE_COMPONENT,
                                     MFD_POLKIT_ACTION_REMOVE,
@@ -497,10 +503,6 @@ mfd_varlink_method_remove_component(sd_varlink *link,
                                     &peer_uid);
     if (r != 0)
         return r;
-    if (!mf_component_id_is_valid(p.component_id))
-        return sd_varlink_error_invalid_parameter_name(link, "componentId");
-    if (p.version != NULL && !mf_version_is_valid(p.version))
-        return sd_varlink_error_invalid_parameter_name(link, "version");
 
     g_info("User %u requested to remove %s %s",
            (unsigned int) peer_uid,
@@ -595,13 +597,7 @@ mfd_varlink_method_mark_component(sd_varlink *link,
     if (r != 0)
         return r;
 
-    r = mfd_policy_check_authorized(link,
-                                    MF_VARLINK_METHOD_MARK_COMPONENT,
-                                    MFD_POLKIT_ACTION_MARK,
-                                    p.flags,
-                                    &peer_uid);
-    if (r != 0)
-        return r;
+    /* a malformed call is refused before polkit may ask the user for a password */
     if (!mf_component_id_is_valid(p.component_id))
         return sd_varlink_error_invalid_parameter_name(link, "componentId");
     if (p.version != NULL && !mf_version_is_valid(p.version))
@@ -609,6 +605,14 @@ mfd_varlink_method_mark_component(sd_varlink *link,
     mode = mf_install_mode_from_string(p.mode);
     if (mode == MF_INSTALL_MODE_UNKNOWN)
         return sd_varlink_error_invalid_parameter_name(link, "mode");
+
+    r = mfd_policy_check_authorized(link,
+                                    MF_VARLINK_METHOD_MARK_COMPONENT,
+                                    MFD_POLKIT_ACTION_MARK,
+                                    p.flags,
+                                    &peer_uid);
+    if (r != 0)
+        return r;
 
     g_info("User %u requested to mark %s %s as %s",
            (unsigned int) peer_uid,
