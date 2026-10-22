@@ -11,6 +11,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+constexpr int BAR_LENGTH_MIN = 10;
 constexpr int BAR_LENGTH_MAX = 20;
 constexpr int TERMINAL_WIDTH_DEFAULT = 80;
 
@@ -61,6 +62,27 @@ mfc_terminal_width(void)
 }
 
 /**
+ * mfc_shorten_label:
+ *
+ * Returns: (transfer full): @label, cut to @max_chars characters with an
+ *   ellipsis if it is longer
+ */
+static char *
+mfc_shorten_label(const char *label, int max_chars, gboolean utf8)
+{
+    const char *ellipsis = utf8 ? "…" : "...";
+    int ellipsis_chars = utf8 ? 1 : 3;
+    g_autofree char *start = NULL;
+
+    if (g_utf8_strlen(label, -1) <= max_chars)
+        return g_strdup(label);
+    if (max_chars <= ellipsis_chars)
+        return g_utf8_substring(label, 0, max_chars);
+    start = g_utf8_substring(label, 0, max_chars - ellipsis_chars);
+    return g_strconcat(start, ellipsis, NULL);
+}
+
+/**
  * mfc_progress_bar_get_label:
  *
  * Returns: (nullable): the label of the bar that was begun, or %NULL
@@ -100,9 +122,11 @@ mfc_progress_bar_update(MfcProgressBar *bar, double percent_done, guint64 bytes_
 {
     g_autoptr(GString) line = NULL;
     g_autofree char *speed = NULL;
+    g_autofree char *label = NULL;
     gint64 now = g_get_monotonic_time();
     gint64 elapsed_usec = now - bar->start_time;
     guint percent;
+    int room;
     int bar_length;
     int n_full;
     int partial;
@@ -122,14 +146,17 @@ mfc_progress_bar_update(MfcProgressBar *bar, double percent_done, guint64 bytes_
         speed = g_strdup_printf("%s/s", rate);
     }
 
-    bar_length = MIN(BAR_LENGTH_MAX,
-                     mfc_terminal_width() - ((int) strlen(bar->label) + 8 + (speed ? 14 : 0)));
-    if (bar_length < 1)
-        bar_length = 1;
+    /* the line has to fit the terminal, or every redraw starts a new line. The label and the bar
+     * share the width that is left after the space between them (1), the percentage (5), the
+     * rate (14) and the last column (1). If that is too little, we shorten the bar first, and
+     * then cut the label */
+    room = mfc_terminal_width() - 1 - 5 - (speed != NULL ? 14 : 0) - 1;
+    bar_length = CLAMP(room - (int) g_utf8_strlen(bar->label, -1), BAR_LENGTH_MIN, BAR_LENGTH_MAX);
+    label = mfc_shorten_label(bar->label, MAX(room - bar_length, 1), bar->utf8);
     n_full = (bar_length * (int) percent) / 100;
     partial = (((bar_length * (int) percent) % 100) * (int) G_N_ELEMENTS(PARTIAL_BLOCKS)) / 100;
 
-    line = g_string_new(bar->label);
+    line = g_string_new(label);
     g_string_append(line, " \x1b[2m");
     for (i = 0; i < n_full; i++)
         g_string_append(line, bar->utf8 ? FULL_BLOCK : "#");
