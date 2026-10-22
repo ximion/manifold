@@ -562,6 +562,33 @@ test_kit_without_base(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * test_one_id_two_kinds:
+ *
+ * An ID names one kind of component.
+ */
+static void
+test_one_id_two_kinds(Fixture *f, gconstpointer user_data)
+{
+    TestImage app = f->app;
+    g_autofree char *path = NULL;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = NULL;
+
+    app.component_id = TEST_KIT_ID;
+    path = mft_write_bundle(f,
+                            "two-kinds.manifold",
+                            (const TestImage *[]){&f->kit, &app, NULL},
+                            &(BundleFlaws){});
+    bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message,
+                    ==,
+                    "The bundle contains " TEST_KIT_ID " as two different kinds of component");
+}
+
+/**
  * test_not_a_bundle:
  */
 static void
@@ -659,6 +686,7 @@ main(int argc, char **argv)
     add_test("wrong-blake3", test_wrong_blake3);
     add_test("unlisted-file", test_unlisted_file);
     add_test("kit-without-base", test_kit_without_base);
+    add_test("one-id-two-kinds", test_one_id_two_kinds);
     add_test("not-a-bundle", test_not_a_bundle);
     add_test("no-index", test_no_index);
     add_test("metadata-limit", test_metadata_limit);

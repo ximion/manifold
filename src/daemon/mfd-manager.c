@@ -104,6 +104,8 @@ mfd_error_detail_clear(MfdErrorDetail *detail)
     g_clear_pointer(&detail->identity, g_free);
     g_clear_pointer(&detail->used_by, g_free);
     g_clear_pointer(&detail->architecture, g_free);
+    detail->kind = MF_COMPONENT_KIND_UNKNOWN;
+    detail->sdk = FALSE;
 }
 
 /**
@@ -350,6 +352,32 @@ mfd_set_missing_base_error(GError **error,
 }
 
 /**
+ * mfd_set_id_conflict_error:
+ * @installed: the installed version that has the ID, but is of another kind
+ */
+static void
+mfd_set_id_conflict_error(GError **error, MfdErrorDetail *ret_detail, MfComponent *installed)
+{
+    const char *component_id = mf_component_get_id(installed);
+    MfComponentKind kind = mf_component_get_kind(installed);
+    gboolean sdk = mf_component_is_sdk(installed);
+
+    if (ret_detail != NULL) {
+        mfd_error_detail_clear(ret_detail);
+        ret_detail->component_id = g_strdup(component_id);
+        ret_detail->kind = kind;
+        ret_detail->sdk = sdk;
+    }
+    g_set_error(error,
+                MF_ERROR,
+                MF_ERROR_ID_CONFLICT,
+                "%s is installed already as another kind of component (%s%s)",
+                component_id,
+                mf_component_kind_to_string(kind),
+                sdk ? " SDK" : "");
+}
+
+/**
  * mfd_set_wrong_architecture_error:
  */
 static void
@@ -501,6 +529,34 @@ mfd_manager_get_installed(MfdManager *manager,
 }
 
 /**
+ * mfd_manager_find_other_kind:
+ *
+ * An ID names exactly one kind of component.
+ * This method searches the installed components for ones that
+ * have the same ID as @manifest, but have a different kind.
+ *
+ * Returns: (transfer full) (nullable): an installed version with the same ID as @manifest, but of a different kind
+ */
+static MfComponent *
+mfd_manager_find_other_kind(MfdManager *manager, MfManifest *manifest)
+{
+    g_autoptr(GPtrArray) versions = NULL;
+
+    versions = mf_store_list_components(manager->store,
+                                        mf_manifest_get_component_id(manifest),
+                                        MF_COMPONENT_KIND_UNKNOWN,
+                                        NULL);
+    for (guint i = 0; versions != NULL && i < versions->len; i++) {
+        MfComponent *component = g_ptr_array_index(versions, i);
+
+        if (mf_component_get_kind(component) != mf_manifest_get_kind(manifest) ||
+            mf_component_is_sdk(component) != mf_manifest_is_sdk(manifest))
+            return g_object_ref(component);
+    }
+    return NULL;
+}
+
+/**
  * mfd_bundle_find_exact_base:
  *
  * Returns: (transfer none) (nullable): the manifest of the image in the
@@ -600,6 +656,7 @@ mfd_manager_plan_image_install(MfdManager *manager,
     MfComponentKind kind = mf_manifest_get_kind(manifest);
     gboolean sdk = mf_manifest_is_sdk(manifest);
     gboolean dependency = mfd_bundle_is_dependency_of_app(bundle, manifest);
+    g_autoptr(MfComponent) other_kind = NULL;
     g_autoptr(MfComponent) existing = NULL;
 
     if (!g_str_equal(mf_manifest_get_architecture(manifest), mf_get_host_architecture())) {
@@ -607,6 +664,11 @@ mfd_manager_plan_image_install(MfdManager *manager,
                                          ret_detail,
                                          component_id,
                                          mf_manifest_get_architecture(manifest));
+        return FALSE;
+    }
+    other_kind = mfd_manager_find_other_kind(manager, manifest);
+    if (other_kind != NULL) {
+        mfd_set_id_conflict_error(error, ret_detail, other_kind);
         return FALSE;
     }
 

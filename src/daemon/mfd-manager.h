@@ -21,6 +21,8 @@ G_BEGIN_DECLS
  * @identity: its identity, for %MF_ERROR_MISSING_BASE
  * @used_by: a component that needs @component_id, for %MF_ERROR_COMPONENT_IN_USE
  * @architecture: what @component_id was built for, for %MF_ERROR_WRONG_ARCHITECTURE
+ * @kind: the kind of what is installed with @component_id, for %MF_ERROR_ID_CONFLICT
+ * @sdk: whether that is an SDK, for %MF_ERROR_ID_CONFLICT
  *
  * Details about the failure of an operation, beyond the #GError.
  */
@@ -32,6 +34,8 @@ typedef struct {
     char *identity;
     char *used_by;
     char *architecture;
+    MfComponentKind kind;
+    gboolean sdk;
 } MfdErrorDetail;
 
 void mfd_error_detail_clear(MfdErrorDetail *detail);

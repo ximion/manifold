@@ -637,6 +637,40 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
 }
 
 /**
+ * mf_bundle_check_kinds:
+ *
+ * An ID names exactly one kind of component. This function checks that the
+ * images of the bundle that have the same ID are the same kind of component,
+ * and that either all of them are SDKs or none.
+ */
+static gboolean
+mf_bundle_check_kinds(MfBundle *bundle, GError **error)
+{
+    GPtrArray *images = GET_PRIVATE(bundle)->images;
+
+    for (guint i = 0; i < images->len; i++) {
+        MfManifest *manifest = ((MfBundleImage *) g_ptr_array_index(images, i))->manifest;
+
+        for (guint j = 0; j < i; j++) {
+            MfManifest *other = ((MfBundleImage *) g_ptr_array_index(images, j))->manifest;
+
+            if (g_str_equal(mf_manifest_get_component_id(manifest), mf_manifest_get_component_id(other)) &&
+                (mf_manifest_get_kind(manifest) != mf_manifest_get_kind(other) ||
+                 mf_manifest_is_sdk(manifest) != mf_manifest_is_sdk(other))) {
+                g_set_error(error,
+                            MF_ERROR,
+                            MF_ERROR_INVALID_BUNDLE,
+                            "The bundle contains %s as two different kinds of component",
+                            mf_manifest_get_component_id(manifest));
+                return FALSE;
+            }
+        }
+    }
+
+    return TRUE;
+}
+
+/**
  * mf_bundle_new_from_fd:
  * @fd: file descriptor of the bundle, opened for reading
  * @error: a #GError
@@ -736,6 +770,8 @@ mf_bundle_new_from_fd(int fd, GError **error)
         g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "The bundle contains no images");
         return NULL;
     }
+    if (!mf_bundle_check_kinds(bundle, error))
+        return NULL;
 
     /* nothing may be in the bundle that nothing refers to */
     g_hash_table_iter_init(&iter, reader.entries);

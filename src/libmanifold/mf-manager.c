@@ -300,6 +300,14 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "architecture", "?"),
                     mf_parameter_string(parameters, "hostArchitecture", "?"));
+    } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_ID_CONFLICT) == 0) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_ID_CONFLICT,
+                    "Component %s is installed already as another kind of component (%s%s)",
+                    mf_parameter_string(parameters, "componentId", "?"),
+                    mf_parameter_string(parameters, "kind", "?"),
+                    sd_json_variant_boolean(sd_json_variant_by_key(parameters, "sdk")) ? " SDK" : "");
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_DISCONNECTED) == 0) {
         /* sd-varlink reports a connection closed during the call as a reply */
         g_set_error_literal(error,

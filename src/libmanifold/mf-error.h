@@ -29,6 +29,7 @@ G_BEGIN_DECLS
  * @MF_ERROR_COMPONENT_IN_USE: An installed component builds on this component.
  * @MF_ERROR_INVALID_MANIFEST: The data is not a manifest, or not one that could be installed.
  * @MF_ERROR_REVOKED: The component was revoked and must not be used anymore.
+ * @MF_ERROR_ID_CONFLICT: Another kind of component is installed with this ID.
  *
  * Errors that can happen when managing the Manifold installation of a host.
  */
@@ -46,6 +47,7 @@ typedef enum {
     MF_ERROR_COMPONENT_IN_USE,
     MF_ERROR_INVALID_MANIFEST,
     MF_ERROR_REVOKED,
+    MF_ERROR_ID_CONFLICT,
     /*< private >*/
     MF_ERROR_LAST
 } MfError;

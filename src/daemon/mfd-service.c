@@ -149,6 +149,13 @@ mfd_service_reply_error(sd_varlink *link, const GError *error, const MfdErrorDet
                 SD_JSON_BUILD_PAIR_STRING("componentId", detail->component_id),
                 SD_JSON_BUILD_PAIR_STRING("architecture", detail->architecture),
                 SD_JSON_BUILD_PAIR_STRING("hostArchitecture", mf_get_host_architecture()));
+        case MF_ERROR_ID_CONFLICT:
+            return sd_varlink_errorbo(
+                link,
+                MF_VARLINK_ERROR_ID_CONFLICT,
+                SD_JSON_BUILD_PAIR_STRING("componentId", detail->component_id),
+                SD_JSON_BUILD_PAIR_STRING("kind", mf_component_kind_to_string(detail->kind)),
+                SD_JSON_BUILD_PAIR_BOOLEAN("sdk", detail->sdk));
         default:
             break;
         }

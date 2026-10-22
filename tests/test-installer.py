@@ -221,6 +221,18 @@ class InstallerTest(unittest.TestCase):
         self.assertEqual(self.installed(), [])
         self.assertEqual(self.stored_images(), [])
 
+    def test_id_of_another_kind_is_refused(self):
+        app = Image(self.kit.component, 'app', '0.1.0', base=self.kit)
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.kit_bundle)
+        installed = self.installed()
+
+        self.assertIn(
+            f'{self.kit.component} is installed already as another kind of component (kit)',
+            self.manifold('install', self.bundle('kit-id-app', [app]), expect=1),
+        )
+        self.assertEqual(self.installed(), installed)
+
     def test_install_again_is_refused(self):
         self.manifold('install', self.core_bundle)
         self.assertIn('installed already', self.manifold('install', self.core_bundle, expect=1))
