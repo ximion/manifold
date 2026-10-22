@@ -104,6 +104,7 @@ test_check_all(Fixture *fixture, gconstpointer user_data)
     g_autofree char *not_a_stamp = mft_write_capture("not-a-stamp", "[]", "[]");
     g_autofree char *not_a_stamp_path = g_build_filename(not_a_stamp, "stamp", NULL);
     g_autofree char *unfinished = g_build_filename(TEST_CAPTURES_DIR, ".tmp-unfinished", NULL);
+    g_autofree char *moved_aside = mft_write_capture(".stale-moved-aside", fresh_dirs, "[]");
 
     g_assert_cmpint(g_unlink(no_stamp_path), ==, 0);
     mft_write_file(not_a_stamp_path, "{\"id\": \"x\"}");
@@ -120,10 +121,15 @@ test_check_all(Fixture *fixture, gconstpointer user_data)
     g_assert_false(g_file_test(no_stamp, G_FILE_TEST_EXISTS));
     g_assert_false(g_file_test(not_a_stamp, G_FILE_TEST_EXISTS));
     g_assert_false(g_file_test(unfinished, G_FILE_TEST_EXISTS));
+    /* a capture that was moved aside, and that nothing uses anymore */
+    g_assert_false(g_file_test(moved_aside, G_FILE_TEST_EXISTS));
 }
 
 /**
  * test_discard_all:
+ *
+ * While the daemon runs, the captures are only moved aside: a tree made with
+ * one may be on its way to a runner. They are deleted when the daemon starts.
  */
 static void
 test_discard_all(Fixture *fixture, gconstpointer user_data)
@@ -132,12 +138,20 @@ test_discard_all(Fixture *fixture, gconstpointer user_data)
     g_autofree char *dirs = g_strdup_printf("[%s]", usr_lib);
     g_autofree char *one = mft_write_capture("one", dirs, "[]");
     g_autofree char *two = mft_write_capture("two", dirs, "[]");
+    g_autofree char *one_aside = g_build_filename(TEST_CAPTURES_DIR, ".stale-one", NULL);
+    g_autofree char *two_aside = g_build_filename(TEST_CAPTURES_DIR, ".stale-two", NULL);
     g_autoptr(GError) error = NULL;
 
     g_assert_true(mfr_capture_discard_all(&error));
     g_assert_no_error(error);
     g_assert_false(g_file_test(one, G_FILE_TEST_EXISTS));
     g_assert_false(g_file_test(two, G_FILE_TEST_EXISTS));
+    g_assert_true(g_file_test(one_aside, G_FILE_TEST_IS_DIR));
+    g_assert_true(g_file_test(two_aside, G_FILE_TEST_IS_DIR));
+
+    mfr_capture_check_all();
+    g_assert_false(g_file_test(one_aside, G_FILE_TEST_EXISTS));
+    g_assert_false(g_file_test(two_aside, G_FILE_TEST_EXISTS));
     g_assert_true(g_file_test(TEST_CAPTURES_DIR, G_FILE_TEST_IS_DIR));
 }
 

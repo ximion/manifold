@@ -53,6 +53,9 @@
  * loader manifests were added, removed or replaced. Checking every link is
  * done when the daemon starts. Before a launch, only the modification times
  * of the library and manifest directories are compared.
+ *
+ * A capture that we do not use anymore is moved aside while the daemon runs,
+ * and deleted when the daemon starts, see mfr_capture_move_aside().
  */
 
 /* where the captured vendor drivers and the rewritten loader manifests go in a tree, kept apart
@@ -2008,33 +2011,53 @@ mfr_capture_is_used(const MfrCapture *capture, GHashTable **used)
 }
 
 /**
+ * mfr_capture_move_aside:
+ * @reason: why we do not use the capture anymore, for the log
+ *
+ * Move a capture that we do not use anymore out of the way of a fresh
+ * capture for its core.
+ *
+ * We never delete a capture while the daemon runs: a tree made with it may
+ * have been handed to a runner that has not attached it yet, and no mount
+ * table shows such a tree. Running overlays keep working, as they hold the
+ * directory, not its path. When the daemon starts, it deletes the captures
+ * that nothing uses anymore, see mfr_capture_check_all().
+ */
+static gboolean
+mfr_capture_move_aside(const MfrCapture *capture, const char *reason, GError **error)
+{
+    g_autofree char *name = g_path_get_basename(capture->dir);
+    g_autofree char *stale_dir = NULL;
+
+    if (g_str_has_prefix(name, MF_STALE_PREFIX))
+        return TRUE;
+
+    stale_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_STALE_PREFIX, capture->id, NULL);
+    g_info("Moving capture %s aside: %s", name, reason);
+    if (rename(capture->dir, stale_dir) != 0)
+        return glnx_throw_errno_prefix(error, "Unable to rename %s to %s", capture->dir, stale_dir);
+    return TRUE;
+}
+
+/**
  * mfr_capture_retire:
  * @used: (inout): the IDs of the captures in use, collected on first call
- * @reason: why the capture is retired (for log messages)
+ * @reason: why we do not use the capture anymore, for the log
  *
- * Remove a capture that we shouldn't use anymore. One that a tree
- * still in use was made with is moved aside instead, out of the way of a
- * fresh capture for its core. It is fully dropped once nothing uses it anymore.
- * Running overlays keep working, as they hold the directory, not its path.
+ * Delete a capture that we do not use anymore, or move it aside if a tree
+ * that is still in use was made with it. We only do this when the daemon
+ * starts, when no tree can be on its way to a runner.
  */
 static gboolean
 mfr_capture_retire(const MfrCapture *capture, GHashTable **used, const char *reason, GError **error)
 {
     g_autofree char *name = g_path_get_basename(capture->dir);
-    g_autofree char *stale_dir = NULL;
 
-    if (!mfr_capture_is_used(capture, used)) {
-        g_info("Removing capture %s: %s", name, reason);
-        return glnx_shutil_rm_rf_at(AT_FDCWD, capture->dir, NULL, error);
-    }
-    if (g_str_has_prefix(name, MF_STALE_PREFIX))
-        return TRUE;
+    if (mfr_capture_is_used(capture, used))
+        return mfr_capture_move_aside(capture, reason, error);
 
-    stale_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_STALE_PREFIX, capture->id, NULL);
-    g_info("Moving capture %s aside, it is still in use: %s", name, reason);
-    if (rename(capture->dir, stale_dir) != 0)
-        return glnx_throw_errno_prefix(error, "Unable to rename %s to %s", capture->dir, stale_dir);
-    return TRUE;
+    g_info("Removing capture %s: %s", name, reason);
+    return glnx_shutil_rm_rf_at(AT_FDCWD, capture->dir, NULL, error);
 }
 
 /**
@@ -2048,7 +2071,6 @@ mfr_capture_ensure(const char *core_hash, const char *core_mount, const char *tu
     g_autofree char *dir = g_build_filename(MFR_CAPTURE_DIR, core_hash, NULL);
     g_autofree char *tmp_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_TMP_PREFIX, core_hash, NULL);
     g_autoptr(MfrCapture) capture = NULL;
-    g_autoptr(GHashTable) used = NULL;
     g_autoptr(GError) load_error = NULL;
 
     if (g_file_test(dir, G_FILE_TEST_IS_DIR)) {
@@ -2056,7 +2078,7 @@ mfr_capture_ensure(const char *core_hash, const char *core_mount, const char *tu
         if (capture != NULL && mfr_capture_is_fresh(capture))
             return g_steal_pointer(&capture);
         if (capture != NULL) {
-            if (!mfr_capture_retire(capture, &used, "the host changed", error))
+            if (!mfr_capture_move_aside(capture, "the host changed", error))
                 return NULL;
         } else {
             g_warning("Discarding capture %s: %s", dir, load_error->message);
@@ -2085,8 +2107,9 @@ mfr_capture_ensure(const char *core_hash, const char *core_mount, const char *tu
 /**
  * mfr_capture_check_all:
  *
- * Retire every capture whose host files changed, and every replaced one that
- * nothing uses anymore, and remove what an interrupted capture left behind.
+ * Retire every capture whose host files changed, and every one that was moved
+ * aside, see mfr_capture_retire(), and remove what an interrupted capture left
+ * behind. Done when the daemon starts.
  */
 void
 mfr_capture_check_all(void)
@@ -2132,13 +2155,12 @@ mfr_capture_check_all(void)
 /**
  * mfr_capture_discard_all:
  *
- * Retire every capture, so the next launch captures again.
+ * Move every capture aside, so the next launch captures again.
  */
 gboolean
 mfr_capture_discard_all(GError **error)
 {
     g_autoptr(GDir) entries = g_dir_open(MFR_CAPTURE_DIR, 0, NULL);
-    g_autoptr(GHashTable) used = NULL;
     const char *name;
 
     while (entries != NULL && (name = g_dir_read_name(entries)) != NULL) {
@@ -2148,7 +2170,7 @@ mfr_capture_discard_all(GError **error)
         if (!g_str_has_prefix(name, MF_TMP_PREFIX))
             capture = mfr_capture_new_from_dir(dir, NULL);
         if (capture != NULL) {
-            if (!mfr_capture_retire(capture, &used, "a fresh capture was requested", error))
+            if (!mfr_capture_move_aside(capture, "a fresh capture was requested", error))
                 return FALSE;
             continue;
         }
