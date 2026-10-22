@@ -184,8 +184,34 @@ test_layers_must_be_in_order(Fixture *fixture, gconstpointer user_data)
     mft_assert_load_fails(TEST_APP_ID,
                           G_IO_ERROR,
                           G_IO_ERROR_FAILED,
-                          TEST_PLATFORM_KIT_ID
-                          " is a kit, which can not be below a kit in the runtime of " TEST_APP_ID);
+                          "kit " TEST_PLATFORM_KIT_ID " can not be below kit " TEST_PLATFORM_KIT_ID
+                          " in the runtime of " TEST_APP_ID);
+}
+
+/**
+ * test_sdk_is_not_supported_yet:
+ *
+ * An application can build on an SDK, but we can not run it like that yet.
+ */
+static void
+test_sdk_is_not_supported_yet(Fixture *fixture, gconstpointer user_data)
+{
+    mft_write_version(MF_STORAGE_DIR,
+                      MF_STORE_RUNTIMES_SUBDIR,
+                      &(MftTestManifest){.component_id = TEST_PLATFORM_KIT_ID ".sdk",
+                                         .kind = "kit",
+                                         .version = "20260114T0238",
+                                         .sdk = TRUE,
+                                         .base_id = TEST_PLATFORM_KIT_ID},
+                      NULL,
+                      NULL);
+    mft_replace_link("../../../runtimes/" TEST_PLATFORM_KIT_ID ".sdk/current",
+                     MF_STORE_APPS_DIR "/" TEST_APP_ID "/0.1.0-1/base");
+    mft_assert_load_fails(TEST_APP_ID,
+                          MF_ERROR,
+                          MF_ERROR_NOT_IMPLEMENTED,
+                          TEST_APP_ID " builds on the SDK " TEST_PLATFORM_KIT_ID
+                                      ".sdk, but running an application on an SDK is not supported yet");
 }
 
 int
@@ -201,6 +227,7 @@ main(int argc, char **argv)
     add_test("revoked", test_revoked);
     add_test("missing-base", test_missing_base);
     add_test("layers-must-be-in-order", test_layers_must_be_in_order);
+    add_test("sdk-is-not-supported-yet", test_sdk_is_not_supported_yet);
 #undef add_test
 
     return g_test_run();

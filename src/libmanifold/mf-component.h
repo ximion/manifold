@@ -25,7 +25,8 @@ typedef struct _MfManifest MfManifest;
  * @MF_COMPONENT_KIND_APP: An application.
  * @MF_COMPONENT_KIND_PLUGIN: A plugin of an application.
  *
- * The kind of a component.
+ * The kind of a component. The kinds are declared in the order in which
+ * their layers stack up, from the bottom to the top.
  */
 typedef enum {
     MF_COMPONENT_KIND_UNKNOWN,

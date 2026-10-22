@@ -422,10 +422,51 @@ class InstallerTest(unittest.TestCase):
         self.manifold('install', self.core_bundle)
         self.manifold('install', self.kit_bundle)
         self.assertIn(
-            'the base of a platform must be a core, not the kit',
+            f'platform {platform.component} can not build on kit {self.kit.component}',
             self.manifold('install', self.bundle('platform-on-kit', [platform]), expect=1),
         )
         self.assertNotIn(platform.verity_hash, self.stored_images())
+
+    def test_kit_can_not_build_on_a_kit(self):
+        kit = Image(CORE_ID + '.0123456789abcdef', 'kit', '20260301T1200', base=self.kit)
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.kit_bundle)
+        self.assertIn(
+            f'kit {kit.component} can not build on kit {self.kit.component}',
+            self.manifold('install', self.bundle('kit-on-kit', [kit]), expect=1),
+        )
+        self.assertNotIn(kit.verity_hash, self.stored_images())
+
+    def test_app_can_build_on_an_sdk(self):
+        # like a development tool that runs on the SDK stack
+        app = Image('com.example.OnSdk', 'app', '1.0', base=self.sdk)
+        self.manifold('install', self.core_bundle)
+        self.assertIn(
+            f'app      {app.component} ',
+            self.manifold('install', self.bundle('app-on-sdk', [app])),
+        )
+        self.assertEqual(
+            os.readlink(f'{STORE}/apps/{app.component}/1.0-{app.revision}/base'),
+            f'../../../runtimes/{self.sdk.component}/current',
+        )
+
+    def test_app_sdk_can_build_on_the_kit_sdk(self):
+        kit_sdk = Image(
+            self.kit.component + '.sdk', 'kit', self.kit.version, sdk=True, base=self.kit
+        )
+        app_sdk = Image(APP_ID + '.sdk', 'app', '0.1.0', sdk=True, base=kit_sdk)
+        self.manifold('install', self.core_bundle)
+        self.manifold('install', self.bundle('with-sdks', [self.kit, kit_sdk, self.app, app_sdk]))
+        self.assertIn((app_sdk.component, app_sdk.version, 'manual'), self.installed())
+
+    def test_runtime_sdk_extends_its_own_layer(self):
+        sdk = Image(self.kit.component + '.sdk', 'kit', self.kit.version, sdk=True, base=self.core)
+        self.manifold('install', self.core_bundle)
+        self.assertIn(
+            f'kit SDK {sdk.component} can not build on core {CORE_ID}',
+            self.manifold('install', self.bundle('kit-sdk-on-core', [sdk]), expect=1),
+        )
+        self.assertNotIn(sdk.verity_hash, self.stored_images())
 
     def test_corrupt_bundle_leaves_nothing(self):
         corrupt = self.bundle('corrupt', [self.kit, self.app], corrupt_image=self.app)

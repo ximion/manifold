@@ -112,6 +112,65 @@ mf_component_kind_is_always_auto(MfComponentKind kind, gboolean sdk)
 }
 
 /**
+ * mf_component_kind_can_build_on:
+ * @kind: the kind of a component
+ * @sdk: whether the component is an SDK
+ * @base_kind: the kind of the component it is to build on
+ * @base_sdk: whether the component it is to build on is an SDK
+ *
+ * Check whether a component of one kind can build on a component of another
+ * kind. Components stack up in layers: a core has nothing below it, a platform
+ * builds on a core, a kit on a platform or a core, an application on a kit, a
+ * platform or a core, and a plugin on an application.
+ *
+ * The layer below can also be an SDK, for example for a development tool that
+ * runs on the SDK of its kit. Everything below an SDK is then part of the SDK
+ * stack as well, which the builder ensures, so we do not check it here.
+ *
+ * An SDK can extend the component of its own layer. The SDK of a core, a
+ * platform or a kit always does, while the SDK of an application or a plugin
+ * can also build on a lower layer: the builder puts the SDK of an application
+ * on the SDK of its kit.
+ *
+ * The install daemon refuses to install a component that breaks these rules,
+ * so the compose daemon can rely on them.
+ *
+ * NOTE: The kinds are declared in the order of their layers, so a component
+ * always builds on a kind that is declared before its own kind. Only an SDK
+ * builds on its own kind.
+ *
+ * Returns: %TRUE if a component of @kind can build on a component of @base_kind
+ */
+gboolean
+mf_component_kind_can_build_on(MfComponentKind kind,
+                               gboolean sdk,
+                               MfComponentKind base_kind,
+                               gboolean base_sdk)
+{
+    if (kind == MF_COMPONENT_KIND_UNKNOWN || base_kind == MF_COMPONENT_KIND_UNKNOWN)
+        return FALSE;
+    /* an SDK can extend the component of its own layer, which is not an SDK itself */
+    if (base_kind == kind)
+        return sdk && !base_sdk;
+
+    /* everything else builds on a lower layer, which may be an SDK */
+    switch (kind) {
+    case MF_COMPONENT_KIND_PLATFORM:
+        return !sdk && base_kind == MF_COMPONENT_KIND_CORE;
+    case MF_COMPONENT_KIND_KIT:
+        return !sdk && (base_kind == MF_COMPONENT_KIND_CORE || base_kind == MF_COMPONENT_KIND_PLATFORM);
+    case MF_COMPONENT_KIND_APP:
+        return base_kind == MF_COMPONENT_KIND_CORE || base_kind == MF_COMPONENT_KIND_PLATFORM ||
+               base_kind == MF_COMPONENT_KIND_KIT;
+    case MF_COMPONENT_KIND_PLUGIN:
+        return base_kind == MF_COMPONENT_KIND_APP;
+    default:
+        /* a core has nothing below it, and its SDK extends it */
+        return FALSE;
+    }
+}
+
+/**
  * mf_component_kind_from_string:
  * @kind_str: (nullable): the name of a kind
  *

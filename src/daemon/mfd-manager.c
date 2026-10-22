@@ -427,6 +427,7 @@ mfd_check_if_bundle_image_wins(MfManifest *manifest, MfComponent *installed)
  * mfd_manager_resolve_dependency:
  * @iplan: the plan whose base to set
  * @ret_kind: (out): the kind of the component that provides the identity
+ * @ret_sdk: (out): whether the component that provides the identity is an SDK
  *
  * Find the component that provides the identity a component needs as its
  * base, in the bundle or in the store, and make it the base of @iplan.
@@ -442,7 +443,8 @@ mfd_manager_resolve_dependency(MfdManager *manager,
                                MfBundle *bundle,
                                const char *identity,
                                MfdInstallPlan *iplan,
-                               MfComponentKind *ret_kind)
+                               MfComponentKind *ret_kind,
+                               gboolean *ret_sdk)
 {
     MfBundleImage *image = mf_bundle_find_image_for_identity(bundle, identity);
     g_autoptr(MfComponent) installed = mf_store_find_identity(manager->store, identity, NULL);
@@ -463,7 +465,8 @@ mfd_manager_resolve_dependency(MfdManager *manager,
                                                                 mf_component_get_revision(newest)) >= 0;
         version_name = current ? NULL : mf_build_full_version(version, revision);
         *ret_kind = mf_manifest_get_kind(manifest);
-        iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, mf_manifest_is_sdk(manifest)),
+        *ret_sdk = mf_manifest_is_sdk(manifest);
+        iplan->base = mf_base_link_new(mf_store_subdir_for_kind(*ret_kind, *ret_sdk),
                                        component_id,
                                        version_name);
         return TRUE;
@@ -472,8 +475,9 @@ mfd_manager_resolve_dependency(MfdManager *manager,
     if (installed == NULL)
         return FALSE;
     *ret_kind = mf_component_get_kind(installed);
+    *ret_sdk = mf_component_is_sdk(installed);
     iplan->base = mf_base_link_new(
-        mf_store_subdir_for_kind(*ret_kind, mf_component_is_sdk(installed)),
+        mf_store_subdir_for_kind(*ret_kind, *ret_sdk),
         mf_component_get_id(installed),
         mf_component_is_current(installed) ? NULL : mf_component_get_full_version(installed));
     return TRUE;
@@ -584,6 +588,7 @@ mfd_bundle_find_exact_base(MfBundle *bundle, MfManifest *manifest)
  * @manifest: the manifest of the component whose base to find
  * @iplan: the plan whose base to set
  * @ret_kind: (out): the kind of the base
+ * @ret_sdk: (out): whether the base is an SDK
  *
  * Find the exact version of the base a component was built against, in the
  * bundle or in the store, and make it the base of @iplan. Another version
@@ -597,7 +602,8 @@ mfd_manager_resolve_exact_base(MfdManager *manager,
                                MfBundle *bundle,
                                MfManifest *manifest,
                                MfdInstallPlan *iplan,
-                               MfComponentKind *ret_kind)
+                               MfComponentKind *ret_kind,
+                               gboolean *ret_sdk)
 {
     const char *base_id = mf_manifest_get_base_id(manifest);
     const char *base_version = mf_manifest_get_base_version(manifest);
@@ -627,6 +633,7 @@ mfd_manager_resolve_exact_base(MfdManager *manager,
     version_name = mf_build_full_version(base_version, base_revision);
     iplan->base = mf_base_link_new(mf_store_subdir_for_kind(kind, sdk), base_id, version_name);
     *ret_kind = kind;
+    *ret_sdk = sdk;
     return TRUE;
 }
 
@@ -722,11 +729,12 @@ mfd_manager_plan_image_install(MfdManager *manager,
     if (base_id != NULL) {
         const char *base_version = mf_manifest_get_base_version(manifest);
         MfComponentKind base_kind;
+        gboolean base_sdk;
 
         /* a platform and an SDK need the exact version they were built against,
          * everything else builds on whatever provides the identity of its base */
         if (sdk || kind == MF_COMPONENT_KIND_PLATFORM) {
-            if (!mfd_manager_resolve_exact_base(manager, bundle, manifest, iplan, &base_kind)) {
+            if (!mfd_manager_resolve_exact_base(manager, bundle, manifest, iplan, &base_kind, &base_sdk)) {
                 g_autofree char *base_version_name = mf_build_full_version(
                     base_version,
                     mf_manifest_get_base_revision(manifest));
@@ -738,32 +746,25 @@ mfd_manager_plan_image_install(MfdManager *manager,
                                                    bundle,
                                                    mf_manifest_get_base_identity(manifest),
                                                    iplan,
-                                                   &base_kind)) {
+                                                   &base_kind,
+                                                   &base_sdk)) {
             mfd_set_missing_base_error(error, ret_detail, manifest, base_version);
             return FALSE;
         }
 
-        /* a platform is composed with one exact core, and nothing else below it */
-        if (kind == MF_COMPONENT_KIND_PLATFORM && !sdk && base_kind != MF_COMPONENT_KIND_CORE) {
+        /* a component can only build on the kinds of layer that are allowed below it */
+        if (!mf_component_kind_can_build_on(kind, sdk, base_kind, base_sdk)) {
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_INVALID_BUNDLE,
-                        "%s: the base of a platform must be a core, not the %s %s",
-                        mf_bundle_image_get_manifest_name(image),
-                        mf_component_kind_to_string(base_kind),
-                        base_id);
-            return FALSE;
-        }
-
-        /* the SDK kind must match its base kind */
-        if (sdk && kind != base_kind) {
-            g_set_error(error,
-                        MF_ERROR,
-                        MF_ERROR_INVALID_BUNDLE,
-                        "%s: the base of an SDK must be of the same type (expected %s, got %s)",
+                        "%s: %s%s %s can not build on %s%s %s",
                         mf_bundle_image_get_manifest_name(image),
                         mf_component_kind_to_string(kind),
-                        mf_component_kind_to_string(base_kind));
+                        sdk ? " SDK" : "",
+                        component_id,
+                        mf_component_kind_to_string(base_kind),
+                        base_sdk ? " SDK" : "",
+                        iplan->base->component_id);
             return FALSE;
         }
     }

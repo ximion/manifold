@@ -11,6 +11,7 @@
 #include <libglnx.h>
 #include <manifold.h>
 
+#include "mf-component-private.h"
 #include "mf-store-private.h"
 
 constexpr char REVOKED_NAME[] = "revoked";
@@ -104,15 +105,13 @@ mfr_fill_layer(const char *root, MfComponent *component, MfrLayer *layer, GError
  * mfr_app_load_runtime_info:
  *
  * Fill out the runtime layer info below an application, found by following the base links down
- * to the core. A kit sits on a platform or on the core, a platform on the core, and nothing
- * is ever passed twice.
+ * to the core. Every layer has to be allowed below the layer above it, see
+ * mf_component_kind_can_build_on().
  */
 static gboolean
 mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_component, GError **error)
 {
     g_autoptr(MfComponent) current = g_object_ref(app_component);
-    /* the highest kind the next layer may be */
-    MfrLayerKind expected = MFR_LAYER_KIT;
 
     while (TRUE) {
         g_autoptr(GError) local_error = NULL;
@@ -126,14 +125,30 @@ mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_compon
             g_propagate_error(error, g_steal_pointer(&local_error));
             return FALSE;
         }
-        if (!mfr_runtime_layer_kind_from_component_kind(mf_component_get_kind(next), &kind) ||
-            mf_component_is_sdk(next) || kind > expected)
+        if (!mf_component_kind_can_build_on(mf_component_get_kind(current),
+                                            mf_component_is_sdk(current),
+                                            mf_component_get_kind(next),
+                                            mf_component_is_sdk(next)) ||
+            !mfr_runtime_layer_kind_from_component_kind(mf_component_get_kind(next), &kind))
             return glnx_throw(error,
-                              "%s is a %s, which can not be below a %s in the runtime of %s",
-                              mf_component_get_id(next),
+                              "%s%s %s can not be below %s %s in the runtime of %s",
                               mf_component_kind_to_string(mf_component_get_kind(next)),
-                              LAYER_NAMES[expected + 1],
+                              mf_component_is_sdk(next) ? " SDK" : "",
+                              mf_component_get_id(next),
+                              mf_component_kind_to_string(mf_component_get_kind(current)),
+                              mf_component_get_id(current),
                               app->component_id);
+        /* TODO: Compose the SDK stack, with the SDK of every layer below, for an application
+         * that runs on an SDK. */
+        if (mf_component_is_sdk(next)) {
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_NOT_IMPLEMENTED,
+                        "%s builds on the SDK %s, but running an application on an SDK is not supported yet",
+                        mf_component_get_id(current),
+                        mf_component_get_id(next));
+            return FALSE;
+        }
         if (!mfr_fill_layer(root, next, &app->layers[kind], error))
             return FALSE;
 
@@ -141,7 +156,6 @@ mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_compon
             return TRUE;
         g_clear_object(&current);
         current = g_steal_pointer(&next);
-        expected = kind - 1;
     }
 }
 
