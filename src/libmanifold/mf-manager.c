@@ -346,6 +346,7 @@ typedef struct {
     sd_varlink *link;
     MfProgressFunc progress_func;
     gpointer progress_data;
+    GDestroyNotify progress_data_destroy;
     sd_json_variant *reply; /* the final reply */
     GError *error;
     gboolean done;
@@ -360,6 +361,8 @@ mf_call_free(MfCall *call)
     sd_varlink_close_unref(call->link);
     sd_json_variant_unref(call->reply);
     g_clear_error(&call->error);
+    if (call->progress_data_destroy != NULL)
+        call->progress_data_destroy(call->progress_data);
     g_free(call);
 }
 
@@ -537,13 +540,18 @@ static GSourceFuncs mf_call_source_funcs = {
 
 /**
  * mf_manager_call_async:
- * @build_result: what building @parameters returned, a negative errno fails the call
- * @parameters: (nullable): the parameters, without the transaction flags
- * @fd: a file descriptor to pass along with the call, or -1
+ * @method: The varlink method to call.
+ * @build_result: The result of building @parameters. If it is a negative errno,
+ *   the call fails with that error.
+ * @parameters: (nullable): The parameters of the call, without the transaction flags.
+ * @fd: A file descriptor to send along with the call, or -1.
+ * @progress_func: (nullable): Called whenever the service reports progress.
+ * @progress_data: Passed to @progress_func.
+ * @progress_data_destroy: (nullable): Function to free @progress_data.
  *
- * Connect to the service and call a method with the 'more' flag, as every
- * method of the service reports its progress before the final reply. The
- * task completes with the final reply, as an sd_json_variant.
+ * Connect to the service and call @method with the 'more' flag, so the
+ * service can report its progress before it sends the final reply.
+ * The task completes with the final reply, which is an sd_json_variant.
  */
 static void
 mf_manager_call_async(MfManager *manager,
@@ -553,6 +561,7 @@ mf_manager_call_async(MfManager *manager,
                       int fd,
                       MfProgressFunc progress_func,
                       gpointer progress_data,
+                      GDestroyNotify progress_data_destroy,
                       GCancellable *cancellable,
                       GAsyncReadyCallback callback,
                       gpointer user_data,
@@ -560,9 +569,16 @@ mf_manager_call_async(MfManager *manager,
 {
     g_autoptr(GTask) task = g_task_new(manager, cancellable, callback, user_data);
     g_autoptr(sd_json_variant) call_parameters = sd_json_variant_ref(parameters);
+    MfCall *call = g_new0(MfCall, 1);
     MfCallSource *call_source;
 
     g_task_set_source_tag(task, source_tag);
+
+    /* we set up the call first, so the task frees @progress_data even if the call fails early */
+    call->progress_func = progress_func;
+    call->progress_data = progress_data;
+    call->progress_data_destroy = progress_data_destroy;
+    g_task_set_task_data(task, call, (GDestroyNotify) mf_call_free);
 
     if (build_result >= 0)
         build_result = mf_manager_add_transaction_flags(manager, &call_parameters);
@@ -574,11 +590,6 @@ mf_manager_call_async(MfManager *manager,
                                 g_strerror(-build_result));
         return;
     }
-
-    MfCall *call = g_new0(MfCall, 1);
-    call->progress_func = progress_func;
-    call->progress_data = progress_data;
-    g_task_set_task_data(task, call, (GDestroyNotify) mf_call_free);
 
     int r = sd_varlink_connect_address(&call->link, GET_PRIVATE(manager)->socket_path);
     if (r < 0) {
@@ -745,8 +756,11 @@ G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfSyncCall, mf_sync_call_end)
  * mf_manager_install_file_async:
  * @manager: an #MfManager
  * @fd: file descriptor of a bundle, opened for reading
- * @progress_func: (nullable) (scope notified): called whenever the service reports progress
+ * @progress_func: (nullable) (scope notified) (closure progress_data) (destroy progress_data_destroy):
+ *   called whenever the service reports progress
  * @progress_data: passed to @progress_func
+ * @progress_data_destroy: (nullable): function to free @progress_data, called once the operation
+ *   has finished and @callback has run
  * @cancellable: (nullable): a #GCancellable
  * @callback: called when the installation is done, or failed
  * @user_data: passed to @callback
@@ -759,6 +773,7 @@ mf_manager_install_file_async(MfManager *manager,
                               int fd,
                               MfProgressFunc progress_func,
                               gpointer progress_data,
+                              GDestroyNotify progress_data_destroy,
                               GCancellable *cancellable,
                               GAsyncReadyCallback callback,
                               gpointer user_data)
@@ -778,6 +793,7 @@ mf_manager_install_file_async(MfManager *manager,
                           fd,
                           progress_func,
                           progress_data,
+                          progress_data_destroy,
                           cancellable,
                           callback,
                           user_data,
@@ -830,6 +846,7 @@ mf_manager_install_file(MfManager *manager,
                                   fd,
                                   progress_func,
                                   progress_data,
+                                  NULL,
                                   cancellable,
                                   mf_on_sync_call_done,
                                   &sync);
@@ -842,8 +859,11 @@ mf_manager_install_file(MfManager *manager,
  * @component_id: identifier of the component to remove
  * @version: (nullable): the version to remove, with all of its revisions, `<version>-<rev>`
  *     to specify the revision too, or %NULL for all versions
- * @progress_func: (nullable) (scope notified): called whenever the service reports progress
+ * @progress_func: (nullable) (scope notified) (closure progress_data) (destroy progress_data_destroy):
+ *   called whenever the service reports progress
  * @progress_data: passed to @progress_func
+ * @progress_data_destroy: (nullable): function to free @progress_data, called once the operation
+ *   has finished and @callback has run
  * @cancellable: (nullable): a #GCancellable
  * @callback: called when the removal is done, or failed
  * @user_data: passed to @callback
@@ -856,6 +876,7 @@ mf_manager_remove_component_async(MfManager *manager,
                                   const char *version,
                                   MfProgressFunc progress_func,
                                   gpointer progress_data,
+                                  GDestroyNotify progress_data_destroy,
                                   GCancellable *cancellable,
                                   GAsyncReadyCallback callback,
                                   gpointer user_data)
@@ -877,6 +898,7 @@ mf_manager_remove_component_async(MfManager *manager,
                           -1,
                           progress_func,
                           progress_data,
+                          progress_data_destroy,
                           cancellable,
                           callback,
                           user_data,
@@ -933,6 +955,7 @@ mf_manager_remove_component(MfManager *manager,
                                       version,
                                       progress_func,
                                       progress_data,
+                                      NULL,
                                       cancellable,
                                       mf_on_sync_call_done,
                                       &sync);
@@ -942,8 +965,11 @@ mf_manager_remove_component(MfManager *manager,
 /**
  * mf_manager_cleanup_async:
  * @manager: an #MfManager
- * @progress_func: (nullable) (scope notified): called whenever the service reports progress
+ * @progress_func: (nullable) (scope notified) (closure progress_data) (destroy progress_data_destroy):
+ *   called whenever the service reports progress
  * @progress_data: passed to @progress_func
+ * @progress_data_destroy: (nullable): function to free @progress_data, called once the operation
+ *   has finished and @callback has run
  * @cancellable: (nullable): a #GCancellable
  * @callback: called when the cleanup is done, or failed
  * @user_data: passed to @callback
@@ -955,6 +981,7 @@ void
 mf_manager_cleanup_async(MfManager *manager,
                          MfProgressFunc progress_func,
                          gpointer progress_data,
+                         GDestroyNotify progress_data_destroy,
                          GCancellable *cancellable,
                          GAsyncReadyCallback callback,
                          gpointer user_data)
@@ -968,6 +995,7 @@ mf_manager_cleanup_async(MfManager *manager,
                           -1,
                           progress_func,
                           progress_data,
+                          progress_data_destroy,
                           cancellable,
                           callback,
                           user_data,
@@ -1013,7 +1041,13 @@ mf_manager_cleanup(MfManager *manager,
     g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
 
     mf_sync_call_begin(&sync);
-    mf_manager_cleanup_async(manager, progress_func, progress_data, cancellable, mf_on_sync_call_done, &sync);
+    mf_manager_cleanup_async(manager,
+                             progress_func,
+                             progress_data,
+                             NULL,
+                             cancellable,
+                             mf_on_sync_call_done,
+                             &sync);
     return mf_manager_cleanup_finish(manager, mf_sync_call_wait(&sync), error);
 }
 
@@ -1058,6 +1092,7 @@ mf_manager_mark_component_async(MfManager *manager,
                           r,
                           parameters,
                           -1,
+                          NULL,
                           NULL,
                           NULL,
                           cancellable,

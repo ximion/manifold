@@ -60,6 +60,7 @@ void               mf_manager_install_file_async(MfManager          *manager,
                                                  int                 fd,
                                                  MfProgressFunc      progress_func,
                                                  gpointer            progress_data,
+                                                 GDestroyNotify      progress_data_destroy,
                                                  GCancellable       *cancellable,
                                                  GAsyncReadyCallback callback,
                                                  gpointer            user_data);
@@ -78,6 +79,7 @@ void               mf_manager_remove_component_async(MfManager          *manager
                                                      const char         *version,
                                                      MfProgressFunc      progress_func,
                                                      gpointer            progress_data,
+                                                     GDestroyNotify      progress_data_destroy,
                                                      GCancellable       *cancellable,
                                                      GAsyncReadyCallback callback,
                                                      gpointer            user_data);
@@ -95,6 +97,7 @@ MfResult          *mf_manager_remove_component(MfManager     *manager,
 void               mf_manager_cleanup_async(MfManager          *manager,
                                             MfProgressFunc      progress_func,
                                             gpointer            progress_data,
+                                            GDestroyNotify      progress_data_destroy,
                                             GCancellable       *cancellable,
                                             GAsyncReadyCallback callback,
                                             gpointer            user_data);
