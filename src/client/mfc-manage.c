@@ -140,9 +140,20 @@ mfc_run_install_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
     }
 
     for (int i = 1; i < argc; i++) {
+        g_autoptr(GString) skipped = NULL;
+
         ret = mfc_install_bundle(ctx, argv[i]);
-        if (ret != MFC_EXIT_SUCCESS)
-            return ret;
+        if (ret == MFC_EXIT_SUCCESS)
+            continue;
+
+        /* we stop at the first file that fails, and say which ones we did not get to */
+        if (i + 1 < argc) {
+            skipped = g_string_new(argv[i + 1]);
+            for (int j = i + 2; j < argc; j++)
+                g_string_append_printf(skipped, ", %s", argv[j]);
+            g_printerr("The remaining files were not installed: %s\n", skipped->str);
+        }
+        return ret;
     }
 
     return MFC_EXIT_SUCCESS;
