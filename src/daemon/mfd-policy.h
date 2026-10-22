@@ -7,8 +7,9 @@
 #pragma once
 
 #include <glib.h>
+#include <systemd/sd-bus.h>
+#include <systemd/sd-event.h>
 #include <systemd/sd-varlink.h>
-#include <manifold.h>
 
 G_BEGIN_DECLS
 
@@ -18,10 +19,19 @@ G_BEGIN_DECLS
 #define MFD_POLKIT_ACTION_REMOVE            "org.freedesktop.manifold.remove"
 #define MFD_POLKIT_ACTION_MARK              "org.freedesktop.manifold.mark"
 
-int mfd_policy_check_authorized(sd_varlink        *link,
-                                const char        *method,
-                                const char        *action_id,
-                                MfTransactionFlags flags,
-                                uid_t             *ret_uid);
+sd_bus  *mfd_policy_connect(sd_event *event,
+                            GError  **error);
+
+gboolean mfd_policy_check_async(sd_bus                  *bus,
+                                sd_varlink              *link,
+                                uid_t                    uid,
+                                const char              *action_id,
+                                gboolean                 interactive,
+                                sd_bus_message_handler_t callback,
+                                void                    *userdata,
+                                sd_bus_slot            **ret_slot,
+                                GError                 **error);
+int      mfd_policy_read_reply(sd_bus_message *reply,
+                               GError        **error);
 
 G_END_DECLS

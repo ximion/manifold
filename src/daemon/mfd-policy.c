@@ -7,11 +7,9 @@
 #include "config.h"
 #include "mfd-policy.h"
 
-#include <unistd.h>
-#include <systemd/sd-bus.h>
+#include <errno.h>
 
 #include <manifold.h>
-#include "mf-interface-private.h"
 #include "mf-varlink-util.h"
 
 /* polkit may have to prompt the user, so give it plenty of time */
@@ -21,43 +19,72 @@ constexpr uint64_t POLKIT_CALL_TIMEOUT_USEC = 5 * 60 * 1000 * 1000ULL;
 constexpr uint32_t POLKIT_ALLOW_USER_INTERACTION = 1;
 
 /**
- * mfd_polkit_check_authorization:
- * @link: the connection the method was called on
- * @uid: the calling user
- * @action_id: the polkit action
- * @interactive: whether to allow user interaction
- * @error: a #GError
+ * mfd_policy_connect:
+ * @event: The event loop that processes the replies of polkit.
+ * @error: A #GError
  *
- * Ask polkit whether the peer of a connection is authorized for an action.
- * This blocks until polkit has an answer.
+ * Connect to the system bus, so we can ask polkit for authorization.
  *
- * Returns: 1 if the peer is authorized, 0 if it is not, a negative on error
+ * Returns: (transfer full): The bus connection, or %NULL on error.
  */
-static int
-mfd_polkit_check_authorization(sd_varlink *link,
-                               uid_t uid,
-                               const char *action_id,
-                               gboolean interactive,
-                               GError **error)
+sd_bus *
+mfd_policy_connect(sd_event *event, GError **error)
 {
     sd_bus *bus = NULL;
+
+    int r = sd_bus_open_system(&bus);
+    if (r < 0) {
+        mf_set_error_from_errno(error, r, "Unable to connect to the system bus");
+        return NULL;
+    }
+
+    r = sd_bus_attach_event(bus, event, SD_EVENT_PRIORITY_NORMAL);
+    if (r < 0) {
+        mf_set_error_from_errno(error, r, "Unable to attach the system bus to the event loop");
+        sd_bus_flush_close_unref(bus);
+        return NULL;
+    }
+
+    return bus;
+}
+
+/**
+ * mfd_policy_check_async:
+ * @bus: The system bus, see mfd_policy_connect().
+ * @link: The connection of the caller.
+ * @uid: The calling user.
+ * @action_id: The polkit action the caller needs.
+ * @interactive: %TRUE if polkit may ask the user to authenticate.
+ * @callback: Called with the reply of polkit, which mfd_policy_read_reply() reads.
+ * @userdata: Passed to @callback.
+ * @ret_slot: (out): The pending call. Unreferencing it cancels the call.
+ * @error: A #GError
+ *
+ * Ask polkit whether the caller on @link is authorized for an action.
+ * This does not wait for the answer, as polkit may ask the user for a
+ * password, which can take minutes.
+ *
+ * Returns: %TRUE if the question was sent to polkit.
+ */
+gboolean
+mfd_policy_check_async(sd_bus *bus,
+                       sd_varlink *link,
+                       uid_t uid,
+                       const char *action_id,
+                       gboolean interactive,
+                       sd_bus_message_handler_t callback,
+                       void *userdata,
+                       sd_bus_slot **ret_slot,
+                       GError **error)
+{
     sd_bus_message *request = NULL;
-    sd_bus_message *reply = NULL;
-    sd_bus_error bus_error = SD_BUS_ERROR_NULL;
     int pidfd;
-    int authorized = 0;
-    int challenge = 0;
+    int r;
 
     pidfd = sd_varlink_get_peer_pidfd(link);
     if (pidfd < 0) {
         mf_set_error_from_errno(error, pidfd, "Unable to identify the process calling us");
-        return pidfd;
-    }
-
-    int r = sd_bus_default_system(&bus);
-    if (r < 0) {
-        mf_set_error_from_errno(error, r, "Unable to connect to the system bus");
-        goto out;
+        return FALSE;
     }
 
     r = sd_bus_message_new_method_call(bus,
@@ -86,17 +113,44 @@ mfd_polkit_check_authorization(sd_varlink *link,
                                   "");
     if (r < 0) {
         mf_set_error_from_errno(error, r, "Unable to build request for polkit");
-        goto out;
+        sd_bus_message_unref(request);
+        return FALSE;
     }
 
-    r = sd_bus_call(bus, request, POLKIT_CALL_TIMEOUT_USEC, &bus_error, &reply);
+    r = sd_bus_call_async(bus, ret_slot, request, callback, userdata, POLKIT_CALL_TIMEOUT_USEC);
+    sd_bus_message_unref(request);
     if (r < 0) {
+        mf_set_error_from_errno(error, r, "Unable to ask polkit for authorization");
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**
+ * mfd_policy_read_reply:
+ * @reply: The reply of polkit to mfd_policy_check_async().
+ * @error: A #GError
+ *
+ * Read whether polkit authorized the caller.
+ *
+ * Returns: 1 if the caller is authorized, 0 if it is not, a negative errno on error.
+ */
+int
+mfd_policy_read_reply(sd_bus_message *reply, GError **error)
+{
+    const sd_bus_error *bus_error = sd_bus_message_get_error(reply);
+    int authorized = 0;
+    int challenge = 0;
+    int r;
+
+    if (bus_error != NULL) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
                     "Unable to ask polkit for authorization: %s",
-                    bus_error.message != NULL ? bus_error.message : g_strerror(-r));
-        goto out;
+                    bus_error->message != NULL ? bus_error->message : bus_error->name);
+        return -EIO;
     }
 
     r = sd_bus_message_enter_container(reply, 'r', "bba{ss}");
@@ -104,71 +158,8 @@ mfd_polkit_check_authorization(sd_varlink *link,
         r = sd_bus_message_read(reply, "bb", &authorized, &challenge);
     if (r < 0) {
         mf_set_error_from_errno(error, r, "Reply of polkit was not understood");
-        goto out;
-    }
-
-    r = authorized ? 1 : 0;
-
-out:
-    sd_bus_error_free(&bus_error);
-    sd_bus_message_unref(reply);
-    sd_bus_message_unref(request);
-    sd_bus_flush_close_unref(bus);
-
-    return r;
-}
-
-/**
- * mfd_policy_check_authorized:
- * @link: the connection the method was called on
- * @method: the method that was called, for the log
- * @action_id: (nullable): the polkit action the method needs, or %NULL if every user may call it
- * @flags: the transaction flags of the call
- * @ret_uid: (out): the calling user
- *
- * Root, and the user we are running as, may call everything.
- * Everyone else needs PolicyKit authorization for what the method does to the host.
- * On error and authorization failure, the call is replied to.
- *
- * Returns: 0 if the caller may proceed, an error code otherwise.
- */
-int
-mfd_policy_check_authorized(sd_varlink *link,
-                            const char *method,
-                            const char *action_id,
-                            MfTransactionFlags flags,
-                            uid_t *ret_uid)
-{
-    g_autoptr(GError) error = NULL;
-    uid_t peer_uid;
-
-    int r = mf_varlink_get_peer_uid(link, &peer_uid);
-    if (r < 0)
         return r;
-    *ret_uid = peer_uid;
-
-    if (action_id == NULL || mf_peer_is_privileged(peer_uid))
-        return 0;
-
-    r = mfd_polkit_check_authorization(link,
-                                       peer_uid,
-                                       action_id,
-                                       mf_flags_contains(flags, MF_TRANSACTION_FLAG_INTERACTIVE),
-                                       &error);
-    if (r < 0) {
-        g_warning("Unable to authorize user %u for %s: %s", (unsigned int) peer_uid, method, error->message);
-        return sd_varlink_errorbo(link,
-                                  MF_VARLINK_ERROR_FAILED,
-                                  SD_JSON_BUILD_PAIR_STRING("message", error->message));
-    }
-    if (r == 0) {
-        g_info("Denied call of %s by user %u: not authorized for %s",
-               method,
-               (unsigned int) peer_uid,
-               action_id);
-        return sd_varlink_error(link, SD_VARLINK_ERROR_PERMISSION_DENIED, NULL);
     }
 
-    g_info("User %u is authorized for %s", (unsigned int) peer_uid, action_id);
-    return 0;
+    return authorized ? 1 : 0;
 }
