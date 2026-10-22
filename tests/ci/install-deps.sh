@@ -98,8 +98,9 @@ case " $ID ${ID_LIKE:-} " in
             'pkgconfig(gobject-introspection-1.0)'
             'pkgconfig(libblake3)'
             b3sum
+            gcc-c++
         )
-        blake3_build_packages=(cmake curl gcc-c++)
+        blake3_build_packages=(cmake curl)
 
         # the enterprise distributions have some of the packages in CRB and EPEL only,
         # and a newer GCC than their default one as toolset (see build-and-test.sh)
