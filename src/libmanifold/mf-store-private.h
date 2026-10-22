@@ -48,10 +48,14 @@ MF_BEGIN_PRIVATE_DECLS
 
 /* the layout of the store */
 MF_INTERNAL_VISIBLE
+const char *const *mf_store_get_component_subdirs(void);
+MF_INTERNAL_VISIBLE
 const char *mf_store_subdir_for_kind(MfComponentKind kind,
                                      gboolean        sdk);
 MF_INTERNAL_VISIBLE
 const char *mf_store_image_link_for_subdir(const char *subdir);
+MF_INTERNAL_VISIBLE
+char *mf_store_build_image_name(const char *verity_hash);
 MF_INTERNAL_VISIBLE
 char *mf_store_hash_from_image_name(const char *name);
 MF_INTERNAL_VISIBLE

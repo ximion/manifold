@@ -34,13 +34,6 @@ struct _MfdStoreWriter {
 
 G_DEFINE_TYPE(MfdStoreWriter, mfd_store_writer, G_TYPE_OBJECT)
 
-/* the subdirectories of the store that hold component directories */
-static const char *const MFD_COMPONENT_SUBDIRS[] = {
-    MF_STORE_APPS_SUBDIR,
-    MF_STORE_PLUGINS_SUBDIR,
-    MF_STORE_RUNTIMES_SUBDIR,
-};
-
 static void
 mfd_store_writer_finalize(GObject *object)
 {
@@ -98,14 +91,12 @@ mfd_store_writer_get_path(MfdStoreWriter *writer, const char *subdir, const char
 gboolean
 mfd_store_writer_ensure_root(MfdStoreWriter *writer, GError **error)
 {
-    const char *const subdirs[] = {
-        MF_STORE_IMAGES_SUBDIR,
-        MF_STORE_APPS_SUBDIR,
-        MF_STORE_PLUGINS_SUBDIR,
-        MF_STORE_RUNTIMES_SUBDIR,
-    };
+    const char *const *subdirs = mf_store_get_component_subdirs();
+    g_autofree char *images_dir = mfd_store_writer_get_path(writer, MF_STORE_IMAGES_SUBDIR, NULL);
 
-    for (size_t i = 0; i < G_N_ELEMENTS(subdirs); i++) {
+    if (!mfd_make_dir(images_dir, error))
+        return FALSE;
+    for (size_t i = 0; subdirs[i] != NULL; i++) {
         g_autofree char *path = mfd_store_writer_get_path(writer, subdirs[i], NULL);
 
         if (!mfd_make_dir(path, error))
@@ -117,12 +108,6 @@ mfd_store_writer_ensure_root(MfdStoreWriter *writer, GError **error)
 /*
  * Images
  */
-
-static char *
-mfd_get_image_file_name(const char *verity_hash)
-{
-    return g_strconcat(verity_hash, MF_STORE_IMAGE_SUFFIX, NULL);
-}
 
 /**
  * mfd_store_writer_add_image:
@@ -338,7 +323,7 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     }
 
     {
-        g_autofree char *file_name = mfd_get_image_file_name(mf_manifest_get_verity_hash(manifest));
+        g_autofree char *file_name = mf_store_build_image_name(mf_manifest_get_verity_hash(manifest));
         g_autofree char *target = g_build_filename(MF_STORE_COMPONENT_TO_IMAGES, file_name, NULL);
         g_autofree char *path = g_build_filename(tmp_dir, mf_store_image_link_for_subdir(subdir), NULL);
 
@@ -487,9 +472,11 @@ mfd_store_writer_set_mode(MfdStoreWriter *writer, MfComponent *component, MfInst
 gboolean
 mfd_store_writer_remove_cruft(MfdStoreWriter *writer, GError **error)
 {
-    for (size_t i = 0; i < G_N_ELEMENTS(MFD_COMPONENT_SUBDIRS); i++) {
+    const char *const *subdirs = mf_store_get_component_subdirs();
+
+    for (size_t i = 0; subdirs[i] != NULL; i++) {
         const char *name;
-        g_autofree char *subdir = mfd_store_writer_get_path(writer, MFD_COMPONENT_SUBDIRS[i], NULL);
+        g_autofree char *subdir = mfd_store_writer_get_path(writer, subdirs[i], NULL);
         g_autoptr(GDir) components = g_dir_open(subdir, 0, NULL);
 
         while (components != NULL && (name = g_dir_read_name(components)) != NULL) {

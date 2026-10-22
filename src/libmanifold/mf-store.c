@@ -74,11 +74,42 @@ mf_is_version_dir_name(const char *name)
     return mf_split_full_version(name, &version, &revision);
 }
 
-static const char *const SUBDIRS[] = {
+/* the subdirectories of the store that hold component directories */
+static const char *const COMPONENT_SUBDIRS[] = {
     MF_STORE_RUNTIMES_SUBDIR,
     MF_STORE_APPS_SUBDIR,
     MF_STORE_PLUGINS_SUBDIR,
+    NULL,
 };
+
+/**
+ * mf_store_get_component_subdirs:
+ *
+ * Get the subdirectories of the store that hold the directories of the
+ * components, like `runtimes`.
+ *
+ * Returns: (transfer none) (array zero-terminated=1): the subdirectories
+ */
+const char *const *
+mf_store_get_component_subdirs(void)
+{
+    return COMPONENT_SUBDIRS;
+}
+
+/**
+ * mf_store_build_image_name:
+ * @verity_hash: the root hash of an image
+ *
+ * Build the name of the file of an image in the store, `<hash>.raw`.
+ * mf_store_hash_from_image_name() takes it apart again.
+ *
+ * Returns: (transfer full): the file name
+ */
+char *
+mf_store_build_image_name(const char *verity_hash)
+{
+    return g_strconcat(verity_hash, MF_STORE_IMAGE_SUFFIX, NULL);
+}
 
 /**
  * mf_store_hash_from_image_name:
@@ -412,11 +443,11 @@ mf_read_version_dir_at(const char *root,
 static const char *
 mf_find_component_subdir_at(const char *root, const char *component_id, GError **error)
 {
-    for (size_t i = 0; i < G_N_ELEMENTS(SUBDIRS); i++) {
-        g_autofree char *component_dir = g_build_filename(root, SUBDIRS[i], component_id, NULL);
+    for (size_t i = 0; COMPONENT_SUBDIRS[i] != NULL; i++) {
+        g_autofree char *component_dir = g_build_filename(root, COMPONENT_SUBDIRS[i], component_id, NULL);
 
         if (g_file_test(component_dir, G_FILE_TEST_IS_DIR))
-            return SUBDIRS[i];
+            return COMPONENT_SUBDIRS[i];
     }
 
     g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, "%s is not installed", component_id);
@@ -672,7 +703,7 @@ mf_store_read_base_at(const char *root, MfComponent *component, GError **error)
 char *
 mf_store_image_path_at(const char *root, const char *verity_hash)
 {
-    g_autofree char *file_name = g_strconcat(verity_hash, MF_STORE_IMAGE_SUFFIX, NULL);
+    g_autofree char *file_name = mf_store_build_image_name(verity_hash);
 
     return g_build_filename(root, MF_STORE_IMAGES_SUBDIR, file_name, NULL);
 }
@@ -716,8 +747,8 @@ mf_scan_at(const char *root, GError **error)
 {
     g_autoptr(GPtrArray) components = g_ptr_array_new_with_free_func(g_object_unref);
 
-    for (size_t i = 0; i < G_N_ELEMENTS(SUBDIRS); i++) {
-        g_autofree char *base_dir = g_build_filename(root, SUBDIRS[i], NULL);
+    for (size_t i = 0; COMPONENT_SUBDIRS[i] != NULL; i++) {
+        g_autofree char *base_dir = g_build_filename(root, COMPONENT_SUBDIRS[i], NULL);
         g_autoptr(GDir) dir = NULL;
         const char *id;
 
@@ -747,7 +778,7 @@ mf_scan_at(const char *root, GError **error)
                     g_file_test(version_dir, G_FILE_TEST_IS_SYMLINK) ||
                     !g_file_test(version_dir, G_FILE_TEST_IS_DIR))
                     continue;
-                component = mf_read_version_dir_at(root, SUBDIRS[i], id, version_name, &read_error);
+                component = mf_read_version_dir_at(root, COMPONENT_SUBDIRS[i], id, version_name, &read_error);
                 if (component == NULL) {
                     g_debug("Ignoring %s: %s", version_dir, read_error->message);
                     continue;
