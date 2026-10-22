@@ -1,0 +1,79 @@
+name: Build & Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner || 'ubuntu-24.04' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debian 13
+            image: docker.io/library/debian:trixie
+          - name: Debian 13 (aarch64)
+            image: docker.io/library/debian:trixie
+            runner: ubuntu-24.04-arm
+          - name: Debian testing
+            image: docker.io/library/debian:testing
+          - name: Debian testing (ASan, UBSan)
+            image: docker.io/library/debian:testing
+            meson-args: -Db_sanitize=address,undefined
+            test-args: --timeout-multiplier 3
+          - name: Ubuntu 26.04 LTS
+            image: docker.io/library/ubuntu:26.04
+          - name: Fedora
+            image: docker.io/library/fedora:latest
+          - name: Arch Linux
+            image: docker.io/library/archlinux:latest
+          - name: CentOS Stream 10
+            image: quay.io/centos/centos:stream10
+          - name: AlmaLinux 10
+            image: docker.io/library/almalinux:10
+
+    env:
+      BASE_IMAGE: ${{ matrix.image }}
+      CI_MESON_ARGS: ${{ matrix.meson-args }}
+      CI_TEST_ARGS: ${{ matrix.test-args }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Ubuntu lets unconfined programs create user namespaces, but takes away
+      # all capabilities in them, which the tests and manifold-run need
+      - name: Allow unprivileged user namespaces
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Prepare container
+        run: |
+          sudo podman build \
+            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+            -t manifold-ci \
+            -f tests/ci/Containerfile tests/ci
+
+      # Privileged, as the default seccomp and AppArmor profiles of a container deny
+      # creating user namespaces and mounting. The tests themselves run unprivileged.
+      - name: Build and test
+        run: |
+          sudo podman run --rm --privileged \
+            -v "$PWD:/src:Z" -w /src \
+            -e CI_MESON_ARGS="$CI_MESON_ARGS" \
+            -e CI_TEST_ARGS="$CI_TEST_ARGS" \
+            manifold-ci tests/ci/build-and-test.sh

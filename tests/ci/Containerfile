@@ -1,0 +1,20 @@
+# Copyright (C) 2025-2026 Matthias Klumpp <matthias@tenstral.net>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# The image the CI builds and tests Manifold in: the image of a distribution,
+# with everything building and testing needs installed. The container has to
+# be privileged, for the tests to create user namespaces and mount in them.
+#
+# To reproduce a CI job locally, from the root of the source tree:
+#
+#   podman build --build-arg BASE_IMAGE=docker.io/library/debian:trixie \
+#       -t manifold-ci:debian-13 -f tests/ci/Containerfile tests/ci
+#   podman run --rm --privileged -v "$PWD:/src:Z" -w /src manifold-ci:debian-13 \
+#       tests/ci/build-and-test.sh
+
+ARG BASE_IMAGE=docker.io/library/debian:trixie
+FROM ${BASE_IMAGE}
+
+COPY install-deps.sh /tmp/install-deps.sh
+RUN /tmp/install-deps.sh && rm /tmp/install-deps.sh
