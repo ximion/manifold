@@ -542,14 +542,18 @@ main(int argc, char **argv)
 
     if (getcwd(cwd, sizeof(cwd)) == nullptr)
         cwd[0] = '\0';
-    if (mfx_enter_tree(launch_data.mount_fd, !mfx_have_cap_sys_admin()) < 0)
+    if (mfx_enter_tree(launch_data.mount_fd, !mfx_have_cap_sys_admin()) < 0) {
+        mfx_launch_data_clear(&launch_data);
         return EXIT_FAILURE;
+    }
     close(launch_data.mount_fd);
+    launch_data.mount_fd = -1;
 
     mfx_change_directory(cwd[0] != '\0' ? cwd : nullptr);
     mfx_apply_environment(launch_data.environment);
 
     /* argv[optind] is replaced by the program, what follows are its arguments */
     mfx_execute_command(command != nullptr ? command : launch_data.executable, &argv[optind]);
+    mfx_launch_data_clear(&launch_data);
     return EXIT_FAILURE;
 }
