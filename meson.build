@@ -168,6 +168,12 @@ conf.set_quoted('LIBEXECDIR',
                 get_option('prefix') / get_option('libexecdir'))
 conf.set_quoted('LIBDIR',
                 get_option('prefix') / get_option('libdir'))
+
+# systemd < 258 can only allow passing file descriptors per connection, not for a whole Varlink server
+conf.set10('HAVE_SD_VARLINK_SERVER_FD_PASSING',
+           cc.has_header_symbol('systemd/sd-varlink.h',
+                                'SD_VARLINK_SERVER_ALLOW_FD_PASSING_INPUT',
+                                dependencies: libsystemd_dep))
 configure_file(output: 'config.h', configuration: conf)
 
 #

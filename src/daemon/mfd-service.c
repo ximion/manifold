@@ -650,7 +650,11 @@ mfd_service_new(sd_event *event, GError **error)
 
     service->server = mf_varlink_server_new(event,
                                             "manifoldd",
+#if HAVE_SD_VARLINK_SERVER_FD_PASSING
                                             SD_VARLINK_SERVER_ALLOW_FD_PASSING_INPUT,
+#else
+                                            0, /* mfd_on_connect() allows it per connection */
+#endif
                                             &vl_interface_org_freedesktop_manifold,
                                             service,
                                             error);
@@ -692,7 +696,17 @@ mfd_on_connect(sd_varlink_server *server, sd_varlink *link, void *userdata)
 {
     MfdService *service = userdata;
 
-    sd_event_source_set_enabled(service->idle_timer, SD_EVENT_OFF);
+#if !HAVE_SD_VARLINK_SERVER_FD_PASSING
+    /* systemd < 258 can only allow receiving file descriptors per connection,
+     * and we need them for the files clients ask us to install */
+    int r = sd_varlink_set_allow_fd_passing_input(link, true);
+    if (r < 0)
+        return r;
+#endif
+
+    /* the idle timer only exists when we were socket activated */
+    if (service->idle_timer != NULL)
+        sd_event_source_set_enabled(service->idle_timer, SD_EVENT_OFF);
     return 0;
 }
 
@@ -734,7 +748,6 @@ mfd_service_exit_when_idle(MfdService *service)
     if (r < 0)
         return r;
 
-    sd_varlink_server_bind_connect(service->server, mfd_on_connect);
     sd_varlink_server_bind_disconnect(service->server, mfd_on_disconnect);
     return 0;
 }
@@ -754,6 +767,7 @@ mfd_service_listen(MfdService *service, const char *socket_path, GError **error)
     gboolean activated;
     int r;
 
+    sd_varlink_server_bind_connect(service->server, mfd_on_connect);
     if (!mf_varlink_server_listen(service->server, socket_path, MF_SOCKET_PATH, &activated, error))
         return FALSE;
     if (!activated)

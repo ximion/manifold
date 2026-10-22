@@ -106,7 +106,8 @@ case " $ID ${ID_LIKE:-} " in
         if [ "$ID" != fedora ]; then
             "${install[@]}" dnf-plugins-core epel-release
             dnf config-manager --set-enabled crb
-            packages+=(gcc-toolset-15-gcc)
+            # its libstdc++ for linking, which their libblake3 needs
+            packages+=(gcc-toolset-15-gcc gcc-toolset-15-libstdc++-devel)
         fi
         ;;
 

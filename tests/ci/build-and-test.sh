@@ -32,7 +32,7 @@ if [ -d /opt/rh/gcc-toolset-15/root/usr/bin ]; then
 fi
 
 # a new one, the source tree may have a build directory of its own
-builddir="ci-build"
+builddir="build.ci"
 read -ra meson_args <<< "${CI_MESON_ARGS:-}"
 read -ra test_args <<< "${CI_TEST_ARGS:-}"
 

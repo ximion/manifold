@@ -5,18 +5,21 @@
 
 """
 What the end-to-end tests share: how a daemon is started and stopped, how
-it is called, and how bundles are made up. Calls are made with varlinkctl.
+it is called, and how bundles are made up. Calls are made with varlinkctl, and
+with a client of our own where varlinkctl is too old to pass a file descriptor.
 
 The tests run in the sandbox, which `mf-test-sandbox` enters for them: the
 directories Manifold keeps its state in are empty, and we are root.
 """
 
+import functools
 import hashlib
 import json
 import os
 import platform
 import re
 import signal
+import socket
 import subprocess
 import sysconfig
 import time
@@ -58,9 +61,17 @@ def blake3_hex(data):
     return result.stdout.decode().strip()
 
 
+@functools.cache
+def varlinkctl_can_pass_fds():
+    """Whether varlinkctl can pass a file descriptor along with a call, which it
+    can since systemd 258."""
+    result = subprocess.run(['varlinkctl', '--help'], capture_output=True, text=True, check=True)
+    return '--push-fd=' in result.stdout
+
+
 class VarlinkError(Exception):
-    """A call was replied to with an error. varlinkctl turns the error into a
-    message, and prints the parameters of the error, which are kept here."""
+    """A call was replied to with an error. The message names the error, and the
+    parameters of the error are kept here."""
 
     def __init__(self, message, parameters):
         super().__init__(message)
@@ -124,6 +135,9 @@ class Daemon:
         `more`, every reply is returned, as a list. A file descriptor is passed
         along as the first one, index 0. An error reply raises VarlinkError.
         """
+        if fd is not None and not varlinkctl_can_pass_fds():
+            return self._call_passing_fd(method, parameters, more, fd)
+
         argv = ['varlinkctl', 'call', '--json=short', '--timeout=infinity']
         if more:
             argv.append('--more')
@@ -141,6 +155,36 @@ class Daemon:
         replies = [json.loads(reply) for reply in result.stdout.split('\x1e') if reply.strip()]
         if result.returncode != 0:
             raise VarlinkError(result.stderr.strip(), replies[0] if replies else {})
+        return replies if more else replies[0]
+
+    def _call_passing_fd(self, method, parameters, more, fd):
+        """
+        Make a call like varlinkctl does, for a varlinkctl that can't pass a file
+        descriptor along. Varlink messages are JSON objects, each ended by a NUL
+        byte, and the descriptor is sent with the message of the call.
+        """
+        call = {'method': method, 'parameters': parameters or {}}
+        if more:
+            call['more'] = True
+        replies = []
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(self.socket_path)
+            socket.send_fds(sock, [json.dumps(call).encode() + b'\0'], [fd])
+            received = b''
+            while True:
+                while b'\0' not in received:
+                    data = sock.recv(65536)
+                    if not data:
+                        raise RuntimeError(f'{self.exe} closed the connection without replying')
+                    received += data
+                message, _, received = received.partition(b'\0')
+                reply = json.loads(message)
+                if 'error' in reply:
+                    raise VarlinkError(reply['error'], reply.get('parameters', {}))
+                replies.append(reply.get('parameters', {}))
+                # with `more`, every reply but the last one says that more follow
+                if not reply.get('continues', False):
+                    break
         return replies if more else replies[0]
 
 

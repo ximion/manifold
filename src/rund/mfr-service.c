@@ -248,6 +248,20 @@ mfr_varlink_method_list_trees(sd_varlink *link,
     return 0;
 }
 
+#if !HAVE_SD_VARLINK_SERVER_FD_PASSING
+/**
+ * mfr_on_connect:
+ *
+ * systemd < 258 can only allow sending file descriptors per connection, and
+ * we send the ones of the trees we compose.
+ */
+static int
+mfr_on_connect(sd_varlink_server *server, sd_varlink *link, void *userdata)
+{
+    return sd_varlink_set_allow_fd_passing_output(link, true);
+}
+#endif
+
 /**
  * mfr_service_new:
  * @event: The event loop to run the service in.
@@ -268,12 +282,19 @@ mfr_service_new(sd_event *event, GError **error)
 
     service->server = mf_varlink_server_new(event,
                                             "manifold-rund",
+#if HAVE_SD_VARLINK_SERVER_FD_PASSING
                                             SD_VARLINK_SERVER_ALLOW_FD_PASSING_OUTPUT,
+#else
+                                            0, /* mfr_on_connect() allows it per connection */
+#endif
                                             &vl_interface_org_freedesktop_manifold_run,
                                             service,
                                             error);
     if (service->server == NULL)
         return NULL;
+#if !HAVE_SD_VARLINK_SERVER_FD_PASSING
+    sd_varlink_server_bind_connect(service->server, mfr_on_connect);
+#endif
 
     r = sd_varlink_server_bind_method_many(service->server,
                                            MF_RUN_METHOD_PREPARE_LAUNCH,

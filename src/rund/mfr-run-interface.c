@@ -8,6 +8,7 @@
  * Definition of the org.freedesktop.manifold.run Varlink interface.
  */
 
+#define _GNU_SOURCE
 #include "mfr-run-interface.h"
 
 /* clang-format off */
