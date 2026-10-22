@@ -174,6 +174,9 @@ test_missing_base(Fixture *fixture, gconstpointer user_data)
 
 /**
  * test_layers_must_be_in_order:
+ *
+ * A broken store, in which a kit is its own base, must not make us follow
+ * base links forever.
  */
 static void
 test_layers_must_be_in_order(Fixture *fixture, gconstpointer user_data)

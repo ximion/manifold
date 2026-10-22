@@ -11,7 +11,6 @@
 #include <libglnx.h>
 #include <manifold.h>
 
-#include "mf-component-private.h"
 #include "mf-store-private.h"
 
 constexpr char REVOKED_NAME[] = "revoked";
@@ -105,13 +104,18 @@ mfr_fill_layer(const char *root, MfComponent *component, MfrLayer *layer, GError
  * mfr_app_load_runtime_info:
  *
  * Fill out the runtime layer info below an application, found by following the base links down
- * to the core. Every layer has to be allowed below the layer above it, see
- * mf_component_kind_can_build_on().
+ * to the core.
+ *
+ * We trust the install daemon to only install components whose layers stack up properly, see
+ * mf_component_kind_can_build_on(). We only make sure that every layer is of a lower kind than
+ * the one above it, so that a broken store can not make us follow base links forever, or fill
+ * one layer twice.
  */
 static gboolean
 mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_component, GError **error)
 {
     g_autoptr(MfComponent) current = g_object_ref(app_component);
+    MfrLayerKind above = MFR_LAYER_APP;
 
     while (TRUE) {
         g_autoptr(GError) local_error = NULL;
@@ -125,19 +129,6 @@ mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_compon
             g_propagate_error(error, g_steal_pointer(&local_error));
             return FALSE;
         }
-        if (!mf_component_kind_can_build_on(mf_component_get_kind(current),
-                                            mf_component_is_sdk(current),
-                                            mf_component_get_kind(next),
-                                            mf_component_is_sdk(next)) ||
-            !mfr_runtime_layer_kind_from_component_kind(mf_component_get_kind(next), &kind))
-            return glnx_throw(error,
-                              "%s%s %s can not be below %s %s in the runtime of %s",
-                              mf_component_kind_to_string(mf_component_get_kind(next)),
-                              mf_component_is_sdk(next) ? " SDK" : "",
-                              mf_component_get_id(next),
-                              mf_component_kind_to_string(mf_component_get_kind(current)),
-                              mf_component_get_id(current),
-                              app->component_id);
         /* TODO: Compose the SDK stack, with the SDK of every layer below, for an application
          * that runs on an SDK. */
         if (mf_component_is_sdk(next)) {
@@ -149,11 +140,20 @@ mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_compon
                         mf_component_get_id(next));
             return FALSE;
         }
+        if (!mfr_runtime_layer_kind_from_component_kind(mf_component_get_kind(next), &kind) || kind >= above)
+            return glnx_throw(error,
+                              "%s %s can not be below %s %s in the runtime of %s",
+                              mf_component_kind_to_string(mf_component_get_kind(next)),
+                              mf_component_get_id(next),
+                              mf_component_kind_to_string(mf_component_get_kind(current)),
+                              mf_component_get_id(current),
+                              app->component_id);
         if (!mfr_fill_layer(root, next, &app->layers[kind], error))
             return FALSE;
 
         if (kind == MFR_LAYER_CORE)
             return TRUE;
+        above = kind;
         g_clear_object(&current);
         current = g_steal_pointer(&next);
     }
