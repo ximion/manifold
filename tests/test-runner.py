@@ -205,12 +205,12 @@ class RunnerTest(unittest.TestCase):
             cwd='/usr/bin',
         )
         result = self.run_runner('--command=no-such-program', APP_ID)
-        self.assertEqual(result.returncode, 1, result)
+        self.assertEqual(result.returncode, 127, result)
         self.assertIn('no-such-program', result.stderr)
 
     def test_not_installed(self):
         result = self.run_runner('com.example.missing')
-        self.assertEqual(result.returncode, 1, result)
+        self.assertEqual(result.returncode, 125, result)
         self.assertIn('Component com.example.missing is not installed', result.stderr)
 
 

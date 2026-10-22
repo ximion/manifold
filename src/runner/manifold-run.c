@@ -41,6 +41,16 @@
 
 #define PROGRAM_NAME "manifold-run"
 
+/*
+ * The exit statuses we use when we can not run the program, the same ones
+ * that shells and env(1) use. Once the program runs, its exit status is ours.
+ */
+enum {
+    MFX_EXIT_FAILED = 125,         /* we failed ourselves, e.g. the component is not installed */
+    MFX_EXIT_CANNOT_EXECUTE = 126, /* the program is there, but can not be executed */
+    MFX_EXIT_NOT_FOUND = 127,      /* there is no such program */
+};
+
 /**
  * MfxLaunchData:
  *
@@ -87,9 +97,16 @@ mfx_print_usage(FILE *stream)
             "  --command=PROGRAM  Run PROGRAM in the environment of the component,\n"
             "                     instead of the component itself\n"
             "  --help             Show this help\n"
-            "  --version          Show the program version\n",
+            "  --version          Show the program version\n"
+            "\n"
+            "Exit status:\n"
+            "  The exit status of the program, or\n"
+            "  125  if %s failed itself\n"
+            "  126  if the program can not be executed\n"
+            "  127  if there is no such program\n",
             PROGRAM_NAME,
-            MF_RUN_SOCKET_PATH);
+            MF_RUN_SOCKET_PATH,
+            PROGRAM_NAME);
 }
 
 /**
@@ -445,12 +462,31 @@ mfx_apply_environment(char **environment)
 }
 
 /**
+ * mfx_execute_path:
+ *
+ * Execute the program at @path.
+ *
+ * Returns: our exit status, if the program can not be executed
+ */
+static int
+mfx_execute_path(const char *path, char **args)
+{
+    execv(path, args);
+
+    int saved_errno = errno;
+    fprintf(stderr, "%s: Unable to execute %s: %s\n", PROGRAM_NAME, path, strerror(saved_errno));
+    return saved_errno == ENOENT ? MFX_EXIT_NOT_FOUND : MFX_EXIT_CANNOT_EXECUTE;
+}
+
+/**
  * mfx_execute_command:
  *
  * Execute a program the caller named, which is in the tree: by its path, or
  * by its name. We look in /app/bin first, and then in the caller's PATH.
+ *
+ * Returns: our exit status, if the program can not be found or executed
  */
-static void
+static int
 mfx_execute_command(const char *command, char **args)
 {
     const char *path_env = getenv("PATH");
@@ -458,16 +494,13 @@ mfx_execute_command(const char *command, char **args)
     char *saveptr = nullptr;
 
     args[0] = (char *) command;
-    if (strchr(command, '/') != nullptr) {
-        execv(command, args);
-        fprintf(stderr, "%s: Unable to execute %s: %s\n", PROGRAM_NAME, command, strerror(errno));
-        return;
-    }
+    if (strchr(command, '/') != nullptr)
+        return mfx_execute_path(command, args);
 
     int r = asprintf(&search, "/app/bin:%s", path_env != nullptr ? path_env : "/usr/local/bin:/usr/bin:/bin");
     if (r < 0) {
         fprintf(stderr, "%s: Out of memory\n", PROGRAM_NAME);
-        return;
+        return MFX_EXIT_FAILED;
     }
     for (const char *dir = strtok_r(search, ":", &saveptr); dir != nullptr;
          dir = strtok_r(nullptr, ":", &saveptr)) {
@@ -479,14 +512,13 @@ mfx_execute_command(const char *command, char **args)
             continue;
         if (access(path, X_OK) != 0)
             continue;
-        execv(path, args);
-        fprintf(stderr, "%s: Unable to execute %s: %s\n", PROGRAM_NAME, path, strerror(errno));
         free(search);
-        return;
+        return mfx_execute_path(path, args);
     }
 
     fprintf(stderr, "%s: There is no program %s in the component\n", PROGRAM_NAME, command);
     free(search);
+    return MFX_EXIT_NOT_FOUND;
 }
 
 /**
@@ -525,26 +557,26 @@ main(int argc, char **argv)
             return EXIT_SUCCESS;
         default:
             mfx_print_usage(stderr);
-            return EXIT_FAILURE;
+            return MFX_EXIT_FAILED;
         }
     }
 
     if (argc - optind < 1) {
         mfx_print_usage(stderr);
-        return EXIT_FAILURE;
+        return MFX_EXIT_FAILED;
     }
 
     /* everything after the component identifier is an argument of the application */
     const char *component_id = argv[optind];
 
     if (mfx_prepare_launch(socket_path, component_id, &launch_data) < 0)
-        return EXIT_FAILURE;
+        return MFX_EXIT_FAILED;
 
     if (getcwd(cwd, sizeof(cwd)) == nullptr)
         cwd[0] = '\0';
     if (mfx_enter_tree(launch_data.mount_fd, !mfx_have_cap_sys_admin()) < 0) {
         mfx_launch_data_clear(&launch_data);
-        return EXIT_FAILURE;
+        return MFX_EXIT_FAILED;
     }
     close(launch_data.mount_fd);
     launch_data.mount_fd = -1;
@@ -553,7 +585,7 @@ main(int argc, char **argv)
     mfx_apply_environment(launch_data.environment);
 
     /* argv[optind] is replaced by the program, what follows are its arguments */
-    mfx_execute_command(command != nullptr ? command : launch_data.executable, &argv[optind]);
+    int status = mfx_execute_command(command != nullptr ? command : launch_data.executable, &argv[optind]);
     mfx_launch_data_clear(&launch_data);
-    return EXIT_FAILURE;
+    return status;
 }
