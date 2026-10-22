@@ -13,10 +13,10 @@
 #define BIN_NAME "manifold"
 
 void
-mfc_print_help_hint(const char *command, const char *unknown_option)
+mfc_print_help_hint(const char *command, const char *unexpected_argument)
 {
-    if (unknown_option != NULL)
-        g_printerr("Option '%s' is unknown.\n", unknown_option);
+    if (unexpected_argument != NULL)
+        g_printerr("Argument '%s' is not expected.\n", unexpected_argument);
 
     if (command == NULL)
         g_printerr("Run '%s --help' to see a full list of available command line options.\n", BIN_NAME);

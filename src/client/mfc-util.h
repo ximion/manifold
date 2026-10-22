@@ -13,7 +13,7 @@
 G_BEGIN_DECLS
 
 void            mfc_print_help_hint(const char *command,
-                                    const char *unknown_option);
+                                    const char *unexpected_argument);
 
 GOptionContext *mfc_option_context_for_command(MfcCommand         *cmd,
                                                const GOptionEntry *entries);

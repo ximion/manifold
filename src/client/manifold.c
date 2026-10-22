@@ -53,6 +53,25 @@ mfc_get_help_summary(MfcContext *ctx)
 }
 
 /**
+ * mfc_global_option_takes_value:
+ *
+ * Whether @arg is a global option whose value is the next argument.
+ */
+static gboolean
+mfc_global_option_takes_value(const char *arg)
+{
+    for (const GOptionEntry *entry = mfc_global_options; entry->long_name != NULL; entry++) {
+        if (entry->arg == G_OPTION_ARG_NONE)
+            continue;
+        if ((g_str_has_prefix(arg, "--") && g_str_equal(arg + 2, entry->long_name)) ||
+            (entry->short_name != 0 && arg[0] == '-' && arg[1] == entry->short_name && arg[2] == '\0'))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+/**
  * mfc_wants_subcommand_help:
  *
  * Check if we need to display the help text of a subcommand.
@@ -65,6 +84,11 @@ mfc_wants_subcommand_help(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (!g_str_has_prefix(argv[i], "-")) {
             have_command = TRUE;
+            continue;
+        }
+        /* the value of a global option is not the command */
+        if (!have_command && mfc_global_option_takes_value(argv[i])) {
+            i++;
             continue;
         }
         if (have_command && (g_strcmp0(argv[i], "--help") == 0 || g_strcmp0(argv[i], "-h") == 0))
