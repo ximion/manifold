@@ -27,15 +27,15 @@ G_BEGIN_DECLS
  * Details about the failure of an operation, beyond the #GError.
  */
 typedef struct {
-    char *component_id;
-    char *version;
-    char *base_id;
-    char *base_version;
-    char *identity;
-    char *used_by;
-    char *architecture;
+    char           *component_id;
+    char           *version;
+    char           *base_id;
+    char           *base_version;
+    char           *identity;
+    char           *used_by;
+    char           *architecture;
     MfComponentKind kind;
-    gboolean sdk;
+    gboolean        sdk;
 } MfdErrorDetail;
 
 void mfd_error_detail_clear(MfdErrorDetail *detail);
