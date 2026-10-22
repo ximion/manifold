@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mftest import (  # noqa: E402
     APP_ID,
     CORE_ID,
+    EXIT_SKIPPED,
     RUNTIME_DIR,
     STORE,
     Daemon,
@@ -707,4 +708,9 @@ if __name__ == '__main__':
     parser.add_argument('--daemon', required=True)
     parser.add_argument('--client', required=True)
     ARGS, remaining = parser.parse_known_args()
+    # b3sum hashes the bundles the test makes up, and varlinkctl makes the calls
+    missing = [tool for tool in ('b3sum', 'varlinkctl') if shutil.which(tool) is None]
+    if missing:
+        print(f'SKIP: {" and ".join(missing)} not available')
+        sys.exit(EXIT_SKIPPED)
     unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)

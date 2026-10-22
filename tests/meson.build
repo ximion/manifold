@@ -98,22 +98,15 @@ test('capture',
 # End-to-end
 #
 
-# the bundles the test makes up are hashed with b3sum, and varlinkctl makes the calls
-b3sum_exe = find_program('b3sum', required: false)
-varlinkctl_exe = find_program('varlinkctl', required: false)
-
-if b3sum_exe.found() and varlinkctl_exe.found()
-    test('installer',
-        test_sandbox_exe,
-        args: [python_exe.full_path(), files('test-installer.py'),
-               '--daemon', manifoldd_exe.full_path(), '--client', manifold_exe.full_path()],
-        depends: [manifoldd_exe, manifold_exe],
-        suite: 'e2e',
-        timeout: 120,
-    )
-else
-    warning('The installer test needs b3sum and varlinkctl, and is disabled')
-endif
+# skipped without b3sum and varlinkctl, which the test needs
+test('installer',
+    test_sandbox_exe,
+    args: [python_exe.full_path(), files('test-installer.py'),
+           '--daemon', manifoldd_exe.full_path(), '--client', manifold_exe.full_path()],
+    depends: [manifoldd_exe, manifold_exe],
+    suite: 'e2e',
+    timeout: 120,
+)
 
 # enters the sandbox itself, for one of its halves
 test('runner',
