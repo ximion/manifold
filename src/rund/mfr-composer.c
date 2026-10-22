@@ -20,50 +20,32 @@
 /**
  * MfrComposer:
  *
- * Composes the mount trees applications are launched in: loads what is
- * installed, mounts the images, captures the graphics stack of the host
- * for a core, and assembles a tree from these, which is kept for as long
- * as the application still consists of what it was made from.
- *
- * This is on the hot path of every launch. A launch of an application whose
- * tree is cached reads the store and compares the modification times of the
- * host's library directories, and does nothing else.
+ * Composes the mount trees applications are launched in. The composer owns
+ * the caches that live as long as the daemon: the trees that were assembled,
+ * the captures of the host for every core, and the mounted images. It loads
+ * what is installed, and dispenses a new or cached tree for an application
+ * launch request.
  */
 struct _MfrComposer {
     GObject parent_instance;
 
     GHashTable *trees;          /* component id -> MfrTree */
     GHashTable *captures;       /* root hash of a core -> MfrCapture */
-    MfrImageMounts *img_mounts; /* the mounted layer images of every tree */
+    MfrImageMounts *img_mounts; /* the mounted images of every tree */
 };
 
 G_DEFINE_FINAL_TYPE(MfrComposer, mfr_composer, G_TYPE_OBJECT)
 
 /**
- * mfr_composer_release_images:
- *
- * Let go of the images of the first @n_layers layers of an application.
- */
-static void
-mfr_composer_release_images(MfrComposer *composer, const MfrApp *app, MfrLayerKind n_layers)
-{
-    for (MfrLayerKind kind = 0; kind < n_layers; kind++) {
-        if (app->layers[kind].verity_hash != NULL)
-            mfr_image_mounts_release(composer->img_mounts, app->layers[kind].verity_hash);
-    }
-}
-
-/**
  * mfr_composer_drop_tree:
  *
- * Take a tree down, and let go of its images. The tree must have been
- * removed from the table already.
+ * Take a tree down. The tree must have been removed from the
+ * tree cache already.
  */
 static void
-mfr_composer_drop_tree(MfrComposer *composer, MfrTree *tree)
+mfr_composer_drop_tree(MfrTree *tree)
 {
     mfr_tree_teardown(tree);
-    mfr_composer_release_images(composer, mfr_tree_get_app(tree), MFR_LAYER_COUNT);
     g_object_unref(tree);
 }
 
@@ -81,7 +63,7 @@ mfr_composer_drop_all_trees(MfrComposer *composer)
     g_hash_table_iter_init(&iter, composer->trees);
     while (g_hash_table_iter_next(&iter, NULL, &value)) {
         g_hash_table_iter_remove(&iter);
-        mfr_composer_drop_tree(composer, value);
+        mfr_composer_drop_tree(value);
     }
 }
 
@@ -121,7 +103,7 @@ mfr_composer_finalize(GObject *object)
 
     g_hash_table_unref(composer->trees);
     g_hash_table_unref(composer->captures);
-    mfr_image_mounts_free(composer->img_mounts);
+    g_clear_object(&composer->img_mounts);
 
     G_OBJECT_CLASS(mfr_composer_parent_class)->finalize(object);
 }
@@ -186,58 +168,18 @@ mfr_enter_mount_namespace(GError **error)
 MfrComposer *
 mfr_composer_new(GError **error)
 {
+    g_autoptr(GHashTable) used_captures = NULL;
+
     if (!mfr_enter_mount_namespace(error))
         return NULL;
 
-    /* clean up captures in case anything has changed on our host, and trees nothing uses anymore */
-    mfr_capture_check_all();
+    /* clean up captures in case anything has changed on our host, except for the ones that
+     * applications launched before our restart still use. Also drop unused trees */
+    used_captures = mfr_tree_collect_used_captures();
+    mfr_capture_check_all(used_captures);
     mfr_tree_remove_unused();
 
     return g_object_new(MFR_TYPE_COMPOSER, NULL);
-}
-
-/**
- * mfr_composer_lookup_capture:
- *
- * Look up the capture we loaded already for the core of an application. We
- * only return it if the host has not changed since it was made.
- */
-static MfrCapture *
-mfr_composer_lookup_capture(MfrComposer *composer, const MfrApp *app)
-{
-    const char *core_hash = app->layers[MFR_LAYER_CORE].verity_hash;
-    MfrCapture *capture = g_hash_table_lookup(composer->captures, core_hash);
-
-    if (capture == NULL)
-        return NULL;
-    if (!mfr_capture_is_fresh(capture)) {
-        g_hash_table_remove(composer->captures, core_hash);
-        return NULL;
-    }
-    return capture;
-}
-
-/**
- * mfr_composer_load_capture:
- *
- * Load the capture for the core of an application, which is mounted at
- * @core_mount: the one in the cache, or a new one if there is none, or if
- * the host has changed.
- *
- * Returns: (transfer none): the capture, owned by the composer
- */
-static MfrCapture *
-mfr_composer_load_capture(MfrComposer *composer, const MfrApp *app, const char *core_mount, GError **error)
-{
-    const char *core_hash = app->layers[MFR_LAYER_CORE].verity_hash;
-    MfrCapture *capture;
-
-    capture = mfr_capture_ensure(core_hash, core_mount, app->tuple, error);
-    if (capture == NULL)
-        return NULL;
-    g_hash_table_insert(composer->captures, g_strdup(core_hash), capture);
-
-    return capture;
 }
 
 /**
@@ -256,53 +198,28 @@ MfrTree *
 mfr_composer_prepare(MfrComposer *composer, const char *component_id, GError **error)
 {
     g_autoptr(MfrApp) app = NULL;
-    const char *image_paths[MFR_LAYER_COUNT] = {0};
-    MfrCapture *capture;
+    MfrTree *old_tree;
     MfrTree *tree;
-    MfrLayerKind acquired = 0;
 
     app = mfr_app_load(component_id, error);
     if (app == NULL)
         return NULL;
 
-    tree = g_hash_table_lookup(composer->trees, component_id);
-    capture = mfr_composer_lookup_capture(composer, app);
-    if (tree != NULL && capture != NULL && mfr_tree_matches(tree, app, capture))
-        return g_object_ref(tree);
+    old_tree = g_hash_table_lookup(composer->trees, component_id);
+    if (old_tree != NULL && mfr_tree_matches(old_tree, app))
+        return g_object_ref(old_tree);
 
-    /* no tree can be reused as it is: mount the images, and capture the host
-     * again unless the capture is still good */
-    for (; acquired < MFR_LAYER_COUNT; acquired++) {
-        if (app->layers[acquired].verity_hash == NULL)
-            continue;
-        image_paths[acquired] = mfr_image_mounts_acquire(composer->img_mounts, &app->layers[acquired], error);
-        if (image_paths[acquired] == NULL) {
-            mfr_composer_release_images(composer, app, acquired);
-            return NULL;
-        }
-    }
-    if (capture == NULL) {
-        capture = mfr_composer_load_capture(composer, app, image_paths[MFR_LAYER_CORE], error);
-        if (capture == NULL) {
-            mfr_composer_release_images(composer, app, MFR_LAYER_COUNT);
-            return NULL;
-        }
-    }
-
-    /* the old tree is dropped only now, so that the images it shares with the new one stay mounted */
-    if (tree != NULL) {
+    /* the new tree is assembled while the old one still stands, so that the
+     * images they share stay mounted */
+    tree = mfr_tree_assemble(app, composer->captures, composer->img_mounts, error);
+    if (tree == NULL)
+        return NULL;
+    if (old_tree != NULL) {
         g_info("Dropping tree %s of %s, the application or the host changed",
-               mfr_tree_get_key(tree),
+               mfr_tree_get_key(old_tree),
                component_id);
         g_hash_table_remove(composer->trees, component_id);
-        mfr_composer_drop_tree(composer, tree);
-    }
-
-    /* the tree keeps the images it was assembled from for as long as it lives */
-    tree = mfr_tree_assemble(app, capture, image_paths, error);
-    if (tree == NULL) {
-        mfr_composer_release_images(composer, app, MFR_LAYER_COUNT);
-        return NULL;
+        mfr_composer_drop_tree(old_tree);
     }
     g_hash_table_insert(composer->trees, g_strdup(component_id), tree);
 

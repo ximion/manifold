@@ -737,6 +737,12 @@ test_newest_app_stays(Fixture *f, gconstpointer user_data)
                     APPS "/" TEST_APP_ID "/0.3.0-1");
 }
 
+/* how many components a removal reported as removed, by why it removed them */
+typedef struct {
+    guint requested;  /* removed on request */
+    guint cleaned_up; /* removed as they are not needed anymore */
+} RemovalCounts;
+
 /**
  * mft_count_removed:
  */
@@ -744,16 +750,16 @@ static void
 mft_count_removed(const MfProgress *progress, gpointer user_data)
 {
     const MfItemProgress *item = mf_progress_get_item(progress);
-    guint *counts = user_data; /* components removed on request, and as not needed anymore */
+    RemovalCounts *counts = user_data;
 
     /* each item is reported when it starts and when it finishes; only count finished ones */
     g_assert_nonnull(item);
     if (mf_item_progress_get_percent(item) < 100)
         return;
     if (mf_item_progress_get_action(item) == MF_ACTION_REMOVE)
-        counts[0]++;
+        counts->requested++;
     if (mf_item_progress_get_action(item) == MF_ACTION_CLEANUP)
-        counts[1]++;
+        counts->cleaned_up++;
 }
 
 /**
@@ -765,7 +771,7 @@ test_remove(Fixture *f, gconstpointer user_data)
     g_autofree char *kit_image = NULL;
     g_autoptr(MfResult) result = NULL;
     g_autoptr(GError) error = NULL;
-    guint counts[2] = {0, 0};
+    RemovalCounts counts = {};
 
     mft_install_usual(f);
     /* leftovers of interrupted installations: in the app's directory, which is removed completely,
@@ -773,12 +779,12 @@ test_remove(Fixture *f, gconstpointer user_data)
     g_assert_cmpint(g_mkdir(APPS "/" TEST_APP_ID "/.tmp-9.9.9-1", 0755), ==, 0);
     g_assert_cmpint(g_mkdir(RUNTIMES "/" TEST_CORE_ID "/.tmp-13.6-1", 0755), ==, 0);
 
-    result = mfd_manager_remove(manager, TEST_APP_ID, NULL, mft_count_removed, counts, NULL, &error);
+    result = mfd_manager_remove(manager, TEST_APP_ID, NULL, mft_count_removed, &counts, NULL, &error);
     g_assert_no_error(error);
     g_assert_nonnull(result);
     /* the app was asked for, the kit is not needed anymore, and images are not reported */
-    g_assert_cmpuint(counts[0], ==, 1);
-    g_assert_cmpuint(counts[1], ==, 1);
+    g_assert_cmpuint(counts.requested, ==, 1);
+    g_assert_cmpuint(counts.cleaned_up, ==, 1);
     g_assert_cmpuint(mf_result_get_removed(result)->len, ==, 2);
     g_assert_cmpuint(mf_result_get_removed_images(result)->len, ==, 2);
     g_assert_cmpuint(mf_result_get_bytes_freed(result), ==, 1024 + 2048);

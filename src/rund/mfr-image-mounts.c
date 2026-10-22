@@ -18,7 +18,6 @@
 #include <libcryptsetup.h>
 #include <libglnx.h>
 
-#include "mf-store-private.h"
 
 constexpr char DEVICE_PREFIX[] = "manifold-";
 constexpr char MAPPER_DIR[] = "/dev/mapper";
@@ -29,7 +28,8 @@ constexpr size_t ROOT_HASH_SIZE = 32;
  * MfrImageMount:
  *
  * The verified filesystem of an image, mounted below MFR_IMAGES_MOUNT_DIR.
- * A mount is shared between the trees that use it, and counted.
+ * A mount is shared between the trees that use it, and counted: every
+ * acquisition is given back with mfr_image_mounts_release().
  *
  * An image is a disk image with a filesystem partition, a dm-verity hash
  * partition and a signature partition. The kernel is not asked to look for
@@ -38,14 +38,26 @@ constexpr size_t ROOT_HASH_SIZE = 32;
  * that device, and the verified device is mounted below
  * MF_RUN_MOUNT_DIR/images/<hash>/.
  */
-typedef struct {
-    char *path;
+struct MfrImageMount {
+    char *verity_hash;
+    char *mountpoint;
     unsigned int users;
-} MfrImageMount;
+};
 
-struct MfrImageMounts {
+/**
+ * MfrImageMounts:
+ *
+ * The images that are mounted, by their verity hash. Everything that mounts
+ * an image goes through here, so an image used by several trees is mounted
+ * once.
+ */
+struct _MfrImageMounts {
+    GObject parent_instance;
+
     GHashTable *table; /* verity hash -> MfrImageMount */
 };
+
+G_DEFINE_FINAL_TYPE(MfrImageMounts, mfr_image_mounts, G_TYPE_OBJECT)
 
 /**
  * mfr_image_mount_free:
@@ -53,7 +65,8 @@ struct MfrImageMounts {
 static void
 mfr_image_mount_free(MfrImageMount *img_mount)
 {
-    g_free(img_mount->path);
+    g_free(img_mount->verity_hash);
+    g_free(img_mount->mountpoint);
     g_free(img_mount);
 }
 
@@ -143,19 +156,19 @@ mfr_decode_root_hash(const char *verity_hash, guint8 *ret_hash)
  * Set up the verified device for an image that is attached to a loop device.
  */
 static gboolean
-mfr_verity_activate(const char *loop_path, const MfrLayer *layer, const char *device_name, GError **error)
+mfr_verity_activate(const char *loop_path, const MfrImage *image, const char *device_name, GError **error)
 {
     struct crypt_device *cd = NULL;
     struct crypt_params_verity params = {
         /* the hash partition follows the filesystem partition in the same device */
-        .hash_area_offset = layer->hash_offset - layer->data_offset,
+        .hash_area_offset = image->hash_offset - image->data_offset,
     };
     guint8 root_hash[ROOT_HASH_SIZE];
     gboolean ret = FALSE;
     int r;
 
-    if (!mfr_decode_root_hash(layer->verity_hash, root_hash))
-        return glnx_throw(error, "Root hash of %s is not valid: %s", layer->component_id, layer->verity_hash);
+    if (!mfr_decode_root_hash(image->verity_hash, root_hash))
+        return glnx_throw(error, "Root hash of %s is not valid: %s", image->image_path, image->verity_hash);
 
     r = crypt_init(&cd, loop_path);
     if (r < 0)
@@ -166,7 +179,7 @@ mfr_verity_activate(const char *loop_path, const MfrLayer *layer, const char *de
     if (r < 0) {
         glnx_throw(error,
                    "Unable to read the verity superblock of %s: %s",
-                   layer->component_id,
+                   image->image_path,
                    g_strerror(-r));
         goto out;
     }
@@ -179,7 +192,7 @@ mfr_verity_activate(const char *loop_path, const MfrLayer *layer, const char *de
                                      sizeof(root_hash),
                                      CRYPT_ACTIVATE_READONLY | CRYPT_ACTIVATE_PRIVATE);
     if (r < 0) {
-        glnx_throw(error, "Unable to set up dm-verity for %s: %s", layer->component_id, g_strerror(-r));
+        glnx_throw(error, "Unable to set up dm-verity for %s: %s", image->image_path, g_strerror(-r));
         goto out;
     }
 
@@ -220,62 +233,64 @@ mfr_image_open(const char *path, GError **error)
 }
 
 /**
- * mfr_layer_image_setup:
+ * mfr_image_setup:
  *
  * Make the verified filesystem of an image available as a block device.
  * A device that exists already is reused: its name is the root hash it
  * enforces, and only root can create one.
  */
 static gboolean
-mfr_layer_image_setup(const MfrLayer *layer, const char *device_name, const char *device_path, GError **error)
+mfr_image_setup(const MfrImage *image, const char *device_name, const char *device_path, GError **error)
 {
     glnx_autofd int image_fd = -1;
     glnx_autofd int loop_fd = -1;
     g_autofree char *loop_path = NULL;
 
     if (g_file_test(device_path, G_FILE_TEST_EXISTS)) {
-        g_debug("Reusing %s for %s", device_path, layer->component_id);
+        g_debug("Reusing %s for %s", device_path, image->image_path);
         /* cancel a deferred removal, pending since the last tree using it was dropped */
         crypt_deactivate_by_name(NULL, device_name, CRYPT_DEACTIVATE_DEFERRED_CANCEL);
         return TRUE;
     }
 
-    image_fd = mfr_image_open(layer->image_path, error);
+    image_fd = mfr_image_open(image->image_path, error);
     if (image_fd < 0)
         return FALSE;
-    loop_fd = mfr_loop_attach(image_fd, layer->data_offset, &loop_path, error);
+    loop_fd = mfr_loop_attach(image_fd, image->data_offset, &loop_path, error);
     if (loop_fd < 0)
         return FALSE;
 
     /* if this fails, closing the loop device detaches it again */
-    return mfr_verity_activate(loop_path, layer, device_name, error);
+    return mfr_verity_activate(loop_path, image, device_name, error);
 }
 
 /**
  * mfr_image_mounts_acquire:
+ * @image: the image to mount
  *
- * Mount an image, or reuse its mount if it is mounted already.
+ * Mount an image, or reuse its mount if it is mounted already. Every mount we
+ * hand out has to be given back with mfr_image_mounts_release().
  *
- * Returns: the path the image is mounted at, owned by @mounts
+ * Returns: (transfer none): the mount, owned by @mounts, or %NULL
  */
-const char *
-mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrLayer *layer, GError **error)
+MfrImageMount *
+mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrImage *image, GError **error)
 {
     g_autofree char *device_name = NULL;
     g_autofree char *device_path = NULL;
     g_autofree char *path = NULL;
 
-    MfrImageMount *img_mount = g_hash_table_lookup(mounts->table, layer->verity_hash);
+    MfrImageMount *img_mount = g_hash_table_lookup(mounts->table, image->verity_hash);
     if (img_mount != NULL) {
         img_mount->users++;
-        return img_mount->path;
+        return img_mount;
     }
 
-    device_name = g_strconcat(DEVICE_PREFIX, layer->verity_hash, NULL);
+    device_name = g_strconcat(DEVICE_PREFIX, image->verity_hash, NULL);
     device_path = g_build_filename(MAPPER_DIR, device_name, NULL);
-    path = g_build_filename(MFR_IMAGES_MOUNT_DIR, layer->verity_hash, NULL);
+    path = g_build_filename(MFR_IMAGES_MOUNT_DIR, image->verity_hash, NULL);
 
-    if (!mfr_layer_image_setup(layer, device_name, device_path, error))
+    if (!mfr_image_setup(image, device_name, device_path, error))
         return NULL;
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, path, 0755, NULL, error))
         goto fail;
@@ -283,14 +298,15 @@ mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrLayer *layer, GError *
         glnx_throw_errno_prefix(error, "Unable to mount %s at %s", device_path, path);
         goto fail;
     }
-    g_info("Mounted %s %s at %s", layer->component_id, layer->version, path);
+    g_debug("Mounted image %s at %s", image->image_path, path);
 
     img_mount = g_new0(MfrImageMount, 1);
-    img_mount->path = g_steal_pointer(&path);
+    img_mount->verity_hash = g_strdup(image->verity_hash);
+    img_mount->mountpoint = g_steal_pointer(&path);
     img_mount->users = 1;
-    g_hash_table_insert(mounts->table, g_strdup(layer->verity_hash), img_mount);
+    g_hash_table_insert(mounts->table, img_mount->verity_hash, img_mount);
 
-    return img_mount->path;
+    return img_mount;
 
 fail:
     (void) rmdir(path);
@@ -301,31 +317,81 @@ fail:
 
 /**
  * mfr_image_mounts_release:
+ * @img_mount: (nullable): a mount that mfr_image_mounts_acquire() handed out
  *
- * Let go of an image. With no tree using it anymore, it is unmounted, and its
- * device is removed as soon as no launched application uses it anymore.
+ * Give back a mount, which must not be used afterwards. With no tree using
+ * the image anymore, it is unmounted, and its device is removed as soon as
+ * no launched application uses it anymore.
  */
 void
-mfr_image_mounts_release(MfrImageMounts *mounts, const char *verity_hash)
+mfr_image_mounts_release(MfrImageMounts *mounts, MfrImageMount *img_mount)
 {
-    g_autofree char *device_name = g_strconcat(DEVICE_PREFIX, verity_hash, NULL);
+    g_autofree char *device_name = NULL;
     g_autoptr(GError) error = NULL;
 
-    MfrImageMount *img_mount = g_hash_table_lookup(mounts->table, verity_hash);
-    g_return_if_fail(img_mount != NULL && img_mount->users > 0);
-
+    if (img_mount == NULL)
+        return;
+    g_return_if_fail(img_mount->users > 0);
     if (--img_mount->users > 0)
         return;
 
-    if (umount2(img_mount->path, MNT_DETACH) != 0)
-        g_warning("Unable to unmount %s: %s", img_mount->path, g_strerror(errno));
-    if (rmdir(img_mount->path) != 0)
-        g_warning("Unable to remove %s: %s", img_mount->path, g_strerror(errno));
+    device_name = g_strconcat(DEVICE_PREFIX, img_mount->verity_hash, NULL);
+    if (umount2(img_mount->mountpoint, MNT_DETACH) != 0)
+        g_warning("Unable to unmount %s: %s", img_mount->mountpoint, g_strerror(errno));
+    if (rmdir(img_mount->mountpoint) != 0)
+        g_warning("Unable to remove %s: %s", img_mount->mountpoint, g_strerror(errno));
     if (!mfr_verity_deactivate(device_name, TRUE, &error))
         g_warning("%s", error->message);
-    g_debug("Unmounted image %s", verity_hash);
+    g_debug("Unmounted image %s", img_mount->verity_hash);
 
-    g_hash_table_remove(mounts->table, verity_hash);
+    /* the key is the hash of the mount, which this frees */
+    g_hash_table_remove(mounts->table, img_mount->verity_hash);
+}
+
+/**
+ * mfr_image_mount_get_path:
+ *
+ * Returns: where the verified filesystem of the image is mounted
+ */
+const char *
+mfr_image_mount_get_path(const MfrImageMount *img_mount)
+{
+    return img_mount->mountpoint;
+}
+
+/**
+ * mfr_image_mounts_init:
+ */
+static void
+mfr_image_mounts_init(MfrImageMounts *mounts)
+{
+    /* the key of a mount is its own verity hash, freed with it */
+    mounts->table = g_hash_table_new_full(g_str_hash,
+                                          g_str_equal,
+                                          NULL,
+                                          (GDestroyNotify) mfr_image_mount_free);
+}
+
+/**
+ * mfr_image_mounts_finalize:
+ */
+static void
+mfr_image_mounts_finalize(GObject *object)
+{
+    MfrImageMounts *mounts = MFR_IMAGE_MOUNTS(object);
+
+    g_hash_table_unref(mounts->table);
+
+    G_OBJECT_CLASS(mfr_image_mounts_parent_class)->finalize(object);
+}
+
+/**
+ * mfr_image_mounts_class_init:
+ */
+static void
+mfr_image_mounts_class_init(MfrImageMountsClass *klass)
+{
+    G_OBJECT_CLASS(klass)->finalize = mfr_image_mounts_finalize;
 }
 
 /**
@@ -333,29 +399,10 @@ mfr_image_mounts_release(MfrImageMounts *mounts, const char *verity_hash)
  *
  * Create a new, empty table of image mounts.
  *
- * Returns: a new table of image mounts
+ * Returns: (transfer full): a new table of image mounts
  */
 MfrImageMounts *
 mfr_image_mounts_new(void)
 {
-    MfrImageMounts *mounts = g_new0(MfrImageMounts, 1);
-
-    mounts->table = g_hash_table_new_full(g_str_hash,
-                                          g_str_equal,
-                                          g_free,
-                                          (GDestroyNotify) mfr_image_mount_free);
-    return mounts;
-}
-
-/**
- * mfr_image_mounts_free:
- */
-void
-mfr_image_mounts_free(MfrImageMounts *mounts)
-{
-    if (mounts == NULL)
-        return;
-
-    g_hash_table_unref(mounts->table);
-    g_free(mounts);
+    return g_object_new(MFR_TYPE_IMAGE_MOUNTS, NULL);
 }

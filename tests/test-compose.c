@@ -97,19 +97,19 @@ test_load(Fixture *fixture, gconstpointer user_data)
     g_assert_cmpstr(app->component_id, ==, TEST_APP_ID);
     g_assert_cmpstr(app->version, ==, "0.1.0");
     g_assert_cmpstr(app->command, ==, "app");
-    g_assert_cmpstr(app->tuple, ==, "x86_64-linux-gnu");
+    g_assert_cmpstr(app->arch_tuple, ==, "x86_64-linux-gnu");
 
     layer = &app->layers[MFR_LAYER_APP];
     g_assert_cmpint(layer->kind, ==, MFR_LAYER_APP);
     g_assert_cmpstr(layer->component_id, ==, TEST_APP_ID);
-    g_assert_cmpstr(layer->verity_hash, ==, app_hash);
-    g_assert_cmpuint(layer->data_offset, ==, 20480);
-    g_assert_cmpuint(layer->hash_offset, ==, 22528);
+    g_assert_cmpstr(layer->image.verity_hash, ==, app_hash);
+    g_assert_cmpuint(layer->image.data_offset, ==, 20480);
+    g_assert_cmpuint(layer->image.hash_offset, ==, 22528);
     g_assert_cmpstr(app->layers[MFR_LAYER_KIT].component_id, ==, TEST_PLATFORM_KIT_ID);
     g_assert_cmpstr(app->layers[MFR_LAYER_KIT].version, ==, "20260114T0238");
     g_assert_cmpstr(app->layers[MFR_LAYER_PLATFORM].component_id, ==, TEST_PLATFORM_ID);
     g_assert_cmpstr(app->layers[MFR_LAYER_CORE].component_id, ==, TEST_CORE_ID);
-    g_assert_cmpstr(app->layers[MFR_LAYER_CORE].verity_hash, ==, core_hash);
+    g_assert_cmpstr(app->layers[MFR_LAYER_CORE].image.verity_hash, ==, core_hash);
 }
 
 /**

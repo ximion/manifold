@@ -23,7 +23,6 @@
 #include "mf-sdautoptr-private.h"
 #include "mf-json-private.h"
 #include "mf-utils-private.h"
-#include "mfr-app.h"
 #include "mfr-tree.h"
 
 /*
@@ -49,9 +48,11 @@
  *   environment.json    the loader variables, "" for one that must be unset
  *   stamp               what on the host the capture was made from
  *
- * A capture is stale when the host libraries it links to changed, or when
- * loader manifests were added, removed or replaced. Checking every link is
- * done when the daemon starts. Before a launch, only the modification times
+ * An #MfrCapture describes the capture for one core image and is loaded
+ * from its directory, or built, by mfr_capture_ensure(). A capture
+ * is stale when the host libraries it links to changed, or when loader
+ * manifests were added, removed or replaced. Every link is checked
+ * when the daemon starts, before a regular app launch, only the mtimes
  * of the library and manifest directories are compared.
  *
  * A capture that we do not use anymore is moved aside while the daemon runs,
@@ -78,7 +79,7 @@ constexpr char MF_STALE_PREFIX[] = ".stale-";
  * (Slackware has the DRI drivers in xorg/modules/dri).
  */
 typedef struct {
-    const char *subdir; /* where we capture the drivers to, below GRAPHICS_OVERRIDES/<tuple> */
+    const char *subdir; /* where we capture the drivers to, below GRAPHICS_OVERRIDES/<arch_tuple> */
     const char *prefix;
     const char *const suffixes[3];
     const char *const variables[3];
@@ -301,7 +302,7 @@ typedef struct {
     const char *label;
     const char *const dirs[4]; /* host directories, highest priority first */
     const char *suffix;
-    const char *dest;               /* below GRAPHICS_OVERRIDES/<tuple or common> */
+    const char *dest;               /* below GRAPHICS_OVERRIDES/<arch_tuple or common> */
     const char *libsubdir;          /* below the libdir, for drivers named by path */
     const char *const env_files[3]; /* take a list of manifest files */
     const char *const env_dirs[2];  /* take a list of directories */
@@ -412,7 +413,8 @@ struct _MfrCapture {
 
     char *dir;
     char *overrides_dir;
-    char *id;
+    char *arch_tuple;   /* NULL for a capture found by its directory alone */
+    char *id;           /* unique ID of the capture, NULL until the capture is taken */
     char **environment; /* VAR=VALUE, with VALUE empty for one to unset */
     sd_json_variant *stamp;
 };
@@ -437,6 +439,7 @@ mfr_capture_finalize(GObject *object)
 
     g_free(capture->dir);
     g_free(capture->overrides_dir);
+    g_free(capture->arch_tuple);
     g_free(capture->id);
     g_strfreev(capture->environment);
     sd_json_variant_unref(capture->stamp);
@@ -508,12 +511,12 @@ mfr_driver_list_add(MfrDriverList *list, const char *dir, const char *name)
 typedef struct {
     const char *tool;
     const char *core_mount;
-    const char *tuple;
+    const char *arch_tuple;
     char *overrides_dir;
-    char *libdir;           /* overrides_dir/usr/lib/<tuple> */
-    char *tree_libdir;      /* /usr/lib/<tuple> */
-    char *drivers_dir;      /* overrides_dir/GRAPHICS_OVERRIDES/<tuple> */
-    char *tree_drivers_dir; /* GRAPHICS_OVERRIDES/<tuple> */
+    char *libdir;           /* overrides_dir/usr/lib/<arch_tuple> */
+    char *tree_libdir;      /* /usr/lib/<arch_tuple> */
+    char *drivers_dir;      /* overrides_dir/GRAPHICS_OVERRIDES/<arch_tuple> */
+    char *tree_drivers_dir; /* GRAPHICS_OVERRIDES/<arch_tuple> */
     GHashTable *env;        /* variable -> GPtrArray of values */
     GHashTable *placed;     /* host path of a driver -> path in the tree */
     /* the drivers of each kind */
@@ -1345,7 +1348,7 @@ mfr_capture_job_install_loader_manifests(MfrCaptureJob *job, GPtrArray *groups, 
         unsigned int written = 0;
 
         dest_rel = g_build_filename(GRAPHICS_OVERRIDES,
-                                    kind->per_arch ? job->tuple : "common",
+                                    kind->per_arch ? job->arch_tuple : "common",
                                     kind->dest,
                                     NULL);
         dest_dir = g_build_filename(job->overrides_dir, dest_rel, NULL);
@@ -1732,7 +1735,7 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
     g_auto(MfrStampTargets) targets = {
         .paths = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL),
     };
-    g_autofree char *host_libdir = g_build_filename("/usr/lib", job->tuple, NULL);
+    g_autofree char *host_libdir = g_build_filename("/usr/lib", job->arch_tuple, NULL);
     g_autofree char *id = g_uuid_string_random();
     g_autofree char *path = g_build_filename(dir, STAMP_NAME, NULL);
     int r;
@@ -1761,7 +1764,7 @@ mfr_capture_job_write_stamp(MfrCaptureJob *job, const char *dir, GError **error)
     if (r >= 0)
         r = sd_json_buildo(&stamp,
                            SD_JSON_BUILD_PAIR_STRING("id", id),
-                           SD_JSON_BUILD_PAIR_STRING("tuple", job->tuple),
+                           SD_JSON_BUILD_PAIR_STRING("tuple", job->arch_tuple),
                            SD_JSON_BUILD_PAIR_VARIANT("dirs", dirs),
                            SD_JSON_BUILD_PAIR_VARIANT("targets", targets.entries));
     if (r < 0)
@@ -1803,25 +1806,25 @@ mfr_capture_job_write_environment(MfrCaptureJob *job, const char *dir, GError **
 /**
  * mfr_capture_build:
  *
- * Capture the host's graphics stack for @tuple into @dir, against the core
+ * Capture the host's graphics stack for @arch_tuple into @dir, against the core
  * mounted at @core_mount.
  */
 static gboolean
-mfr_capture_build(const char *dir, const char *core_mount, const char *tuple, GError **error)
+mfr_capture_build(const char *dir, const char *core_mount, const char *arch_tuple, GError **error)
 {
     MfrCaptureJob job = {
         .tool = MF_CAPSULE_BIN_DIR "/capsule-capture-libs",
         .core_mount = core_mount,
-        .tuple = tuple,
+        .arch_tuple = arch_tuple,
     };
     g_autoptr(GPtrArray) loader_manifests = NULL;
     g_autoptr(GPtrArray) argv = NULL;
     gboolean ret = FALSE;
 
     job.overrides_dir = g_build_filename(dir, OVERRIDES_NAME, NULL);
-    job.libdir = g_build_filename(job.overrides_dir, "usr/lib", tuple, NULL);
-    job.tree_libdir = g_build_filename("/usr/lib", tuple, NULL);
-    job.tree_drivers_dir = g_build_filename(GRAPHICS_OVERRIDES, tuple, NULL);
+    job.libdir = g_build_filename(job.overrides_dir, "usr/lib", arch_tuple, NULL);
+    job.tree_libdir = g_build_filename("/usr/lib", arch_tuple, NULL);
+    job.tree_drivers_dir = g_build_filename(GRAPHICS_OVERRIDES, arch_tuple, NULL);
     job.drivers_dir = g_build_filename(job.overrides_dir, job.tree_drivers_dir, NULL);
     job.env = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_ptr_array_unref);
     job.placed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -1832,7 +1835,7 @@ mfr_capture_build(const char *dir, const char *core_mount, const char *tuple, GE
     if (!glnx_shutil_mkdir_p_at(AT_FDCWD, job.libdir, 0755, NULL, error))
         goto out;
 
-    g_info("Capturing the host graphics stack for %s against %s", tuple, core_mount);
+    g_info("Capturing the host graphics stack for %s against %s", arch_tuple, core_mount);
     if (!mfr_capture_job_find_drivers(&job, error))
         goto out;
     loader_manifests = mfr_fetch_loader_manifest_groups();
@@ -1905,6 +1908,88 @@ mfr_capture_load_environment(const char *dir, GError **error)
 }
 
 /**
+ * mfr_capture_new_for_dir:
+ *
+ * Name the capture in @dir, without loading it. The directory scans use this,
+ * as they also see captures that were moved aside, or never completed.
+ */
+static MfrCapture *
+mfr_capture_new_for_dir(const char *dir)
+{
+    MfrCapture *capture = g_object_new(MFR_TYPE_CAPTURE, NULL);
+
+    capture->dir = g_strdup(dir);
+    capture->overrides_dir = g_build_filename(dir, OVERRIDES_NAME, NULL);
+    return capture;
+}
+
+/**
+ * mfr_capture_new:
+ * @core_hash: the verity root hash of the core the capture is for
+ * @arch_tuple: the multiarch tuple of the applications that run on it
+ *
+ * Name the capture for a core. Nothing is read or built until
+ * mfr_capture_ensure() is called.
+ *
+ * Returns: (transfer full): the capture
+ */
+MfrCapture *
+mfr_capture_new(const char *core_hash, const char *arch_tuple)
+{
+    g_autofree char *dir = g_build_filename(MFR_CAPTURE_DIR, core_hash, NULL);
+    MfrCapture *capture = mfr_capture_new_for_dir(dir);
+
+    capture->arch_tuple = g_strdup(arch_tuple);
+    return capture;
+}
+
+/**
+ * mfr_capture_unload:
+ *
+ * Forget what was loaded from the directory of the capture.
+ */
+static void
+mfr_capture_unload(MfrCapture *capture)
+{
+    g_clear_pointer(&capture->id, g_free);
+    g_clear_pointer(&capture->environment, g_strfreev);
+    g_clear_pointer(&capture->stamp, sd_json_variant_unref);
+}
+
+/**
+ * mfr_capture_load:
+ *
+ * Load the stamp and the environment from the directory of the capture,
+ * in place of what was loaded before.
+ *
+ * Returns: %FALSE if the capture is incomplete, leaving what was loaded as it was
+ */
+static gboolean
+mfr_capture_load(MfrCapture *capture, GError **error)
+{
+    g_autofree char *stamp_path = g_build_filename(capture->dir, STAMP_NAME, NULL);
+    g_autoptr(sd_json_variant) stamp = mf_json_parse_file(stamp_path, error);
+    g_auto(GStrv) environment = NULL;
+    const char *id;
+
+    if (stamp == NULL)
+        return FALSE;
+    id = mf_json_get_string(stamp, "id");
+    if (id == NULL || !sd_json_variant_is_array(sd_json_variant_by_key(stamp, "dirs")) ||
+        !sd_json_variant_is_array(sd_json_variant_by_key(stamp, "targets")))
+        return glnx_throw(error, "%s is not a capture stamp", stamp_path);
+    environment = mfr_capture_load_environment(capture->dir, error);
+    if (environment == NULL)
+        return FALSE;
+
+    mfr_capture_unload(capture);
+    capture->id = g_strdup(id);
+    capture->environment = g_steal_pointer(&environment);
+    capture->stamp = g_steal_pointer(&stamp);
+    return TRUE;
+}
+
+/**
  * mfr_capture_new_from_dir:
  *
  * Load the capture in @dir.
@@ -1914,24 +1999,10 @@ mfr_capture_load_environment(const char *dir, GError **error)
 static MfrCapture *
 mfr_capture_new_from_dir(const char *dir, GError **error)
 {
-    g_autoptr(MfrCapture) capture = g_object_new(MFR_TYPE_CAPTURE, NULL);
-    g_autofree char *stamp_path = g_build_filename(dir, STAMP_NAME, NULL);
-    const char *id;
+    g_autoptr(MfrCapture) capture = mfr_capture_new_for_dir(dir);
 
-    capture->dir = g_strdup(dir);
-    capture->overrides_dir = g_build_filename(dir, OVERRIDES_NAME, NULL);
-    capture->stamp = mf_json_parse_file(stamp_path, error);
-    if (capture->stamp == NULL)
+    if (!mfr_capture_load(capture, error))
         return NULL;
-    id = mf_json_get_string(capture->stamp, "id");
-    if (id == NULL || !sd_json_variant_is_array(sd_json_variant_by_key(capture->stamp, "dirs")) ||
-        !sd_json_variant_is_array(sd_json_variant_by_key(capture->stamp, "targets")))
-        return glnx_null_throw(error, "%s is not a capture stamp", stamp_path);
-    capture->id = g_strdup(id);
-    capture->environment = mfr_capture_load_environment(dir, error);
-    if (capture->environment == NULL)
-        return NULL;
-
     return g_steal_pointer(&capture);
 }
 
@@ -2007,16 +2078,14 @@ mfr_capture_is_fresh(const MfrCapture *capture)
 
 /**
  * mfr_capture_is_used:
- * @used: (inout): the IDs of the captures in use, collected on first call
+ * @used_ids: (nullable): the IDs of the captures that trees still in use were made with
  *
- * Check whether a tree that is still in use was made with the selected capture.
+ * Check whether a tree that is still in use was made with the capture.
  */
 static gboolean
-mfr_capture_is_used(const MfrCapture *capture, GHashTable **used)
+mfr_capture_is_used(const MfrCapture *capture, GHashTable *used_ids)
 {
-    if (*used == NULL)
-        *used = mfr_tree_collect_used_captures();
-    return g_hash_table_contains(*used, capture->id);
+    return used_ids != NULL && g_hash_table_contains(used_ids, capture->id);
 }
 
 /**
@@ -2050,7 +2119,7 @@ mfr_capture_move_aside(const MfrCapture *capture, const char *reason, GError **e
 
 /**
  * mfr_capture_retire:
- * @used: (inout): the IDs of the captures in use, collected on first call
+ * @used_ids: (nullable): the IDs of the captures that trees still in use were made with
  * @reason: why we do not use the capture anymore, for the log
  *
  * Delete a capture that we do not use anymore, or move it aside if a tree
@@ -2058,11 +2127,11 @@ mfr_capture_move_aside(const MfrCapture *capture, const char *reason, GError **e
  * starts, when no tree can be on its way to a runner.
  */
 static gboolean
-mfr_capture_retire(const MfrCapture *capture, GHashTable **used, const char *reason, GError **error)
+mfr_capture_retire(const MfrCapture *capture, GHashTable *used_ids, const char *reason, GError **error)
 {
     g_autofree char *name = g_path_get_basename(capture->dir);
 
-    if (mfr_capture_is_used(capture, used))
+    if (mfr_capture_is_used(capture, used_ids))
         return mfr_capture_move_aside(capture, reason, error);
 
     g_info("Removing capture %s: %s", name, reason);
@@ -2071,60 +2140,67 @@ mfr_capture_retire(const MfrCapture *capture, GHashTable **used, const char *rea
 
 /**
  * mfr_capture_ensure:
+ * @core_mount: where the core the capture is for is mounted
  *
- * Ensure a capture that matches the current host is present.
+ * Make sure the capture exists and matches the current host: load it from its
+ * directory if that was not done yet. Build it anew if the capture didn't exist
+ * or if the host changed since it was made. A capture that is built anew gets a
+ * new ID, see mfr_capture_get_id().
+ *
+ * Returns: %TRUE if the capture can be used
  */
-MfrCapture *
-mfr_capture_ensure(const char *core_hash, const char *core_mount, const char *tuple, GError **error)
+gboolean
+mfr_capture_ensure(MfrCapture *capture, const char *core_mount, GError **error)
 {
-    g_autofree char *dir = g_build_filename(MFR_CAPTURE_DIR, core_hash, NULL);
-    g_autofree char *tmp_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_TMP_PREFIX, core_hash, NULL);
-    g_autoptr(MfrCapture) capture = NULL;
+    g_autofree char *name = g_path_get_basename(capture->dir);
+    g_autofree char *tmp_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_TMP_PREFIX, name, NULL);
     g_autoptr(GError) load_error = NULL;
 
-    if (g_file_test(dir, G_FILE_TEST_IS_DIR)) {
-        capture = mfr_capture_new_from_dir(dir, &load_error);
-        if (capture != NULL && mfr_capture_is_fresh(capture))
-            return g_steal_pointer(&capture);
-        if (capture != NULL) {
-            if (!mfr_capture_move_aside(capture, "the host changed", error))
-                return NULL;
-        } else {
-            g_warning("Discarding capture %s: %s", dir, load_error->message);
-            if (!glnx_shutil_rm_rf_at(AT_FDCWD, dir, NULL, error))
-                return NULL;
-        }
-        g_clear_object(&capture);
+    g_return_val_if_fail(capture->arch_tuple != NULL, FALSE);
+
+    if (capture->id == NULL && g_file_test(capture->dir, G_FILE_TEST_IS_DIR) &&
+        !mfr_capture_load(capture, &load_error)) {
+        g_warning("Discarding capture %s: %s", capture->dir, load_error->message);
+        if (!glnx_shutil_rm_rf_at(AT_FDCWD, capture->dir, NULL, error))
+            return FALSE;
+    }
+    if (capture->id != NULL) {
+        if (mfr_capture_is_fresh(capture))
+            return TRUE;
+        if (!mfr_capture_move_aside(capture, "the host changed", error))
+            return FALSE;
+        mfr_capture_unload(capture);
     }
 
+    /* the new capture takes the place of the old one only once it is complete */
     if (!glnx_shutil_rm_rf_at(AT_FDCWD, tmp_dir, NULL, error) ||
         !glnx_shutil_mkdir_p_at(AT_FDCWD, tmp_dir, 0755, NULL, error))
-        return NULL;
-    if (!mfr_capture_build(tmp_dir, core_mount, tuple, error)) {
+        return FALSE;
+    if (!mfr_capture_build(tmp_dir, core_mount, capture->arch_tuple, error)) {
         glnx_shutil_rm_rf_at(AT_FDCWD, tmp_dir, NULL, NULL);
-        return NULL;
+        return FALSE;
     }
-    if (rename(tmp_dir, dir) != 0) {
-        glnx_throw_errno_prefix(error, "Unable to rename %s to %s", tmp_dir, dir);
+    if (rename(tmp_dir, capture->dir) != 0) {
+        glnx_throw_errno_prefix(error, "Unable to rename %s to %s", tmp_dir, capture->dir);
         glnx_shutil_rm_rf_at(AT_FDCWD, tmp_dir, NULL, NULL);
-        return NULL;
+        return FALSE;
     }
 
-    return mfr_capture_new_from_dir(dir, error);
+    return mfr_capture_load(capture, error);
 }
 
 /**
  * mfr_capture_check_all:
+ * @used_ids: (nullable): the IDs of the captures that trees still in use were made with
  *
  * Retire every capture whose host files changed, and every one that was moved
  * aside, see mfr_capture_retire(), and remove what an interrupted capture left
  * behind. Done when the daemon starts.
  */
 void
-mfr_capture_check_all(void)
+mfr_capture_check_all(GHashTable *used_ids)
 {
     g_autoptr(GDir) entries = g_dir_open(MFR_CAPTURE_DIR, 0, NULL);
-    g_autoptr(GHashTable) used = NULL;
     const char *name;
 
     while (entries != NULL && (name = g_dir_read_name(entries)) != NULL) {
@@ -2151,7 +2227,7 @@ mfr_capture_check_all(void)
 
         g_clear_error(&error);
         if (capture != NULL) {
-            if (!mfr_capture_retire(capture, &used, reason, &error))
+            if (!mfr_capture_retire(capture, used_ids, reason, &error))
                 g_warning("%s", error->message);
             continue;
         }

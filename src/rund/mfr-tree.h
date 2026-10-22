@@ -10,6 +10,7 @@
 
 #include "mfr-app.h"
 #include "mfr-capture.h"
+#include "mfr-image-mounts.h"
 
 G_BEGIN_DECLS
 
@@ -22,17 +23,16 @@ G_BEGIN_DECLS
 #define MFR_TYPE_TREE (mfr_tree_get_type())
 G_DECLARE_FINAL_TYPE(MfrTree, mfr_tree, MFR, TREE, GObject)
 
-MfrTree           *mfr_tree_assemble(MfrApp            *app,
-                                     MfrCapture        *capture,
-                                     const char *const *image_paths,
-                                     GError           **error);
+MfrTree           *mfr_tree_assemble(MfrApp         *app,
+                                     GHashTable     *captures,
+                                     MfrImageMounts *img_mounts,
+                                     GError        **error);
 void               mfr_tree_teardown(MfrTree *tree);
 
-gboolean           mfr_tree_matches(const MfrTree    *tree,
-                                    const MfrApp     *app,
-                                    const MfrCapture *capture);
+gboolean           mfr_tree_matches(const MfrTree *tree,
+                                    const MfrApp  *app);
 
-const MfrApp      *mfr_tree_get_app(const MfrTree *tree);
+MfrApp            *mfr_tree_get_app(const MfrTree *tree);
 const char        *mfr_tree_get_key(const MfrTree *tree);
 const char        *mfr_tree_get_executable(const MfrTree *tree);
 const char *const *mfr_tree_get_environment(const MfrTree *tree);

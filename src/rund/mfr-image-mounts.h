@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <glib.h>
+#include <glib-object.h>
 
 #include "mfr-app.h"
 
@@ -14,17 +14,19 @@ G_BEGIN_DECLS
 
 #define MFR_IMAGES_MOUNT_DIR MF_RUN_MOUNT_DIR "/images"
 
-typedef struct MfrImageMounts MfrImageMounts;
+#define MFR_TYPE_IMAGE_MOUNTS (mfr_image_mounts_get_type())
+G_DECLARE_FINAL_TYPE(MfrImageMounts, mfr_image_mounts, MFR, IMAGE_MOUNTS, GObject)
 
-MfrImageMounts               *mfr_image_mounts_new(void);
-void                          mfr_image_mounts_free(MfrImageMounts *mounts);
-G_DEFINE_AUTOPTR_CLEANUP_FUNC(MfrImageMounts,
-                              mfr_image_mounts_free)
+typedef struct MfrImageMount MfrImageMount;
 
-const char *mfr_image_mounts_acquire(MfrImageMounts *mounts,
-                                     const MfrLayer *layer,
-                                     GError        **error);
-void        mfr_image_mounts_release(MfrImageMounts *mounts,
-                                     const char     *verity_hash);
+MfrImageMounts              *mfr_image_mounts_new(void);
+
+MfrImageMount               *mfr_image_mounts_acquire(MfrImageMounts *mounts,
+                                                      const MfrImage *image,
+                                                      GError        **error);
+void                         mfr_image_mounts_release(MfrImageMounts *mounts,
+                                                      MfrImageMount  *img_mount);
+
+const char                  *mfr_image_mount_get_path(const MfrImageMount *img_mount);
 
 G_END_DECLS

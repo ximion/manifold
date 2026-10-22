@@ -38,13 +38,14 @@ mfr_app_append_layers_json(const MfrApp *app, sd_json_variant **array)
     for (MfrLayerKind kind = 0; kind < MFR_LAYER_COUNT; kind++) {
         const MfrLayer *layer = &app->layers[kind];
 
-        if (layer->verity_hash == NULL)
+        if (layer->image.verity_hash == NULL)
             continue;
-        int r = sd_json_variant_append_arraybo(array,
-                                               SD_JSON_BUILD_PAIR_STRING("kind", LAYER_NAMES[kind]),
-                                               SD_JSON_BUILD_PAIR_STRING("componentId", layer->component_id),
-                                               SD_JSON_BUILD_PAIR_STRING("version", layer->version),
-                                               SD_JSON_BUILD_PAIR_STRING("rootHash", layer->verity_hash));
+        int r = sd_json_variant_append_arraybo(
+            array,
+            SD_JSON_BUILD_PAIR_STRING("kind", LAYER_NAMES[kind]),
+            SD_JSON_BUILD_PAIR_STRING("componentId", layer->component_id),
+            SD_JSON_BUILD_PAIR_STRING("version", layer->version),
+            SD_JSON_BUILD_PAIR_STRING("rootHash", layer->image.verity_hash));
         if (r < 0)
             return r;
     }
@@ -73,14 +74,14 @@ mfr_runtime_layer_kind_from_component_kind(MfComponentKind kind, MfrLayerKind *r
 }
 
 /**
- * mfr_fill_layer:
+ * mfr_fill_layer_info:
  *
  * Fill out layer information from the storage root and component information.
  * For composition, we need to know where the image is, and where the
  * partitions are in it. The verified manifest holds that info.
  */
 static gboolean
-mfr_fill_layer(const char *root, MfComponent *component, MfrLayer *layer, GError **error)
+mfr_fill_layer_info(const char *root, MfComponent *component, MfrLayer *layer, GError **error)
 {
     g_autoptr(MfManifest) manifest = mf_component_fetch_manifest(component, error);
 
@@ -93,10 +94,10 @@ mfr_fill_layer(const char *root, MfComponent *component, MfrLayer *layer, GError
 
     layer->component_id = g_strdup(mf_component_get_id(component));
     layer->version = g_strdup(mf_component_get_version(component));
-    layer->verity_hash = g_strdup(mf_component_get_verity_hash(component));
-    layer->image_path = mf_store_image_path_at(root, layer->verity_hash);
-    layer->data_offset = mf_manifest_get_data_offset(manifest);
-    layer->hash_offset = mf_manifest_get_hash_offset(manifest);
+    layer->image.verity_hash = g_strdup(mf_component_get_verity_hash(component));
+    layer->image.image_path = mf_store_image_path_at(root, layer->image.verity_hash);
+    layer->image.data_offset = mf_manifest_get_data_offset(manifest);
+    layer->image.hash_offset = mf_manifest_get_hash_offset(manifest);
     return TRUE;
 }
 
@@ -148,7 +149,7 @@ mfr_app_load_runtime_info(MfrApp *app, const char *root, MfComponent *app_compon
                               mf_component_kind_to_string(mf_component_get_kind(current)),
                               mf_component_get_id(current),
                               app->component_id);
-        if (!mfr_fill_layer(root, next, &app->layers[kind], error))
+        if (!mfr_fill_layer_info(root, next, &app->layers[kind], error))
             return FALSE;
 
         if (kind == MFR_LAYER_CORE)
@@ -195,13 +196,14 @@ mfr_app_load(const char *component_id, GError **error)
 
     g_return_val_if_fail(mf_component_id_is_valid(component_id), NULL);
 
-    /* only what this application needs is read, never the whole store */
+    /* refuse to load if this application was revoked */
     revoked_path = g_build_filename(MF_STORAGE_DIR, MF_STORE_APPS_SUBDIR, component_id, REVOKED_NAME, NULL);
     if (g_file_test(revoked_path, G_FILE_TEST_EXISTS)) {
         g_set_error(error, MF_ERROR, MF_ERROR_REVOKED, "%s was revoked", component_id);
         return NULL;
     }
 
+    /* load the component manifest for this app */
     component = mf_store_read_component_at(MF_STORAGE_DIR, component_id, NULL, error);
     if (component == NULL)
         return NULL;
@@ -221,9 +223,9 @@ mfr_app_load(const char *component_id, GError **error)
     if (app->command == NULL)
         return glnx_null_throw(error, "The manifest of %s does not say what to run", component_id);
 
-    app->tuple = mfr_build_multiarch_tuple(mf_manifest_get_architecture(manifest));
+    app->arch_tuple = mfr_build_multiarch_tuple(mf_manifest_get_architecture(manifest));
 
-    if (!mfr_fill_layer(MF_STORAGE_DIR, component, &app->layers[MFR_LAYER_APP], error))
+    if (!mfr_fill_layer_info(MF_STORAGE_DIR, component, &app->layers[MFR_LAYER_APP], error))
         return NULL;
     if (!mfr_app_load_runtime_info(app, MF_STORAGE_DIR, component, error))
         return NULL;
@@ -252,13 +254,13 @@ mfr_app_finalize(GObject *object)
     for (MfrLayerKind kind = 0; kind < MFR_LAYER_COUNT; kind++) {
         g_free(app->layers[kind].component_id);
         g_free(app->layers[kind].version);
-        g_free(app->layers[kind].verity_hash);
-        g_free(app->layers[kind].image_path);
+        g_free(app->layers[kind].image.verity_hash);
+        g_free(app->layers[kind].image.image_path);
     }
     g_free(app->component_id);
     g_free(app->version);
     g_free(app->command);
-    g_free(app->tuple);
+    g_free(app->arch_tuple);
 
     G_OBJECT_CLASS(mfr_app_parent_class)->finalize(object);
 }
