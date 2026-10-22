@@ -242,7 +242,8 @@ test_base_link_must_name_a_component(Fixture *f, gconstpointer user_data)
 /**
  * test_sdk_app_is_a_runtime:
  *
- * An SDK is installed as a runtime, even the SDK of an application.
+ * An SDK is installed as a runtime, even the SDK of an application, which
+ * builds on that application.
  */
 static void
 test_sdk_app_is_a_runtime(Fixture *f, gconstpointer user_data)
@@ -256,7 +257,7 @@ test_sdk_app_is_a_runtime(Fixture *f, gconstpointer user_data)
                                      .kind = "app",
                                      .version = "0.1.0",
                                      .sdk = TRUE,
-                                     .base_id = TEST_PLATFORM_ID},
+                                     .base_id = TEST_APP_ID},
                       NULL,
                       "manual");
     sdk = mf_store_get_component(f->store, TEST_APP_SDK_ID, NULL, &error);
@@ -267,7 +268,8 @@ test_sdk_app_is_a_runtime(Fixture *f, gconstpointer user_data)
     g_assert_true(g_str_has_suffix(mf_component_get_dir(sdk), "/runtimes/" TEST_APP_SDK_ID "/0.1.0-1"));
     base = mf_store_get_base(f->store, sdk, &error);
     g_assert_no_error(error);
-    g_assert_cmpstr(mf_component_get_id(base), ==, TEST_PLATFORM_ID);
+    g_assert_cmpstr(mf_component_get_id(base), ==, TEST_APP_ID);
+    g_assert_cmpint(mf_component_get_kind(base), ==, MF_COMPONENT_KIND_APP);
 }
 
 /**

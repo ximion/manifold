@@ -238,11 +238,16 @@ mft_write_version(const char *root,
     mft_make_link(image_target, image_link);
     if (manifest->base_id != NULL) {
         g_autofree char *base_link = g_build_filename(version_dir, "base", NULL);
-        g_autofree char *base_target = g_strdup_printf("../../../" MF_STORE_RUNTIMES_SUBDIR "/%s/%s",
-                                                       manifest->base_id,
-                                                       base_version_dir != NULL ? base_version_dir
-                                                                                : "current");
+        g_autofree char *base_target = NULL;
+        const char *base_subdir = MF_STORE_RUNTIMES_SUBDIR;
 
+        /* we put an SDK on the component of its own kind, and everything else on a runtime */
+        if (manifest->sdk)
+            base_subdir = mf_store_subdir_for_kind(mf_component_kind_from_string(manifest->kind), FALSE);
+        base_target = g_strdup_printf("../../../%s/%s/%s",
+                                      base_subdir,
+                                      manifest->base_id,
+                                      base_version_dir != NULL ? base_version_dir : "current");
         mft_make_link(base_target, base_link);
     }
     mft_write_file(manifest_path, manifest_json);
