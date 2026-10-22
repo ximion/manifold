@@ -27,7 +27,7 @@ struct _MfComponent {
     MfComponentKind kind;
     char *version;
     guint64 revision;
-    char *full_version; /* (nullable) built on first use */
+    char *full_version; /* the version and the revision, `<version>-<revision>` */
     gboolean sdk;
     char *identity;
     char *verity_hash;
@@ -268,6 +268,7 @@ mf_component_new(const char *component_id,
     component->kind = kind;
     component->version = g_strdup(version);
     component->revision = revision;
+    component->full_version = mf_build_full_version(version, revision);
     component->sdk = sdk;
     component->identity = g_strdup(identity);
     component->verity_hash = g_strdup(verity_hash);
@@ -348,10 +349,6 @@ const char *
 mf_component_get_full_version(MfComponent *component)
 {
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
-
-    /* a component does not change once it is made */
-    if (component->full_version == NULL)
-        component->full_version = mf_build_full_version(component->version, component->revision);
     return component->full_version;
 }
 
