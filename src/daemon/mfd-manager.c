@@ -274,6 +274,29 @@ mfd_install_plan_clear(MfdInstallPlan *iplan)
 }
 
 /**
+ * mfd_install_plan_compare_layer:
+ *
+ * Order plans by the layer of their component, from the bottom to the top.
+ * A component only builds on a kind that is declared before its own kind,
+ * or on its own kind if it is an SDK, see mf_component_kind_can_build_on().
+ * In this order, every component therefore comes after the components it
+ * builds on.
+ */
+static gint
+mfd_install_plan_compare_layer(gconstpointer a, gconstpointer b)
+{
+    MfManifest *manifest_a = mf_bundle_image_get_manifest(((const MfdInstallPlan *) a)->image);
+    MfManifest *manifest_b = mf_bundle_image_get_manifest(((const MfdInstallPlan *) b)->image);
+    MfComponentKind kind_a = mf_manifest_get_kind(manifest_a);
+    MfComponentKind kind_b = mf_manifest_get_kind(manifest_b);
+
+    if (kind_a != kind_b)
+        return kind_a < kind_b ? -1 : 1;
+    /* an SDK builds on a component of its own kind */
+    return (int) mf_manifest_is_sdk(manifest_a) - (int) mf_manifest_is_sdk(manifest_b);
+}
+
+/**
  * mfd_set_already_installed_error:
  */
 static void
@@ -1307,6 +1330,88 @@ mfd_manager_execute_removal(MfdManager *manager,
 }
 
 /**
+ * mfd_manager_execute_install_plan:
+ * @bundle: the bundle the component is in
+ * @iplan: the plan of the component
+ * @tracker: the progress of the installation
+ * @ret_bytes_added: (out): the size of the image if we added it to the store, or 0
+ * @ret_detail: (out caller-allocates) (optional): more about a failure
+ * @error: a #GError
+ *
+ * Install one component of a bundle: copy its image into the store, unless
+ * the store has it already, and then record the component.
+ *
+ * If recording the component fails, we remove the image again if we added it,
+ * so a failed step leaves nothing behind. A failed copy leaves nothing behind
+ * by itself, see mfd_store_writer_add_image().
+ *
+ * Returns: %TRUE if the component was installed
+ */
+static gboolean
+mfd_manager_execute_install_plan(MfdManager *manager,
+                                 MfBundle *bundle,
+                                 MfdInstallPlan *iplan,
+                                 MfdProgressTracker *tracker,
+                                 guint64 *ret_bytes_added,
+                                 MfdErrorDetail *ret_detail,
+                                 GError **error)
+{
+    MfManifest *manifest = mf_bundle_image_get_manifest(iplan->image);
+    const char *verity_hash = mf_manifest_get_verity_hash(manifest);
+    const char *component_id = mf_manifest_get_component_id(manifest);
+    const char *version = mf_manifest_get_version(manifest);
+    guint64 image_size = mf_manifest_get_image_size(manifest);
+    g_autoptr(GError) local_error = NULL;
+    gboolean added = FALSE;
+
+    *ret_bytes_added = 0;
+    if (iplan->add_image)
+        mfd_progress_begin_item(tracker, MF_ACTION_INSTALL, component_id, version, image_size);
+
+    /* another component of the bundle may have had the same image */
+    if (iplan->add_image && !mf_store_has_image(manager->store, verity_hash)) {
+        g_info("Adding image %s of %s %s", verity_hash, component_id, version);
+        if (!mfd_store_writer_add_image(manager->writer,
+                                        bundle,
+                                        iplan->image,
+                                        mfd_on_copy_progress,
+                                        tracker,
+                                        error))
+            return FALSE;
+        added = TRUE;
+    } else {
+        g_info("Image %s of %s %s is in the store already", verity_hash, component_id, version);
+    }
+
+    if (!mfd_store_writer_install_component(manager->writer,
+                                            manifest,
+                                            iplan->base,
+                                            mf_bundle_image_get_metainfo(iplan->image),
+                                            iplan->mode,
+                                            &local_error)) {
+        g_autoptr(GError) remove_error = NULL;
+
+        /* the same version was installed in the meantime, and it uses the image, so we keep it */
+        if (g_error_matches(local_error, MF_ERROR, MF_ERROR_ALREADY_INSTALLED)) {
+            mfd_set_already_installed_error(error, ret_detail, component_id, version);
+            return FALSE;
+        }
+        if (added && !mfd_store_writer_remove_image(manager->writer, verity_hash, &remove_error))
+            g_warning("Unable to remove image %s again, the next cleanup will remove it: %s",
+                      verity_hash,
+                      remove_error->message);
+        g_propagate_error(error, g_steal_pointer(&local_error));
+        return FALSE;
+    }
+
+    if (iplan->add_image)
+        mfd_progress_end_item(tracker);
+    if (added)
+        *ret_bytes_added = image_size;
+    return TRUE;
+}
+
+/**
  * mfd_manager_install_bundle:
  * @manager: an #MfdManager
  * @bundle: the bundle to install
@@ -1315,9 +1420,16 @@ mfd_manager_execute_removal(MfdManager *manager,
  * @ret_detail: (out caller-allocates) (optional): more about a failure
  * @error: a #GError
  *
- * Install everything a bundle contains. Everything that can be refused is
- * refused before anything is written. Then the older versions and revisions
- * the installation supersedes are removed, see mfd_manager_plan_supersede().
+ * Install everything a bundle contains. We refuse everything that can be
+ * refused before we write anything. Then we install the components one after
+ * the other, every component after the components of the bundle it builds on,
+ * see mfd_manager_execute_install_plan().
+ *
+ * If installing a component fails, we undo only that step and stop. The
+ * components that were installed before stay installed, so their images do
+ * not have to be copied (or downloaded) again. Once all components are
+ * installed, we remove the older versions and revisions the installation
+ * supersedes, see mfd_manager_plan_supersede().
  *
  * Returns: (transfer full): what was installed, or %NULL on error
  */
@@ -1361,9 +1473,12 @@ mfd_manager_install_bundle(MfdManager *manager,
                                             error))
             return NULL;
     }
+    /* we install every component after the components it builds on, so if installing a
+     * component fails, the components installed before it have what they build on */
+    g_array_sort(plans, mfd_install_plan_compare_layer);
 
-    /* copy the images first, then add the referrals and metadata, and remove what that
-     * supersedes, which counts as one item more */
+    /* every image we copy is one item of the progress, and removing what the installation
+     * supersedes is one item more */
     tracker.total = 1;
     for (guint i = 0; i < plans->len; i++) {
         if (g_array_index(plans, MfdInstallPlan, i).add_image)
@@ -1371,57 +1486,22 @@ mfd_manager_install_bundle(MfdManager *manager,
     }
     for (guint i = 0; i < plans->len; i++) {
         MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
-        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
-        const char *verity_hash = mf_manifest_get_verity_hash(manifest);
-        const char *component_id = mf_manifest_get_component_id(manifest);
-        const char *version = mf_manifest_get_version(manifest);
-        guint64 image_size = mf_manifest_get_image_size(manifest);
+        guint64 image_bytes;
 
         if (plan->skip)
             continue;
-        if (!plan->add_image) {
-            g_info("Image %s of %s %s is in the store already", verity_hash, component_id, version);
-            continue;
-        }
-
-        g_info("Adding image %s of %s %s", verity_hash, component_id, version);
-        mfd_progress_begin_item(&tracker, MF_ACTION_INSTALL, component_id, version, image_size);
-        if (!mfd_store_writer_add_image(manager->writer,
-                                        bundle,
-                                        plan->image,
-                                        mfd_on_copy_progress,
-                                        &tracker,
-                                        error))
+        if (!mfd_manager_execute_install_plan(manager,
+                                              bundle,
+                                              plan,
+                                              &tracker,
+                                              &image_bytes,
+                                              ret_detail,
+                                              error))
             return NULL;
-        mfd_progress_end_item(&tracker);
-        bytes_added += image_size;
+        bytes_added += image_bytes;
     }
 
-    for (guint i = 0; i < plans->len; i++) {
-        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
-        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
-        const char *component_id = mf_manifest_get_component_id(manifest);
-        const char *version = mf_manifest_get_version(manifest);
-        g_autoptr(GError) local_error = NULL;
-
-        if (plan->skip)
-            continue;
-
-        if (!mfd_store_writer_install_component(manager->writer,
-                                                manifest,
-                                                plan->base,
-                                                mf_bundle_image_get_metainfo(plan->image),
-                                                plan->mode,
-                                                &local_error)) {
-            if (g_error_matches(local_error, MF_ERROR, MF_ERROR_ALREADY_INSTALLED))
-                mfd_set_already_installed_error(error, ret_detail, component_id, version);
-            else
-                g_propagate_error(error, g_steal_pointer(&local_error));
-            return NULL;
-        }
-    }
-
-    /* what is superseded goes, but the installation stands even if it can not be removed */
+    /* we remove what the installation supersedes, but the installation stands even if that fails */
     result = mf_result_new();
     rmplan = mfd_manager_plan_supersede(manager, plans, &supersede_error);
     mfd_progress_split_last_item(&tracker, rmplan != NULL ? rmplan->items->len : 0);
