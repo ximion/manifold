@@ -98,17 +98,19 @@ newer copy wins.
 - libblake3
 - AppStream
 - libcurl ≥ 7.62
-- libelf ≥ 0.152, for `capsule-capture-libs`
-- libglnx, which Meson fetches as a subproject
+- libelf ≥ 0.152
+
+Runtime:
+- Linux kernel ≥ 6.12
+- systemd ≥ 257
+- polkit ≥ 1.0
+- Kernel compiled with: loop devices, device-mapper verity, EROFS, overlayfs
 
 Optional:
 
 - gobject-introspection, to build the GObject Introspection data
 - `apparmor_parser` ≥ 4.0, to install the AppArmor profile
-- Sphinx, to build the documentation (on by default; disable it with `-Ddocs=false`)
-
-At runtime, Manifold needs systemd, polkit, and a kernel with loop devices,
-device-mapper verity, EROFS, and overlayfs.
+- Sphinx, to build the documentation
 
 ### Building and installing
 
@@ -130,4 +132,3 @@ script for formatting).
 ## License
 
 Manifold is licensed under the [GNU Lesser General Public License v2.1 or later](LICENSE).
-
