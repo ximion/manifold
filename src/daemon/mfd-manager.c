@@ -1396,6 +1396,71 @@ mfd_manager_execute_install_plan(MfdManager *manager,
 }
 
 /**
+ * mfd_manager_plan_bundle_install:
+ * @ret_detail: (out caller-allocates) (optional): more about a failure
+ *
+ * Plan the installation of every image of a bundle.
+ *
+ * Returns: (transfer full) (element-type MfdInstallPlan): the plans, or %NULL
+ *   if the bundle can not be installed
+ */
+static GArray *
+mfd_manager_plan_bundle_install(MfdManager *manager,
+                                MfBundle *bundle,
+                                MfdErrorDetail *ret_detail,
+                                GError **error)
+{
+    GPtrArray *images = mf_bundle_get_images(bundle);
+    g_autoptr(GArray) plans = g_array_sized_new(FALSE, TRUE, sizeof(MfdInstallPlan), images->len);
+
+    g_array_set_size(plans, images->len);
+    g_array_set_clear_func(plans, (GDestroyNotify) mfd_install_plan_clear);
+    for (guint i = 0; i < images->len; i++) {
+        if (!mfd_manager_plan_image_install(manager,
+                                            bundle,
+                                            g_ptr_array_index(images, i),
+                                            &g_array_index(plans, MfdInstallPlan, i),
+                                            ret_detail,
+                                            error))
+            return NULL;
+    }
+    /* we install every component after the components it builds on, so if installing a
+     * component fails, the components installed before it have what they build on */
+    g_array_sort(plans, mfd_install_plan_compare_layer);
+
+    return g_steal_pointer(&plans);
+}
+
+/**
+ * mfd_manager_results_add_installed:
+ * @result: where to add what was installed
+ * @plans: (element-type MfdInstallPlan): the plans of the installation
+ *
+ * Add the components of the bundle that the installation installed to
+ * @result, but not the dependencies that were there already.
+ */
+static void
+mfd_manager_results_add_installed(MfdManager *manager, MfResult *result, GArray *plans)
+{
+    for (guint i = 0; i < plans->len; i++) {
+        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
+        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
+        g_autoptr(MfComponent) component = NULL;
+
+        if (plan->skip)
+            continue;
+        component = mfd_manager_get_installed(manager,
+                                              mf_manifest_get_component_id(manifest),
+                                              mf_manifest_get_version(manifest),
+                                              mf_manifest_get_revision(manifest));
+        if (component == NULL ||
+            g_strcmp0(mf_component_get_verity_hash(component), mf_manifest_get_verity_hash(manifest)) != 0)
+            continue;
+        mf_result_add_installed(result, component);
+    }
+}
+
+/**
  * mfd_manager_install_bundle:
  * @manager: an #MfdManager
  * @bundle: the bundle to install
@@ -1444,22 +1509,10 @@ mfd_manager_install_bundle(MfdManager *manager,
     if (!mf_store_load(manager->store, error))
         return NULL;
 
-    GPtrArray *images = mf_bundle_get_images(bundle);
-    plans = g_array_sized_new(FALSE, TRUE, sizeof(MfdInstallPlan), images->len);
-    g_array_set_size(plans, images->len);
-    g_array_set_clear_func(plans, (GDestroyNotify) mfd_install_plan_clear);
-    for (guint i = 0; i < images->len; i++) {
-        if (!mfd_manager_plan_image_install(manager,
-                                            bundle,
-                                            g_ptr_array_index(images, i),
-                                            &g_array_index(plans, MfdInstallPlan, i),
-                                            ret_detail,
-                                            error))
-            return NULL;
-    }
-    /* we install every component after the components it builds on, so if installing a
-     * component fails, the components installed before it have what they build on */
-    g_array_sort(plans, mfd_install_plan_compare_layer);
+    /* plan installation */
+    plans = mfd_manager_plan_bundle_install(manager, bundle, ret_detail, error);
+    if (plans == NULL)
+        return NULL;
 
     /* every image we copy is one item of the progress, and removing what the installation
      * supersedes is one item more */
@@ -1492,24 +1545,7 @@ mfd_manager_install_bundle(MfdManager *manager,
     if (rmplan == NULL || !mfd_manager_execute_removal(manager, rmplan, &tracker, result, &supersede_error))
         g_warning("Unable to remove what the installation supersedes: %s", supersede_error->message);
 
-    /* emit the components of the bundle that were installed now as results, not the
-     * dependencies that were there already */
-    for (guint i = 0; i < plans->len; i++) {
-        MfdInstallPlan *plan = &g_array_index(plans, MfdInstallPlan, i);
-        MfManifest *manifest = mf_bundle_image_get_manifest(plan->image);
-        g_autoptr(MfComponent) component = NULL;
-
-        if (plan->skip)
-            continue;
-        component = mfd_manager_get_installed(manager,
-                                              mf_manifest_get_component_id(manifest),
-                                              mf_manifest_get_version(manifest),
-                                              mf_manifest_get_revision(manifest));
-        if (component == NULL ||
-            g_strcmp0(mf_component_get_verity_hash(component), mf_manifest_get_verity_hash(manifest)) != 0)
-            continue;
-        mf_result_add_installed(result, component);
-    }
+    mfd_manager_results_add_installed(manager, result, plans);
     mf_result_set_bytes_added(result, bytes_added);
 
     return g_steal_pointer(&result);
