@@ -1731,6 +1731,32 @@ mfr_stamp_targets_clear(MfrStampTargets *targets)
 G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(MfrStampTargets, mfr_stamp_targets_clear)
 
 /**
+ * mfr_stamp_targets_add:
+ *
+ * Add a host file to @targets, with its size and modification time,
+ * unless it is in there already.
+ */
+static gboolean
+mfr_stamp_targets_add(MfrStampTargets *targets, const char *host_path, GError **error)
+{
+    struct stat st;
+    int r;
+
+    if (!g_hash_table_add(targets->paths, g_strdup(host_path)))
+        return TRUE;
+    if (stat(host_path, &st) != 0)
+        return glnx_throw_errno_prefix(error, "Captured %s is missing on the host", host_path);
+    r = sd_json_variant_append_arraybo(&targets->entries,
+                                       SD_JSON_BUILD_PAIR_STRING("path", host_path),
+                                       SD_JSON_BUILD_PAIR_UNSIGNED("size", (guint64) st.st_size),
+                                       SD_JSON_BUILD_PAIR_UNSIGNED("mtime", mfr_stat_mtime_ns(&st)));
+    if (r < 0)
+        return glnx_throw(error, "Unable to record %s: %s", host_path, g_strerror(-r));
+
+    return TRUE;
+}
+
+/**
  * mfr_stamp_add_link_targets:
  *
  * Add every host file a link below @dir points at to @targets, with its
@@ -1758,23 +1784,11 @@ mfr_stamp_add_link_targets(const char *dir, MfrStampTargets *targets, GError **e
                 return FALSE;
         } else if (entry->d_type == DT_LNK) {
             g_autofree char *target = g_file_read_link(path, NULL);
-            const char *host_path;
-            struct stat st;
-            int r;
 
             if (target == NULL || !g_str_has_prefix(target, MFR_HOST_DIR))
                 continue;
-            host_path = target + strlen(MFR_HOST_DIR);
-            if (!g_hash_table_add(targets->paths, g_strdup(host_path)))
-                continue;
-            if (stat(host_path, &st) != 0)
-                return glnx_throw_errno_prefix(error, "Captured %s is missing on the host", host_path);
-            r = sd_json_variant_append_arraybo(&targets->entries,
-                                               SD_JSON_BUILD_PAIR_STRING("path", host_path),
-                                               SD_JSON_BUILD_PAIR_UNSIGNED("size", (guint64) st.st_size),
-                                               SD_JSON_BUILD_PAIR_UNSIGNED("mtime", mfr_stat_mtime_ns(&st)));
-            if (r < 0)
-                return glnx_throw(error, "Unable to record %s: %s", host_path, g_strerror(-r));
+            if (!mfr_stamp_targets_add(targets, target + strlen(MFR_HOST_DIR), error))
+                return FALSE;
         }
     }
 
