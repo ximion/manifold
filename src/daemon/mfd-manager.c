@@ -1293,7 +1293,7 @@ mfd_manager_execute_removal(MfdManager *manager,
         mfd_progress_begin_item(tracker,
                                 item->action,
                                 mf_component_get_id(item->component),
-                                mf_component_get_version(item->component),
+                                mf_component_get_full_version(item->component),
                                 0);
         if (!mfd_store_writer_remove_component(manager->writer, item->component, error))
             return FALSE;
@@ -1344,13 +1344,14 @@ mfd_manager_execute_install_plan(MfdManager *manager,
     const char *verity_hash = mf_manifest_get_verity_hash(manifest);
     const char *component_id = mf_manifest_get_component_id(manifest);
     const char *version = mf_manifest_get_version(manifest);
+    g_autofree char *full_version = mf_build_full_version(version, mf_manifest_get_revision(manifest));
     guint64 image_size = mf_manifest_get_image_size(manifest);
     g_autoptr(GError) local_error = NULL;
     gboolean added = FALSE;
 
     *ret_bytes_added = 0;
     if (iplan->add_image)
-        mfd_progress_begin_item(tracker, MF_ACTION_INSTALL, component_id, version, image_size);
+        mfd_progress_begin_item(tracker, MF_ACTION_INSTALL, component_id, full_version, image_size);
 
     /* another component of the bundle may have had the same image */
     if (iplan->add_image && !mf_store_has_image(manager->store, verity_hash)) {

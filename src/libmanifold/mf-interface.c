@@ -71,7 +71,7 @@ static SD_VARLINK_DEFINE_STRUCT_TYPE(
     SD_VARLINK_DEFINE_FIELD_BY_TYPE(action, Action, 0),
     SD_VARLINK_FIELD_COMMENT("Identifier of the component that is acted on."),
     SD_VARLINK_DEFINE_FIELD(subject, SD_VARLINK_STRING, 0),
-    SD_VARLINK_FIELD_COMMENT("Version of the component."),
+    SD_VARLINK_FIELD_COMMENT("Version of the component, with its revision: '<version>-<rev>'."),
     SD_VARLINK_DEFINE_FIELD(version, SD_VARLINK_STRING, SD_VARLINK_NULLABLE),
     SD_VARLINK_FIELD_COMMENT("How far this item is, from 0 to 100."),
     SD_VARLINK_DEFINE_FIELD(percent, SD_VARLINK_FLOAT, 0),

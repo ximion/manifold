@@ -515,6 +515,11 @@ class InstallerTest(unittest.TestCase):
         items = [r['progress']['item'] for r in replies[:-1] if 'item' in r['progress']]
         self.assertEqual([i['action'] for i in items], ['install'] * 4)
         self.assertEqual([i['percent'] for i in items], [0, 100, 0, 100])
+        # an item names the version with its revision, so that the items of two revisions differ
+        self.assertEqual(
+            [i['version'] for i in items],
+            [f'13.4-{self.core.revision}'] * 2 + [f'13.4-{self.sdk.revision}'] * 2,
+        )
         # removing what is superseded counts as one item more
         self.assertEqual(
             [round(r['progress']['percent']) for r in replies[:-1]], [0, 33, 33, 67, 100]

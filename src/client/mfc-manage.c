@@ -49,8 +49,8 @@ mfc_on_progress(const MfProgress *progress, gpointer user_data)
         break;
     }
 
-    if (g_strcmp0(mfc_progress_bar_get_label(ctx->progress_bar), label) != 0)
-        mfc_progress_bar_start(ctx->progress_bar, label);
+    if (!mfc_progress_bar_is_for(ctx->progress_bar, item))
+        mfc_progress_bar_start(ctx->progress_bar, item, label);
     mfc_progress_bar_update(ctx->progress_bar,
                             mf_item_progress_get_percent(item),
                             mf_item_progress_get_bytes_done(item));

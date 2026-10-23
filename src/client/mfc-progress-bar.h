@@ -7,6 +7,7 @@
 #pragma once
 
 #include <glib.h>
+#include <manifold.h>
 
 G_BEGIN_DECLS
 
@@ -15,9 +16,11 @@ typedef struct MfcProgressBar MfcProgressBar;
 MfcProgressBar               *mfc_progress_bar_new(gboolean is_tty);
 void                          mfc_progress_bar_free(MfcProgressBar *bar);
 
-const char                   *mfc_progress_bar_get_label(MfcProgressBar *bar);
-void                          mfc_progress_bar_start(MfcProgressBar *bar,
-                                                     const char     *label);
+gboolean                      mfc_progress_bar_is_for(MfcProgressBar       *bar,
+                                                      const MfItemProgress *item);
+void                          mfc_progress_bar_start(MfcProgressBar       *bar,
+                                                     const MfItemProgress *item,
+                                                     const char           *label);
 void                          mfc_progress_bar_update(MfcProgressBar *bar,
                                                       double          percent,
                                                       guint64         bytes_done);
