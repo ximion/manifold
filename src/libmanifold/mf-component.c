@@ -11,6 +11,7 @@
 
 #include "mf-error.h"
 #include "mf-manifest.h"
+#include "mf-utils.h"
 #include "mf-utils-private.h"
 
 /* the longest an identifier may be, as it is a directory name */
@@ -492,6 +493,32 @@ mf_component_set_manifest(MfComponent *component, MfManifest *manifest)
 {
     g_return_if_fail(MF_IS_COMPONENT(component));
     g_set_object(&component->manifest, manifest);
+}
+
+/**
+ * mf_component_compare:
+ *
+ * Order components by kind, from applications down to cores, then by ID,
+ * then from the oldest version to the newest.
+ */
+int
+mf_component_compare(gconstpointer a, gconstpointer b)
+{
+    MfComponent *component_a = (MfComponent *) a;
+    MfComponent *component_b = (MfComponent *) b;
+    MfComponentKind kind_a = mf_component_get_kind(component_a);
+    MfComponentKind kind_b = mf_component_get_kind(component_b);
+    int cmp;
+
+    if (kind_a != kind_b)
+        return kind_a > kind_b ? -1 : 1;
+    cmp = g_strcmp0(mf_component_get_id(component_a), mf_component_get_id(component_b));
+    if (cmp != 0)
+        return cmp;
+    return mf_version_compare_with_rev(mf_component_get_version(component_a),
+                                       mf_component_get_revision(component_a),
+                                       mf_component_get_version(component_b),
+                                       mf_component_get_revision(component_b));
 }
 
 /**

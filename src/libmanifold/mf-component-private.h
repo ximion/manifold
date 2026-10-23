@@ -42,4 +42,7 @@ GPtrArray   *mf_component_array_from_reply(sd_json_variant *list,
 void         mf_component_set_manifest(MfComponent *component,
                                        MfManifest  *manifest);
 
+int          mf_component_compare(gconstpointer a,
+                                  gconstpointer b);
+
 MF_END_PRIVATE_DECLS
