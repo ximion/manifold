@@ -387,15 +387,16 @@ static const MfrLoaderManifestKind MFR_LOADER_MANIFEST_KINDS[] = {
 };
 
 /**
- * LoaderManifestPlan:
+ * MfrLoaderManifestPlan:
  *
  * One manifest of the host, and what has to be captured for it.
  */
 typedef struct {
     const MfrLoaderManifestKind *kind;
     char *source;
-    GPtrArray *sonames;  /* to capture into the libdir */
-    GPtrArray *absolute; /* host paths to capture into libdir/<libsubdir>/ */
+    sd_json_variant *manifest; /* the parsed manifest, NULL for an OpenCL .icd file */
+    GPtrArray *sonames;        /* to capture into the libdir */
+    GPtrArray *absolute;       /* host paths to capture into libdir/<libsubdir>/ */
 } MfrLoaderManifestPlan;
 
 /**
@@ -532,6 +533,7 @@ static void
 mfr_loader_manifest_plan_free(MfrLoaderManifestPlan *plan)
 {
     g_free(plan->source);
+    sd_json_variant_unref(plan->manifest);
     g_ptr_array_unref(plan->sonames);
     g_ptr_array_unref(plan->absolute);
     g_free(plan);
@@ -924,41 +926,6 @@ mfr_find_loader_manifests(const MfrLoaderManifestKind *kind)
 }
 
 /**
- * mfr_loader_manifest_fetch_library_objects:
- *
- * Find the objects of a JSON loader manifest that have a library_path: the
- * ICD, the layer, or each of the layers. Meta-layers have none.
- */
-static GPtrArray *
-mfr_loader_manifest_fetch_library_objects(sd_json_variant *manifest)
-{
-    GPtrArray *objects = g_ptr_array_new();
-
-    if (!sd_json_variant_is_object(manifest))
-        return objects;
-
-    for (const char *const *key = (const char *const[]){"ICD", "layer", NULL}; *key != NULL; key++) {
-        sd_json_variant *candidate = sd_json_variant_by_key(manifest, *key);
-
-        if (sd_json_variant_is_object(candidate) && sd_json_variant_by_key(candidate, "library_path") != NULL)
-            g_ptr_array_add(objects, candidate);
-    }
-
-    auto layers = sd_json_variant_by_key(manifest, "layers");
-    if (sd_json_variant_is_array(layers)) {
-        for (size_t i = 0; i < sd_json_variant_elements(layers); i++) {
-            sd_json_variant *candidate = sd_json_variant_by_index(layers, i);
-
-            if (sd_json_variant_is_object(candidate) &&
-                sd_json_variant_by_key(candidate, "library_path") != NULL)
-                g_ptr_array_add(objects, candidate);
-        }
-    }
-
-    return objects;
-}
-
-/**
  * mfr_loader_manifest_get_library_path:
  *
  * Returns: the library_path of a loader-manifest object, or %NULL if it has none
@@ -971,6 +938,101 @@ mfr_loader_manifest_get_library_path(sd_json_variant *slot)
     if (!sd_json_variant_is_string(value) || sd_json_variant_string(value)[0] == '\0')
         return NULL;
     return sd_json_variant_string(value);
+}
+
+/**
+ * MfrLibraryPathFunc:
+ * @library_path: the library_path of an object of a loader manifest
+ * @user_data: what was passed to mfr_loader_manifest_map_library_paths()
+ * @error: a #GError
+ *
+ * Returns: (transfer full): the library_path to put in its place, or %NULL on error
+ */
+typedef char *(*MfrLibraryPathFunc)(const char *library_path, gpointer user_data, GError **error);
+
+/**
+ * mfr_loader_manifest_object_map_library_path:
+ *
+ * Pass the library_path of one object of a loader manifest through @func, if
+ * the object has one, and put what @func returns in its place.
+ *
+ * Returns: %TRUE, or %FALSE if @func or the rewrite failed
+ */
+static gboolean
+mfr_loader_manifest_object_map_library_path(sd_json_variant **object,
+                                            MfrLibraryPathFunc func,
+                                            gpointer user_data,
+                                            GError **error)
+{
+    const char *library_path = sd_json_variant_is_object(*object)
+                                   ? mfr_loader_manifest_get_library_path(*object)
+                                   : NULL;
+    g_autofree char *replacement = NULL;
+    int r;
+
+    if (library_path == NULL)
+        return TRUE;
+    replacement = func(library_path, user_data, error);
+    if (replacement == NULL)
+        return FALSE;
+    r = sd_json_variant_set_field_string(object, "library_path", replacement);
+    if (r < 0)
+        return glnx_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
+    return TRUE;
+}
+
+/**
+ * mfr_loader_manifest_map_library_paths:
+ * @manifest: a JSON loader manifest
+ *
+ * Pass every library_path of a JSON loader manifest through @func: the one of
+ * the ICD, of the layer, or of each of the layers. Meta-layers have none.
+ *
+ * Returns: (transfer full): a copy of @manifest with what @func returned in
+ *   place of every library_path, or %NULL on error
+ */
+static sd_json_variant *
+mfr_loader_manifest_map_library_paths(sd_json_variant *manifest,
+                                      MfrLibraryPathFunc func,
+                                      gpointer user_data,
+                                      GError **error)
+{
+    g_autoptr(sd_json_variant) result = sd_json_variant_ref(manifest);
+    int r;
+
+    for (const char *const *key = (const char *const[]){"ICD", "layer", "layers", NULL}; *key != NULL;
+         key++) {
+        g_autoptr(sd_json_variant) value = sd_json_variant_ref(sd_json_variant_by_key(result, *key));
+
+        if (value == NULL)
+            continue;
+        if (sd_json_variant_is_array(value)) {
+            g_autoptr(sd_json_variant) elements = NULL;
+
+            for (size_t i = 0; i < sd_json_variant_elements(value); i++) {
+                g_autoptr(sd_json_variant) element = sd_json_variant_ref(sd_json_variant_by_index(value, i));
+
+                if (!mfr_loader_manifest_object_map_library_path(&element, func, user_data, error))
+                    return NULL;
+                r = sd_json_variant_append_array(&elements, element);
+                if (r < 0)
+                    return glnx_null_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
+            }
+            /* an empty array stays as it is */
+            if (elements == NULL)
+                continue;
+            sd_json_variant_unref(value);
+            value = g_steal_pointer(&elements);
+        } else if (!mfr_loader_manifest_object_map_library_path(&value, func, user_data, error)) {
+            return NULL;
+        }
+
+        r = sd_json_variant_set_field(&result, *key, value);
+        if (r < 0)
+            return glnx_null_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
+    }
+
+    return g_steal_pointer(&result);
 }
 
 /**
@@ -999,10 +1061,31 @@ mfr_loader_manifest_libpath_get_host_path(const char *library_path, const char *
 }
 
 /**
+ * mfr_loader_manifest_plan_add_library_cb:
+ *
+ * Sort a library that a manifest names into the SONAMEs or the host paths of
+ * a plan, see mfr_loader_manifest_map_library_paths().
+ *
+ * Returns: (transfer full): @library_path, unchanged
+ */
+static char *
+mfr_loader_manifest_plan_add_library_cb(const char *library_path, gpointer user_data, GError **error)
+{
+    MfrLoaderManifestPlan *plan = user_data;
+    char *path = NULL;
+
+    if (mfr_loader_manifest_libpath_get_host_path(library_path, plan->source, &path))
+        g_ptr_array_add(plan->absolute, path);
+    else
+        g_ptr_array_add(plan->sonames, g_strdup(library_path));
+    return g_strdup(library_path);
+}
+
+/**
  * mfr_loader_manifest_plan_new:
  *
  * Read a manifest of the host and sort the libraries it names into SONAMEs
- * and host paths.
+ * and host paths. We keep a JSON manifest, so we only parse it once.
  *
  * Returns: (transfer full) (nullable): the plan, or %NULL if the manifest is unreadable
  */
@@ -1010,8 +1093,7 @@ static MfrLoaderManifestPlan *
 mfr_loader_manifest_plan_new(const MfrLoaderManifestKind *kind, const char *source)
 {
     g_autoptr(GError) error = NULL;
-    g_autoptr(sd_json_variant) manifest = NULL;
-    g_autoptr(GPtrArray) objects = NULL;
+    g_autoptr(sd_json_variant) planned = NULL;
     MfrLoaderManifestPlan *plan;
 
     plan = g_new0(MfrLoaderManifestPlan, 1);
@@ -1037,24 +1119,17 @@ mfr_loader_manifest_plan_new(const MfrLoaderManifestKind *kind, const char *sour
         return plan;
     }
 
-    manifest = mf_json_parse_file(source, &error);
-    if (manifest == NULL) {
+    /* we only need what the walk sorts into the plan, not the copy of the manifest it returns */
+    plan->manifest = mf_json_parse_file(source, &error);
+    if (plan->manifest != NULL)
+        planned = mfr_loader_manifest_map_library_paths(plan->manifest,
+                                                        mfr_loader_manifest_plan_add_library_cb,
+                                                        plan,
+                                                        &error);
+    if (planned == NULL) {
         g_warning("Unable to parse %s: %s", source, error->message);
         mfr_loader_manifest_plan_free(plan);
         return NULL;
-    }
-
-    objects = mfr_loader_manifest_fetch_library_objects(manifest);
-    for (guint i = 0; i < objects->len; i++) {
-        const char *library_path = mfr_loader_manifest_get_library_path(g_ptr_array_index(objects, i));
-        char *path = NULL;
-
-        if (library_path == NULL)
-            continue;
-        if (mfr_loader_manifest_libpath_get_host_path(library_path, source, &path))
-            g_ptr_array_add(plan->absolute, path);
-        else
-            g_ptr_array_add(plan->sonames, g_strdup(library_path));
     }
 
     return plan;
@@ -1158,6 +1233,29 @@ mfr_capture_job_resolve_library_path(MfrCaptureJob *job,
     return g_build_filename(job->tree_libdir, library_path, NULL);
 }
 
+/* what mfr_capture_job_rewrite_library_path() rewrites a library_path for */
+typedef struct {
+    MfrCaptureJob *job;
+    const MfrLoaderManifestPlan *plan;
+} MfrLibraryPathRewrite;
+
+/**
+ * mfr_capture_job_rewrite_library_path_cb:
+ *
+ * Returns: (transfer full): the path in the tree a library_path has to be
+ *   rewritten to, or %NULL if the library was not captured
+ */
+static char *
+mfr_capture_job_rewrite_library_path_cb(const char *library_path, gpointer user_data, GError **error)
+{
+    const MfrLibraryPathRewrite *rewrite = user_data;
+    char *resolved = mfr_capture_job_resolve_library_path(rewrite->job, rewrite->plan, library_path);
+
+    if (resolved == NULL)
+        glnx_throw(error, "%s was not captured", library_path);
+    return resolved;
+}
+
 /**
  * mfr_capture_job_rewrite_json_loader_manifest:
  *
@@ -1170,62 +1268,15 @@ mfr_capture_job_rewrite_json_loader_manifest(MfrCaptureJob *job,
                                              const char *target,
                                              GError **error)
 {
-    g_autoptr(sd_json_variant) manifest = mf_json_parse_file(plan->source, error);
-    int r;
+    MfrLibraryPathRewrite rewrite = {.job = job, .plan = plan};
+    g_autoptr(sd_json_variant) manifest = NULL;
 
+    manifest = mfr_loader_manifest_map_library_paths(plan->manifest,
+                                                     mfr_capture_job_rewrite_library_path_cb,
+                                                     &rewrite,
+                                                     error);
     if (manifest == NULL)
         return FALSE;
-
-    for (const char *const *key = (const char *const[]){"ICD", "layer", "layers", NULL}; *key != NULL;
-         key++) {
-        g_autoptr(sd_json_variant) value = sd_json_variant_ref(sd_json_variant_by_key(manifest, *key));
-        g_autoptr(sd_json_variant) rewritten = NULL;
-
-        if (value == NULL)
-            continue;
-        if (sd_json_variant_is_array(value)) {
-            for (size_t i = 0; i < sd_json_variant_elements(value); i++) {
-                g_autoptr(sd_json_variant) element = sd_json_variant_ref(sd_json_variant_by_index(value, i));
-                const char *library_path = sd_json_variant_is_object(element)
-                                               ? mfr_loader_manifest_get_library_path(element)
-                                               : NULL;
-                g_autofree char *resolved = NULL;
-
-                if (library_path != NULL) {
-                    resolved = mfr_capture_job_resolve_library_path(job, plan, library_path);
-                    if (resolved == NULL)
-                        return glnx_throw(error, "%s was not captured", library_path);
-                    r = sd_json_variant_set_field_string(&element, "library_path", resolved);
-                    if (r < 0)
-                        return glnx_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
-                }
-                r = sd_json_variant_append_array(&rewritten, element);
-                if (r < 0)
-                    return glnx_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
-            }
-            if (rewritten == NULL)
-                continue;
-        } else if (sd_json_variant_is_object(value) && mfr_loader_manifest_get_library_path(value) != NULL) {
-            g_autofree char *resolved = mfr_capture_job_resolve_library_path(
-                job,
-                plan,
-                mfr_loader_manifest_get_library_path(value));
-
-            if (resolved == NULL)
-                return glnx_throw(error, "%s was not captured", mfr_loader_manifest_get_library_path(value));
-            rewritten = g_steal_pointer(&value);
-            r = sd_json_variant_set_field_string(&rewritten, "library_path", resolved);
-            if (r < 0)
-                return glnx_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
-        } else {
-            continue;
-        }
-
-        r = sd_json_variant_set_field(&manifest, *key, rewritten);
-        if (r < 0)
-            return glnx_throw(error, "Unable to rewrite manifest: %s", g_strerror(-r));
-    }
-
     return mf_json_write_file(target, manifest, error);
 }
 
