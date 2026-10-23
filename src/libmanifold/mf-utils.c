@@ -17,6 +17,9 @@
 
 constexpr size_t VERSION_LENGTH_MAX = 128;
 
+/* the length of a hex encoded 256 bit hash */
+constexpr size_t HEX_HASH_LENGTH = 64;
+
 /**
  * mf_name_is_valid:
  * @name: (nullable): a string
@@ -122,10 +125,10 @@ mf_version_compare_with_rev(const char *version_a,
 gboolean
 mf_hex_hash_is_valid(const char *hash)
 {
-    if (hash == NULL || strnlen(hash, MF_HEX_HASH_LENGTH + 1) != MF_HEX_HASH_LENGTH)
+    if (hash == NULL || strnlen(hash, HEX_HASH_LENGTH + 1) != HEX_HASH_LENGTH)
         return FALSE;
 
-    for (size_t i = 0; i < MF_HEX_HASH_LENGTH; i++) {
+    for (size_t i = 0; i < HEX_HASH_LENGTH; i++) {
         if (!g_ascii_isxdigit(hash[i]) || g_ascii_isupper(hash[i]))
             return FALSE;
     }

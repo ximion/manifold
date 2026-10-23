@@ -43,10 +43,6 @@ MF_BEGIN_PRIVATE_DECLS
 #define MF_STORE_REVOKED_NAME "revoked"
 #define MF_STORE_LOCAL_ORIGIN "local"
 
-/* the length of a hex encoded 256 bit hash, as used for image file names */
-#define MF_HEX_HASH_LENGTH 64
-
-
 /* the layout of the store */
 MF_INTERNAL_VISIBLE
 const char *const *mf_store_get_component_subdirs(void);
