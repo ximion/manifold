@@ -76,6 +76,19 @@ mfc_context_find_command(MfcContext *ctx, const char *name)
 }
 
 /**
+ * mfc_command_build_usage:
+ *
+ * Returns: (transfer full): the name of the command, followed by its arguments
+ */
+char *
+mfc_command_build_usage(const MfcCommand *cmd)
+{
+    if (cmd->arguments == NULL)
+        return g_strdup(cmd->name);
+    return g_strconcat(cmd->name, " ", cmd->arguments, NULL);
+}
+
+/**
  * mfc_context_get_manager:
  *
  * Returns: (transfer none): the manager of the service, created on first use

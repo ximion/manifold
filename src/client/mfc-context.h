@@ -75,6 +75,7 @@ void        mfc_context_register_command(MfcContext    *ctx,
                                          MfcCommandFunc func);
 MfcCommand *mfc_context_find_command(MfcContext *ctx,
                                      const char *name);
+char       *mfc_command_build_usage(const MfcCommand *cmd);
 
 MfManager  *mfc_context_get_manager(MfcContext *ctx);
 

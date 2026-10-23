@@ -48,7 +48,7 @@ mfc_get_help_summary(MfcContext *ctx)
 
     for (guint i = 0; i < ctx->commands->len; i++) {
         const MfcCommand *cmd = g_ptr_array_index(ctx->commands, i);
-        g_autofree char *usage = g_strconcat(cmd->name, " ", cmd->arguments, NULL);
+        g_autofree char *usage = mfc_command_build_usage(cmd);
 
         g_string_append_printf(summary, "  %-32s %s\n", usage, cmd->summary);
     }

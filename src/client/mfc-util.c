@@ -45,11 +45,7 @@ mfc_option_context_for_command(MfcCommand *cmd, const GOptionEntry *entries)
     g_autofree char *title = NULL;
     g_autofree char *summary = NULL;
 
-    if (cmd->arguments == NULL)
-        parameter_str = g_strdup(cmd->name);
-    else
-        parameter_str = g_strconcat(cmd->name, " ", cmd->arguments, NULL);
-
+    parameter_str = mfc_command_build_usage(cmd);
     context = g_option_context_new(parameter_str);
     g_option_context_set_help_enabled(context, TRUE);
     if (entries != NULL)
