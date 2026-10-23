@@ -64,6 +64,9 @@ MF_INTERNAL_VISIBLE
 gboolean mf_store_has_image(MfStore    *store,
                             const char *verity_hash);
 MF_INTERNAL_VISIBLE
+GPtrArray *mf_store_list_images(MfStore *store,
+                                GError **error);
+MF_INTERNAL_VISIBLE
 MfComponent *mf_store_find_identity(MfStore    *store,
                                     const char *identity,
                                     GError    **error);

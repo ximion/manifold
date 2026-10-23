@@ -1077,3 +1077,47 @@ mf_store_has_image(MfStore *store, const char *verity_hash)
 
     return g_file_test(path, G_FILE_TEST_IS_REGULAR);
 }
+
+/**
+ * mf_store_list_images:
+ * @store: an #MfStore
+ * @error: a #GError
+ *
+ * List every image the store holds, whether a component uses it or not.
+ * This reads the image directory, not what was loaded.
+ *
+ * Returns: (transfer full) (element-type utf8): the root hashes of the
+ *   images, sorted, or %NULL on error
+ */
+GPtrArray *
+mf_store_list_images(MfStore *store, GError **error)
+{
+    g_autofree char *images_dir = NULL;
+    g_autoptr(GPtrArray) hashes = g_ptr_array_new_with_free_func(g_free);
+    g_autoptr(GDir) dir = NULL;
+    const char *name;
+
+    g_return_val_if_fail(MF_IS_STORE(store), NULL);
+
+    /* a store that never had an image has no image directory */
+    images_dir = g_build_filename(GET_PRIVATE(store)->path, MF_STORE_IMAGES_SUBDIR, NULL);
+    if (!g_file_test(images_dir, G_FILE_TEST_IS_DIR))
+        return g_steal_pointer(&hashes);
+    dir = g_dir_open(images_dir, 0, error);
+    if (dir == NULL)
+        return NULL;
+    while ((name = g_dir_read_name(dir)) != NULL) {
+        g_autofree char *path = g_build_filename(images_dir, name, NULL);
+        char *hash = mf_store_hash_from_image_name(name);
+
+        if (hash == NULL)
+            continue;
+        if (g_file_test(path, G_FILE_TEST_IS_REGULAR))
+            g_ptr_array_add(hashes, hash);
+        else
+            g_free(hash);
+    }
+    g_ptr_array_sort_values(hashes, (GCompareFunc) g_strcmp0);
+
+    return g_steal_pointer(&hashes);
+}

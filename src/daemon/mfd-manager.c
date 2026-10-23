@@ -865,51 +865,24 @@ mfd_removal_plan_add_item(MfdRemovalPlan *rmplan, MfComponent *component, MfActi
  * point to. A link to `current` keeps the version that `current` points to
  * now: if we removed it, `current` would move to an older version, and the
  * versions that link to it would build on that one. We do not keep a base
- * whose link we can not read.
+ * whose link we can not read, or that is not installed.
  *
  * Returns: every version a link points to, mapped to a version that links to it
  */
 static GHashTable *
 mfd_manager_find_used(MfdManager *manager, GPtrArray *installed, GHashTable *rm_pending)
 {
-    const char *root = mf_store_get_path(manager->store);
-    /* the version directory of every installed version, mapped to that version */
-    g_autoptr(GHashTable) by_dir = g_hash_table_new(g_str_hash, g_str_equal);
-    GHashTable *used = g_hash_table_new(g_direct_hash, g_direct_equal);
+    GHashTable *used = g_hash_table_new_full(g_direct_hash, g_direct_equal, g_object_unref, NULL);
 
     for (guint i = 0; i < installed->len; i++) {
         MfComponent *component = g_ptr_array_index(installed, i);
-
-        g_hash_table_insert(by_dir, (gpointer) mf_component_get_dir(component), component);
-    }
-
-    for (guint i = 0; i < installed->len; i++) {
-        MfComponent *component = g_ptr_array_index(installed, i);
-        g_autoptr(MfBaseLink) base = NULL;
-        g_autofree char *component_dir = NULL;
-        g_autofree char *version_name = NULL;
-        g_autofree char *base_dir = NULL;
-        MfComponent *linked;
+        MfComponent *base;
 
         if (g_hash_table_contains(rm_pending, component))
             continue;
-        base = mf_store_read_base_link(component, NULL);
-        if (base == NULL)
-            continue;
-        component_dir = g_build_filename(root, base->subdir, base->component_id, NULL);
-        version_name = g_strdup(base->version_name);
-        if (version_name == NULL) {
-            /* a link to `current` keeps the version it names, to prevent accidental downgrades */
-            g_autofree char *current_path = g_build_filename(component_dir, MF_STORE_CURRENT_NAME, NULL);
-
-            version_name = g_file_read_link(current_path, NULL);
-            if (version_name == NULL)
-                continue;
-        }
-        base_dir = g_build_filename(component_dir, version_name, NULL);
-        linked = g_hash_table_lookup(by_dir, base_dir);
-        if (linked != NULL)
-            g_hash_table_insert(used, linked, component);
+        base = mf_store_get_base(manager->store, component, NULL);
+        if (base != NULL)
+            g_hash_table_insert(used, base, component);
     }
 
     return used;
@@ -1006,10 +979,8 @@ mfd_manager_complete_removal_plan(MfdManager *manager,
 {
     g_autoptr(GHashTable) newest_apps = NULL;
     g_autoptr(GHashTable) images_used = NULL;
-    g_autoptr(GDir) images = NULL;
-    g_autofree char *images_dir = NULL;
+    g_autoptr(GPtrArray) images = NULL;
     gboolean added;
-    const char *name;
 
     /* the newest version of an application or plugin that was not requested is kept, even if it is auto */
     newest_apps = mfd_find_newest_apps(installed, requested);
@@ -1041,21 +1012,20 @@ mfd_manager_complete_removal_plan(MfdManager *manager,
 
     /* plan to remove the images that no kept version uses */
     images_used = mfd_find_used_images(installed, rmplan->cpts_set);
-    images_dir = g_build_filename(mf_store_get_path(manager->store), MF_STORE_IMAGES_SUBDIR, NULL);
-    images = g_dir_open(images_dir, 0, error);
+    images = mf_store_list_images(manager->store, error);
     if (images == NULL)
         return FALSE;
-    while ((name = g_dir_read_name(images)) != NULL) {
-        g_autofree char *hash = mf_store_hash_from_image_name(name);
+    for (guint i = 0; i < images->len; i++) {
+        const char *hash = g_ptr_array_index(images, i);
         g_autofree char *path = NULL;
         struct stat st;
 
-        if (hash == NULL || g_hash_table_contains(images_used, hash))
+        if (g_hash_table_contains(images_used, hash))
             continue;
         path = mf_store_image_path_at(mf_store_get_path(manager->store), hash);
         if (stat(path, &st) == 0)
             rmplan->image_bytes += (guint64) st.st_size;
-        g_ptr_array_add(rmplan->images, g_steal_pointer(&hash));
+        g_ptr_array_add(rmplan->images, g_strdup(hash));
     }
 
     return TRUE;

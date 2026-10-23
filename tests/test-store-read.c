@@ -326,6 +326,40 @@ test_list(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * test_list_images:
+ */
+static void
+test_list_images(Fixture *f, gconstpointer user_data)
+{
+    g_autoptr(GError) error = NULL;
+    g_autofree char *images_dir = g_build_filename(f->dir, MF_STORE_IMAGES_SUBDIR, NULL);
+    g_autofree char *core_hash = mft_fake_hash(TEST_CORE_ID);
+    g_autofree char *app_hash = mft_fake_hash(TEST_APP_ID);
+    g_autofree char *stray_file = g_build_filename(images_dir, "notes.txt", NULL);
+    g_autofree char *stray_dir_name = g_strconcat(mft_fake_hash(TEST_KIT_ID), ".raw", NULL);
+    g_autofree char *stray_dir = g_build_filename(images_dir, stray_dir_name, NULL);
+    g_autoptr(GPtrArray) images = NULL;
+
+    /* both versions of the core share an image, so the setup wrote four of them */
+    mft_write_file(stray_file, "not an image");
+    g_assert_cmpint(g_mkdir(stray_dir, 0755), ==, 0);
+    images = mf_store_list_images(f->store, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(images->len, ==, 4);
+    g_assert_true(g_ptr_array_find_with_equal_func(images, core_hash, g_str_equal, NULL));
+    g_assert_true(g_ptr_array_find_with_equal_func(images, app_hash, g_str_equal, NULL));
+    for (guint i = 1; i < images->len; i++)
+        g_assert_cmpstr(g_ptr_array_index(images, i - 1), <, g_ptr_array_index(images, i));
+
+    /* a store without images */
+    mft_rm_rf(images_dir);
+    g_clear_pointer(&images, g_ptr_array_unref);
+    images = mf_store_list_images(f->store, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(images->len, ==, 0);
+}
+
+/**
  * test_image_link_must_point_into_store:
  */
 static void
@@ -508,6 +542,7 @@ main(int argc, char **argv)
     add_test("base-link-must-name-a-component", test_base_link_must_name_a_component);
     add_test("sdk-app-is-a-runtime", test_sdk_app_is_a_runtime);
     add_test("list", test_list);
+    add_test("list-images", test_list_images);
     add_test("image-link-must-point-into-store", test_image_link_must_point_into_store);
     add_test("manifest-must-be-sound", test_manifest_must_be_sound);
     add_test("fetch-manifest", test_fetch_manifest);
