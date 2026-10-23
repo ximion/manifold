@@ -168,6 +168,7 @@ mfr_enter_mount_namespace(GError **error)
 MfrComposer *
 mfr_composer_new(GError **error)
 {
+    g_autoptr(GHashTable) used_layers = NULL;
     g_autoptr(GHashTable) used_captures = NULL;
 
     if (!mfr_enter_mount_namespace(error))
@@ -175,9 +176,10 @@ mfr_composer_new(GError **error)
 
     /* clean up captures in case anything has changed on our host, except for the ones that
      * applications launched before our restart still use. Also drop unused trees */
-    used_captures = mfr_tree_collect_used_captures();
+    used_layers = mfr_tree_collect_used_layers();
+    used_captures = mfr_tree_collect_used_captures(used_layers);
     mfr_capture_check_all(used_captures);
-    mfr_tree_remove_unused();
+    mfr_tree_remove_unused(used_layers);
 
     return g_object_new(MFR_TYPE_COMPOSER, NULL);
 }

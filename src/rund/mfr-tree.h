@@ -40,7 +40,8 @@ gboolean           mfr_tree_clone(const MfrTree *tree,
                                   int           *ret_mount_fd,
                                   GError       **error);
 
-GHashTable        *mfr_tree_collect_used_captures(void);
-void               mfr_tree_remove_unused(void);
+GHashTable        *mfr_tree_collect_used_layers(void);
+GHashTable        *mfr_tree_collect_used_captures(GHashTable *used_layers);
+void               mfr_tree_remove_unused(GHashTable *used_layers);
 
 G_END_DECLS
