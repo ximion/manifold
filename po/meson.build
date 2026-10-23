@@ -3,7 +3,7 @@
 #
 
 mf_gettext_domain = 'manifold'
-i18n_result = i18n.gettext(mf_gettext_domain,
+i18n.gettext(mf_gettext_domain,
     preset: 'glib',
     args: [
         '--default-domain=' + mf_gettext_domain,
