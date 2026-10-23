@@ -138,7 +138,7 @@ mf_manifest_init(MfManifest *manifest)
 #define FIELD_BOOLEAN(object, section, key, ret, error) \
     mf_json_get_boolean_field(object, section, key, MF_ERROR_INVALID_MANIFEST, ret, error)
 #define FIELD_HASH(object, section, key, error) \
-    g_strdup(mf_json_get_hash_field(object, section, key, MF_ERROR_INVALID_MANIFEST, error))
+    mf_json_get_hash_field(object, section, key, MF_ERROR_INVALID_MANIFEST, error)
 
 static void mf_set_invalid_json(GError **error, const char *format, ...) G_GNUC_PRINTF(2, 3);
 
@@ -214,7 +214,7 @@ mf_manifest_json_parse_base(sd_json_variant *manifest, MfManifestPrivate *priv, 
         return FALSE;
     }
 
-    priv->base_identity = FIELD_HASH(base, "base", "identity", error);
+    priv->base_identity = g_strdup(FIELD_HASH(base, "base", "identity", error));
     if (priv->base_identity == NULL)
         return FALSE;
     priv->base_id = mf_manifest_json_get_component_id(base, "base", error);
@@ -225,7 +225,7 @@ mf_manifest_json_parse_base(sd_json_variant *manifest, MfManifestPrivate *priv, 
         return FALSE;
     if (!FIELD_UNSIGNED(base, "base", "revision", &priv->base_revision, error))
         return FALSE;
-    priv->base_content_hash = FIELD_HASH(base, "base", "content-hash", error);
+    priv->base_content_hash = g_strdup(FIELD_HASH(base, "base", "content-hash", error));
     if (priv->base_content_hash == NULL)
         return FALSE;
 
@@ -258,11 +258,12 @@ mf_manifest_json_parse_image(sd_json_variant *manifest, MfManifestPrivate *priv,
     if (!FIELD_UNSIGNED(image, "image", "size", &priv->image_size, error))
         return FALSE;
     for (MfChecksumKind kind = MF_CHECKSUM_KIND_UNKNOWN + 1; kind < MF_CHECKSUM_KIND_LAST; kind++) {
-        priv->image_checksums[kind] = FIELD_HASH(image, "image", mf_checksum_kind_to_string(kind), error);
+        priv->image_checksums[kind] = g_strdup(
+            FIELD_HASH(image, "image", mf_checksum_kind_to_string(kind), error));
         if (priv->image_checksums[kind] == NULL)
             return FALSE;
     }
-    priv->verity_hash = FIELD_HASH(image, "image", "verity-root-hash", error);
+    priv->verity_hash = g_strdup(FIELD_HASH(image, "image", "verity-root-hash", error));
     if (priv->verity_hash == NULL)
         return FALSE;
     if (!FIELD_UNSIGNED(image, "image", "data-offset", &priv->data_offset, error) ||
@@ -338,10 +339,10 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
         return FALSE;
     if (!FIELD_BOOLEAN(jo, NULL, "sdk", &priv->sdk, error))
         return FALSE;
-    priv->identity = FIELD_HASH(jo, NULL, "identity", error);
+    priv->identity = g_strdup(FIELD_HASH(jo, NULL, "identity", error));
     if (priv->identity == NULL)
         return FALSE;
-    priv->content_hash = FIELD_HASH(jo, NULL, "content-hash", error);
+    priv->content_hash = g_strdup(FIELD_HASH(jo, NULL, "content-hash", error));
     if (priv->content_hash == NULL)
         return FALSE;
 
