@@ -7,6 +7,8 @@
 #include "config.h"
 #include "mf-result-private.h"
 
+#include <glib/gi18n-lib.h>
+
 #include "mf-component-private.h"
 #include "mf-error.h"
 
@@ -243,7 +245,7 @@ mf_result_new_from_reply(sd_json_variant *reply, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "Reply of the Manifold service was not understood: %s",
+                    _("Reply of the Manifold service was not understood: %s"),
                     g_strerror(-r));
         return NULL;
     }
@@ -269,10 +271,11 @@ mf_result_new_from_reply(sd_json_variant *reply, GError **error)
         sd_json_variant *image = sd_json_variant_by_index(images, i);
 
         if (!sd_json_variant_is_string(image)) {
-            g_set_error_literal(error,
-                                MF_ERROR,
-                                MF_ERROR_FAILED,
-                                "Reply of the Manifold service was not understood: an image is not a string");
+            g_set_error_literal(
+                error,
+                MF_ERROR,
+                MF_ERROR_FAILED,
+                _("Reply of the Manifold service was not understood: an image is not a string"));
             return NULL;
         }
         g_ptr_array_add(priv->removed_images, g_strdup(sd_json_variant_string(image)));

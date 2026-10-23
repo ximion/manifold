@@ -23,23 +23,28 @@ static char *optn_socket_path = NULL;
 static gboolean optn_no_ask_password = FALSE;
 
 static const GOptionEntry mfc_global_options[] = {
-    {"version",         0, 0, G_OPTION_ARG_NONE, &optn_show_version,    "Show the program version.",         NULL  },
-    {"verbose",         0, 0, G_OPTION_ARG_NONE, &optn_verbose,         "Show extra debugging information.", NULL  },
+    {"version",         0, 0, G_OPTION_ARG_NONE, &optn_show_version,    N_("Show the program version."),         NULL},
+    {"verbose",         0, 0, G_OPTION_ARG_NONE, &optn_verbose,         N_("Show extra debugging information."), NULL},
     {"socket",
      0,                    0,
      G_OPTION_ARG_FILENAME,                      &optn_socket_path,
-     "Reach the Manifold service at this socket.",                                                           "PATH"},
+     N_("Reach the Manifold service at this socket."),
+     "PATH"                                                                                                          },
     {"no-ask-password",
      0,                    0,
      G_OPTION_ARG_NONE,                          &optn_no_ask_password,
-     "Do not ask for a password to authorize an operation.",                                                 NULL  },
+     N_("Do not ask for a password to authorize an operation."),
+     NULL                                                                                                            },
     G_OPTION_ENTRY_NULL,
 };
 
 static char *
 mfc_get_help_summary(MfcContext *ctx)
 {
-    g_autoptr(GString) summary = g_string_new("Manifold command-line interface\n\nCommands:\n");
+    g_autoptr(GString) summary = g_string_new(NULL);
+
+    /* TRANSLATORS: header of the list of commands in the --help output */
+    g_string_append_printf(summary, "%s\n\n%s\n", _("Manifold command-line interface"), _("Commands:"));
 
     for (guint i = 0; i < ctx->commands->len; i++) {
         const MfcCommand *cmd = g_ptr_array_index(ctx->commands, i);
@@ -136,7 +141,7 @@ main(int argc, char **argv)
         return ret;
 
     if (optn_show_version) {
-        g_print("Manifold version: %s\n", mf_version_string());
+        g_print(_("Manifold version: %s\n"), mf_version_string());
         return MFC_EXIT_SUCCESS;
     }
 
@@ -154,7 +159,7 @@ main(int argc, char **argv)
 
     cmd = mfc_context_find_command(ctx, argv[1]);
     if (cmd == NULL) {
-        g_printerr("Command '%s' is unknown.\n", argv[1]);
+        g_printerr(_("Command '%s' is unknown.\n"), argv[1]);
         mfc_print_help_hint(NULL, NULL);
         return MFC_EXIT_INVALID_CMD;
     }

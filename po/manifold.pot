@@ -1,0 +1,767 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR Matthias Klumpp
+# This file is distributed under the same license as the manifold package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid   ""
+msgstr  "Project-Id-Version: manifold\n"
+        "Report-Msgid-Bugs-To: https://github.com/ximion/manifold/issues\n"
+        "POT-Creation-Date: 2026-10-23 10:42+0200\n"
+        "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+        "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+        "Language-Team: LANGUAGE <LL@li.org>\n"
+        "Language: \n"
+        "MIME-Version: 1.0\n"
+        "Content-Type: text/plain; charset=CHARSET\n"
+        "Content-Transfer-Encoding: 8bit\n"
+        "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: src/client/manifold.c:26
+msgid   "Show the program version."
+msgstr  ""
+
+#: src/client/manifold.c:27
+msgid   "Show extra debugging information."
+msgstr  ""
+
+#: src/client/manifold.c:31
+msgid   "Reach the Manifold service at this socket."
+msgstr  ""
+
+#: src/client/manifold.c:36
+msgid   "Do not ask for a password to authorize an operation."
+msgstr  ""
+
+#: src/client/manifold.c:47
+msgid   "Commands:"
+msgstr  ""
+
+#. TRANSLATORS: header of the list of commands in the --help output
+#: src/client/manifold.c:47 src/client/mfc-util.c:60
+msgid   "Manifold command-line interface"
+msgstr  ""
+
+#: src/client/manifold.c:144
+#, c-format
+msgid   "Manifold version: %s\n"
+msgstr  ""
+
+#: src/client/manifold.c:149
+msgid   "You need to specify a command."
+msgstr  ""
+
+#: src/client/manifold.c:162
+#, c-format
+msgid   "Command '%s' is unknown.\n"
+msgstr  ""
+
+#. TRANSLATORS: label of a progress bar, with the component and its version
+#: src/client/mfc-manage.c:37
+#, c-format
+msgid   "Installing %s %s"
+msgstr  ""
+
+#. TRANSLATORS: label of a progress bar, with the component and its version
+#: src/client/mfc-manage.c:41
+#, c-format
+msgid   "Removing %s %s"
+msgstr  ""
+
+#. TRANSLATORS: label of a progress bar, with the component and its version
+#: src/client/mfc-manage.c:45
+#, c-format
+msgid   "Cleaning up %s %s"
+msgstr  ""
+
+#: src/client/mfc-manage.c:72
+msgid   "Installed:"
+msgstr  ""
+
+#: src/client/mfc-manage.c:76
+msgid   "Removed:"
+msgstr  ""
+
+#: src/client/mfc-manage.c:81
+#, c-format
+msgid   "Removed %u image nothing uses anymore.\n"
+msgid_plural    "Removed %u images nothing uses anymore.\n"
+msgstr[0]       ""
+msgstr[1]       ""
+
+#: src/client/mfc-manage.c:88
+#, c-format
+msgid   "Disk space used: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:93
+#, c-format
+msgid   "Disk space freed: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:111
+#, c-format
+msgid   "Unable to open %s: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:120
+#, c-format
+msgid   "Unable to install %s: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:146
+msgid   "You need to specify a bundle file to install."
+msgstr  ""
+
+#: src/client/mfc-manage.c:162
+#, c-format
+msgid   "The remaining files were not installed: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:191
+#, c-format
+msgid   "Unable to look up %s: %s\n"
+msgstr  ""
+
+#. TRANSLATORS: the component, and a table of its versions
+#: src/client/mfc-manage.c:201
+#, c-format
+msgid   "Several versions of %s are installed, specify the one to remove:\n"
+        "%s"
+msgstr  ""
+
+#: src/client/mfc-manage.c:207
+#, c-format
+msgid   "Several versions of %s are installed:\n"
+msgstr  ""
+
+#. TRANSLATORS: a version to choose for removal, after the number that chooses it
+#: src/client/mfc-manage.c:213
+#, c-format
+msgid   "  [%u] %s (current)\n"
+msgstr  ""
+
+#. TRANSLATORS: the choice to remove all versions, after the number that chooses it
+#: src/client/mfc-manage.c:218
+#, c-format
+msgid   "  [%u] all of them\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:220
+msgid   "Which one should be removed? [0 to abort]"
+msgstr  ""
+
+#: src/client/mfc-manage.c:222
+msgid   "Aborted."
+msgstr  ""
+
+#: src/client/mfc-manage.c:256
+msgid   "You need to specify the component to remove."
+msgstr  ""
+
+#: src/client/mfc-manage.c:265 src/client/mfc-manage.c:374
+#: src/client/mfc-query.c:55
+#, c-format
+msgid   "'%s' is not a valid component identifier.\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:286
+#, c-format
+msgid   "Unable to remove %s: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:323
+#, c-format
+msgid   "Unable to clean up: %s\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:328
+msgid   "Nothing to clean up."
+msgstr  ""
+
+#. TRANSLATORS: 'manual' and 'auto' are arguments of the command, and not translated
+#: src/client/mfc-manage.c:359
+msgid   "You need to specify 'manual' or 'auto', and the component to mark."
+msgstr  ""
+
+#. TRANSLATORS: 'manual' and 'auto' are arguments of the command, and not translated
+#: src/client/mfc-manage.c:369
+#, c-format
+msgid   "'%s' is not a mode, it has to be 'manual' or 'auto'.\n"
+msgstr  ""
+
+#: src/client/mfc-manage.c:385
+#, c-format
+msgid   "Unable to mark %s: %s\n"
+msgstr  ""
+
+#. TRANSLATORS: %s is the install mode, "manual" or "auto"
+#: src/client/mfc-manage.c:390
+#, c-format
+msgid   "Marked as %s:\n"
+msgstr  ""
+
+#. TRANSLATORS: `manifold install` command description
+#: src/client/mfc-manage.c:406
+msgid   "Install the components of bundle files."
+msgstr  ""
+
+#. TRANSLATORS: `manifold remove` command description
+#: src/client/mfc-manage.c:412
+msgid   "Remove a component, or one version of it."
+msgstr  ""
+
+#. TRANSLATORS: `manifold cleanup` command description
+#: src/client/mfc-manage.c:418
+msgid   "Remove what nothing needs anymore: unused dependencies and images."
+msgstr  ""
+
+#. TRANSLATORS: `manifold mark` command description, keep 'manual' and 'auto' as they are
+#: src/client/mfc-manage.c:425
+msgid   "Mark a version to keep (manual), or to remove once nothing needs it (auto)."
+msgstr  ""
+
+#. TRANSLATORS: a transfer rate, %s is an amount of data like "2.3 MB"
+#: src/client/mfc-progress-bar.c:148
+#, c-format
+msgid   "%s/s"
+msgstr  ""
+
+#. TRANSLATORS: the kinds are values of the option, and not translated
+#: src/client/mfc-query.c:22
+msgid   "Only list components of this kind: core, platform, kit, app or plugin."
+msgstr  ""
+
+#. TRANSLATORS: the kinds are values of the option, and not translated
+#: src/client/mfc-query.c:63
+#, c-format
+msgid   "Kind '%s' is unknown. Use core, platform, kit, app or plugin.\n"
+msgstr  ""
+
+#: src/client/mfc-query.c:71
+#, c-format
+msgid   "Unable to list components: %s\n"
+msgstr  ""
+
+#: src/client/mfc-query.c:76
+msgid   "Nothing is installed."
+msgstr  ""
+
+#. TRANSLATORS: `manifold list` command description
+#: src/client/mfc-query.c:94
+msgid   "List the installed components, or the versions of one."
+msgstr  ""
+
+#: src/client/mfc-util.c:20
+#, c-format
+msgid   "Argument '%s' is not expected.\n"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of the program, 'manifold'
+#: src/client/mfc-util.c:24
+#, c-format
+msgid   "Run '%s --help' to see a full list of available command line options.\n"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of the program, 'manifold'
+#: src/client/mfc-util.c:28
+#, c-format
+msgid   "Run '%s --help' to see a list of available commands and options, and '%s %s --help' to see a list of options specific for this command.\n"
+msgstr  ""
+
+#. TRANSLATORS: header of the --help output of a command, %s is the name of the command
+#: src/client/mfc-util.c:59
+#, c-format
+msgid   "'%s' command"
+msgstr  ""
+
+#. TRANSLATORS: column headers of the table of components
+#: src/client/mfc-util.c:114
+msgid   "KIND"
+msgstr  ""
+
+#: src/client/mfc-util.c:115
+msgid   "COMPONENT"
+msgstr  ""
+
+#: src/client/mfc-util.c:116
+msgid   "VERSION"
+msgstr  ""
+
+#: src/client/mfc-util.c:117
+msgid   "FLAGS"
+msgstr  ""
+
+#: src/client/mfc-util.c:202
+#, c-format
+msgid   "Please enter a number from 0 to %u: "
+msgstr  ""
+
+#. TRANSLATORS: what refers to a file, and the name of the file
+#: src/libmanifold/mf-bundle.c:279
+#, c-format
+msgid   "%s refers to %s, which is not in the bundle"
+msgstr  ""
+
+#. TRANSLATORS: what refers to a file, and the name of the file
+#: src/libmanifold/mf-bundle.c:289
+#, c-format
+msgid   "%s refers to %s, which is referred to already"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:316
+#, c-format
+msgid   "Unable to determine size of %s"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:324
+#, c-format
+msgid   "%s is too large (%<PRIu64> byte)"
+msgid_plural    "%s is too large (%<PRIu64> bytes)"
+msgstr[0]       ""
+msgstr[1]       ""
+
+#: src/libmanifold/mf-bundle.c:335
+#, c-format
+msgid   "The metadata of the bundle is larger than %<PRIu64> MiB altogether"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:362
+#, c-format
+msgid   "%s is shorter than declared"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:405
+#, c-format
+msgid   "Image %s does not have the size its manifest records"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of the index file of the bundle
+#: src/libmanifold/mf-bundle.c:441
+#, c-format
+msgid   "%s: file entry is not an object"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of the index file of the bundle
+#: src/libmanifold/mf-bundle.c:451
+#, c-format
+msgid   "%s: a file name is not valid"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:478
+#, c-format
+msgid   "%s does not match what the index records"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:514
+#, c-format
+msgid   "%s is not valid: %s"
+msgstr  ""
+
+#. TRANSLATORS: the MetaInfo file, and the component it should describe
+#: src/libmanifold/mf-bundle.c:526
+#, c-format
+msgid   "%s describes no component, not %s"
+msgstr  ""
+
+#. TRANSLATORS: the MetaInfo file, the component it describes, and the expected one
+#: src/libmanifold/mf-bundle.c:536
+#, c-format
+msgid   "%s describes %s, not %s"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:547
+#, c-format
+msgid   "%s cannot be written: %s"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of the index file of the bundle
+#: src/libmanifold/mf-bundle.c:577
+#, c-format
+msgid   "The bundle has no %s"
+msgstr  ""
+
+#. TRANSLATORS: the index file of the bundle, its format, and the supported one
+#: src/libmanifold/mf-bundle.c:600
+#, c-format
+msgid   "%s has format %<PRIu64>, only %d is supported"
+msgstr  ""
+
+#. TRANSLATORS: %s is the index file of the bundle, "files" is not translated
+#: src/libmanifold/mf-bundle.c:613
+#, c-format
+msgid   "%s: files is missing or not an array"
+msgstr  ""
+
+#. TRANSLATORS: the component, and the name of its MetaInfo file
+#: src/libmanifold/mf-bundle.c:650
+#, c-format
+msgid   "The MetaInfo of %s, %s, is not in the bundle"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:687
+#, c-format
+msgid   "The bundle contains %s as two different kinds of component"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:732 src/libmanifold/mf-manager.c:655
+#, c-format
+msgid   "Unable to duplicate file descriptor: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:738
+#, c-format
+msgid   "Unable to read the bundle: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:755
+msgid   "Not a bundle"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:772
+msgid   "The bundle contains a file with an invalid name"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:776
+#, c-format
+msgid   "The bundle contains %s twice"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:794
+msgid   "The bundle contains no images"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:809
+#, c-format
+msgid   "The bundle contains %s, which its index does not list"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:836
+#, c-format
+msgid   "Unable to open %s: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-bundle.c:978
+#, c-format
+msgid   "Image %s does not match what its manifest records"
+msgstr  ""
+
+#. TRANSLATORS: a component and its version
+#: src/libmanifold/mf-component.c:476 src/libmanifold/mf-store.c:623
+#, c-format
+msgid   "%s %s was not read from a store"
+msgstr  ""
+
+#: src/libmanifold/mf-component.c:594 src/libmanifold/mf-result.c:248
+#, c-format
+msgid   "Reply of the Manifold service was not understood: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-json.c:59
+#, c-format
+msgid   "%s is not valid JSON (line %u, column %u): %s"
+msgstr  ""
+
+#. TRANSLATORS: the name of the document may precede this, followed by a colon
+#: src/libmanifold/mf-json.c:69
+#, c-format
+msgid   "not valid JSON (line %u, column %u): %s"
+msgstr  ""
+
+#: src/libmanifold/mf-json.c:77
+#, c-format
+msgid   "%s is not a JSON object"
+msgstr  ""
+
+#. TRANSLATORS: the name of the document may precede this, followed by a colon
+#: src/libmanifold/mf-json.c:80
+msgid   "not a JSON object"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of a field of a JSON document
+#: src/libmanifold/mf-json.c:104
+#, c-format
+msgid   "%s is missing"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of a field of a JSON document
+#: src/libmanifold/mf-json.c:109
+#, c-format
+msgid   "%s is not a string"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of a field of a JSON document
+#: src/libmanifold/mf-json.c:133
+#, c-format
+msgid   "%s is missing or not a non-negative integer"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of a field of a JSON document
+#: src/libmanifold/mf-json.c:158
+#, c-format
+msgid   "%s is missing or not a boolean"
+msgstr  ""
+
+#. TRANSLATORS: %s is the name of a field of a JSON document
+#: src/libmanifold/mf-json.c:184
+#, c-format
+msgid   "%s is not a valid hash"
+msgstr  ""
+
+#: src/libmanifold/mf-json.c:237
+#, c-format
+msgid   "Unable to format %s: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:254
+msgid   "unknown error"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:257
+#, c-format
+msgid   "Not a valid bundle: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:262
+#, c-format
+msgid   "The bundle could not be verified: %s"
+msgstr  ""
+
+#. TRANSLATORS: the component, and the identifier and version of its base
+#: src/libmanifold/mf-manager.c:269
+#, c-format
+msgid   "Component %s needs base %s %s, which is not installed"
+msgstr  ""
+
+#. TRANSLATORS: a component and its version
+#: src/libmanifold/mf-manager.c:278
+#, c-format
+msgid   "Component %s %s is installed already"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:289
+#, c-format
+msgid   "Component %s %s is not installed"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:296
+#, c-format
+msgid   "Component %s is not installed"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:302
+#, c-format
+msgid   "Component %s is used by the installed component %s"
+msgstr  ""
+
+#. TRANSLATORS: the component, its architecture, and that of this system
+#: src/libmanifold/mf-manager.c:310
+#, c-format
+msgid   "Component %s is built for %s, but this system is %s"
+msgstr  ""
+
+#. TRANSLATORS: the component, and the kind it is installed as, like "app"
+#: src/libmanifold/mf-manager.c:323
+#, c-format
+msgid   "Component %s is installed already as another kind of component (%s SDK)"
+msgstr  ""
+
+#. TRANSLATORS: the component, and the kind it is installed as, like "app"
+#: src/libmanifold/mf-manager.c:331
+#, c-format
+msgid   "Component %s is installed already as another kind of component (%s)"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:339
+msgid   "Lost the Manifold service: the connection was closed"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:345
+msgid   "The Manifold service did not reply in time"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:350
+msgid   "Not permitted to change the installed components"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:356
+msgid   "The Manifold service does not implement this operation"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:361
+#, c-format
+msgid   "The Manifold service rejected the parameter %s"
+msgstr  ""
+
+#. TRANSLATORS: %s is the identifier of the error, like org.freedesktop.manifold.Failed
+#: src/libmanifold/mf-manager.c:370
+#, c-format
+msgid   "The Manifold service replied with an error: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:538
+#, c-format
+msgid   "Lost the Manifold service: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:619
+#, c-format
+msgid   "Unable to build call parameters: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:629
+#, c-format
+msgid   "Unable to reach the Manifold service at %s: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:642
+#, c-format
+msgid   "Unable to set up the connection to the Manifold service: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:667
+#, c-format
+msgid   "Unable to pass file descriptor: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manager.c:678
+#, c-format
+msgid   "Unable to call the Manifold service: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manifest.c:180
+msgid   "component identifier is not valid"
+msgstr  ""
+
+#: src/libmanifold/mf-manifest.c:203
+msgid   "version is not valid"
+msgstr  ""
+
+#. TRANSLATORS: "base" is a section of the manifest, and not translated
+#: src/libmanifold/mf-manifest.c:225
+msgid   "base is not an object"
+msgstr  ""
+
+#. TRANSLATORS: "image" is a section of the manifest, and not translated
+#: src/libmanifold/mf-manifest.c:259
+msgid   "image is missing or not an object"
+msgstr  ""
+
+#. TRANSLATORS: "image" is the section of the manifest this is about, and not translated
+#: src/libmanifold/mf-manifest.c:289
+msgid   "image: the hash partition is placed before the data"
+msgstr  ""
+
+#. TRANSLATORS: "format" is a manifest field, and not translated
+#: src/libmanifold/mf-manifest.c:323
+#, c-format
+msgid   "format %<PRIu64> is not supported, only %d is"
+msgstr  ""
+
+#. TRANSLATORS: "kind" is a field of the manifest, and not translated, %s is its value
+#: src/libmanifold/mf-manifest.c:339
+#, c-format
+msgid   "kind %s is not known"
+msgstr  ""
+
+#: src/libmanifold/mf-manifest.c:364
+msgid   "an SDK must name the component it extends"
+msgstr  ""
+
+#. TRANSLATORS: %s is the kind of the component, like "app" or "kit"
+#: src/libmanifold/mf-manifest.c:370
+#, c-format
+msgid   "a %s must name the layer it is built on"
+msgstr  ""
+
+#. TRANSLATORS: "app" is a section of the manifest, and not translated
+#: src/libmanifold/mf-manifest.c:382
+msgid   "app is not an object"
+msgstr  ""
+
+#. TRANSLATORS: "app" and "command" are a section and field of the manifest, not translated
+#: src/libmanifold/mf-manifest.c:390
+#, c-format
+msgid   "app: command is not a plain name: %s"
+msgstr  ""
+
+#: src/libmanifold/mf-manifest.c:394
+msgid   "an app must say what to run"
+msgstr  ""
+
+#: src/libmanifold/mf-result.c:278
+msgid   "Reply of the Manifold service was not understood: an image is not a string"
+msgstr  ""
+
+#. TRANSLATORS: the path of a symbolic link, and where it points to
+#: src/libmanifold/mf-store.c:329
+#, c-format
+msgid   "Link %s does not point into the image store: %s"
+msgstr  ""
+
+#. TRANSLATORS: the path of a symbolic link, and where it points to
+#: src/libmanifold/mf-store.c:341
+#, c-format
+msgid   "Link %s does not name an image by its root hash: %s"
+msgstr  ""
+
+#. TRANSLATORS: the manifest file, and the component and version it should describe
+#: src/libmanifold/mf-store.c:373
+#, c-format
+msgid   "%s says it is something else (expected: %s/%s)"
+msgstr  ""
+
+#: src/libmanifold/mf-store.c:408
+#, c-format
+msgid   "%s is not a version directory"
+msgstr  ""
+
+#: src/libmanifold/mf-store.c:452 src/libmanifold/mf-store.c:944
+#, c-format
+msgid   "%s is not installed"
+msgstr  ""
+
+#: src/libmanifold/mf-store.c:484 src/libmanifold/mf-store.c:949
+#, c-format
+msgid   "%s is installed, but has no current version"
+msgstr  ""
+
+#: src/libmanifold/mf-store.c:511 src/libmanifold/mf-store.c:952
+#, c-format
+msgid   "%s %s is not installed"
+msgstr  ""
+
+#. TRANSLATORS: a component and its version
+#: src/libmanifold/mf-store.c:635
+#, c-format
+msgid   "%s %s has no base"
+msgstr  ""
+
+#. TRANSLATORS: the path of a symbolic link, and where it points to
+#: src/libmanifold/mf-store.c:651
+#, c-format
+msgid   "Link %s does not point into the store: %s"
+msgstr  ""
+
+#. TRANSLATORS: the path of a symbolic link, and where it points to
+#: src/libmanifold/mf-store.c:664
+#, c-format
+msgid   "Link %s does not name a version of a component: %s"
+msgstr  ""
+
+#. TRANSLATORS: the component, and the identifier and version of its base
+#: src/libmanifold/mf-store.c:1002
+#, c-format
+msgid   "The base of %s, %s %s, is not installed"
+msgstr  ""
+
+#. TRANSLATORS: %s is the identity hash of an image
+#: src/libmanifold/mf-store.c:1052
+#, c-format
+msgid   "Nothing installed provides identity %s"
+msgstr  ""
+
+#: src/libmanifold/mf-utils.c:197
+#, c-format
+msgid   "Unable to write: %s"
+msgstr  ""

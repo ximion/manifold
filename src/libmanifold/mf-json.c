@@ -7,25 +7,33 @@
 #include "config.h"
 #include "mf-json-private.h"
 
+#include <glib/gi18n-lib.h>
+
 #include "mf-utils.h"
+
+static void
+mf_json_set_field_error(GError **error, MfError code, const char *context, const char *format, ...)
+    G_GNUC_PRINTF(4, 5);
 
 /**
  * mf_json_set_field_error:
  *
- * Set an error about a field of a JSON document: "<context>: <key> <what>",
- * or "<key> <what>" if there is no context.
+ * Set an error about a field of a JSON document, with the message prefixed
+ * by "<context>: " if there is a context.
  */
 static void
-mf_json_set_field_error(GError **error, MfError code, const char *context, const char *key, const char *what)
+mf_json_set_field_error(GError **error, MfError code, const char *context, const char *format, ...)
 {
-    g_set_error(error,
-                MF_ERROR,
-                code,
-                "%s%s%s %s",
-                context != NULL ? context : "",
-                context != NULL ? ": " : "",
-                key,
-                what);
+    g_autofree char *message = NULL;
+    va_list args;
+
+    va_start(args, format);
+    message = g_strdup_vprintf(format, args);
+    va_end(args);
+    if (context == NULL)
+        g_set_error_literal(error, MF_ERROR, code, message);
+    else
+        g_set_error(error, MF_ERROR, code, "%s: %s", context, message);
 }
 
 /**
@@ -44,24 +52,32 @@ mf_json_parse_object(const char *data, const char *context, MfError code, GError
 
     int r = sd_json_parse(data, 0, &variant, &line, &column);
     if (r < 0) {
-        g_set_error(error,
-                    MF_ERROR,
-                    code,
-                    "%s%snot valid JSON (line %u, column %u): %s",
-                    context != NULL ? context : "",
-                    context != NULL ? " is " : "",
-                    line,
-                    column,
-                    g_strerror(-r));
+        if (context != NULL)
+            g_set_error(error,
+                        MF_ERROR,
+                        code,
+                        _("%s is not valid JSON (line %u, column %u): %s"),
+                        context,
+                        line,
+                        column,
+                        g_strerror(-r));
+        else
+            g_set_error(error,
+                        MF_ERROR,
+                        code,
+                        /* TRANSLATORS: the name of the document may precede this, followed by a colon */
+                        _("not valid JSON (line %u, column %u): %s"),
+                        line,
+                        column,
+                        g_strerror(-r));
         return NULL;
     }
     if (!sd_json_variant_is_object(variant)) {
-        g_set_error(error,
-                    MF_ERROR,
-                    code,
-                    "%s%snot a JSON object",
-                    context != NULL ? context : "",
-                    context != NULL ? " is " : "");
+        if (context != NULL)
+            g_set_error(error, MF_ERROR, code, _("%s is not a JSON object"), context);
+        else
+            /* TRANSLATORS: the name of the document may precede this, followed by a colon */
+            g_set_error_literal(error, MF_ERROR, code, _("not a JSON object"));
         sd_json_variant_unref(variant);
         return NULL;
     }
@@ -84,11 +100,13 @@ mf_json_get_string_field(sd_json_variant *object,
     sd_json_variant *value = sd_json_variant_by_key(object, key);
 
     if (value == NULL || sd_json_variant_is_null(value)) {
-        mf_json_set_field_error(error, code, context, key, "is missing");
+        /* TRANSLATORS: %s is the name of a field of a JSON document */
+        mf_json_set_field_error(error, code, context, _("%s is missing"), key);
         return NULL;
     }
     if (!sd_json_variant_is_string(value)) {
-        mf_json_set_field_error(error, code, context, key, "is not a string");
+        /* TRANSLATORS: %s is the name of a field of a JSON document */
+        mf_json_set_field_error(error, code, context, _("%s is not a string"), key);
         return NULL;
     }
 
@@ -111,7 +129,8 @@ mf_json_get_unsigned_field(sd_json_variant *object,
     sd_json_variant *value = sd_json_variant_by_key(object, key);
 
     if (value == NULL || !sd_json_variant_is_unsigned(value)) {
-        mf_json_set_field_error(error, code, context, key, "is missing or not a non-negative integer");
+        /* TRANSLATORS: %s is the name of a field of a JSON document */
+        mf_json_set_field_error(error, code, context, _("%s is missing or not a non-negative integer"), key);
         return FALSE;
     }
 
@@ -135,7 +154,8 @@ mf_json_get_boolean_field(sd_json_variant *object,
     sd_json_variant *value = sd_json_variant_by_key(object, key);
 
     if (value == NULL || !sd_json_variant_is_boolean(value)) {
-        mf_json_set_field_error(error, code, context, key, "is missing or not a boolean");
+        /* TRANSLATORS: %s is the name of a field of a JSON document */
+        mf_json_set_field_error(error, code, context, _("%s is missing or not a boolean"), key);
         return FALSE;
     }
 
@@ -160,7 +180,8 @@ mf_json_get_hash_field(sd_json_variant *object,
     if (hash == NULL)
         return NULL;
     if (!mf_hex_hash_is_valid(hash)) {
-        mf_json_set_field_error(error, code, context, key, "is not a valid hash");
+        /* TRANSLATORS: %s is the name of a field of a JSON document */
+        mf_json_set_field_error(error, code, context, _("%s is not a valid hash"), key);
         return NULL;
     }
 
@@ -213,7 +234,7 @@ mf_json_write_file(const char *path, sd_json_variant *json, GError **error)
 
     r = sd_json_variant_format(json, SD_JSON_FORMAT_PRETTY | SD_JSON_FORMAT_NEWLINE, &formatted);
     if (r < 0) {
-        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "Unable to format %s: %s", path, g_strerror(-r));
+        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, _("Unable to format %s: %s"), path, g_strerror(-r));
         return FALSE;
     }
     return g_file_set_contents(path, formatted, -1, error);

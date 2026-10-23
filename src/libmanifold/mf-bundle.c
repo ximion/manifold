@@ -9,9 +9,11 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <glib/gi18n-lib.h>
 #include <zip.h>
 #include <appstream.h>
 #include <blake3.h>
@@ -273,7 +275,8 @@ mf_bundle_reader_take_reference(MfBundleReader *reader, const char *name, const 
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_VERIFICATION_FAILED,
-                    "%s refers to %s, which is not in the bundle",
+                    /* TRANSLATORS: what refers to a file, and the name of the file */
+                    _("%s refers to %s, which is not in the bundle"),
                     source,
                     name);
         return NULL;
@@ -282,7 +285,8 @@ mf_bundle_reader_take_reference(MfBundleReader *reader, const char *name, const 
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s refers to %s, which is referred to already",
+                    /* TRANSLATORS: what refers to a file, and the name of the file */
+                    _("%s refers to %s, which is referred to already"),
                     source,
                     name);
         return NULL;
@@ -309,14 +313,17 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, 
     gsize total = 0;
 
     if (zip_stat_index(zip, index, 0, &st) < 0 || !(st.valid & ZIP_STAT_SIZE)) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "Unable to determine size of %s", name);
+        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("Unable to determine size of %s"), name);
         return NULL;
     }
     if (st.size > METADATA_SIZE_MAX) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s is too large (%" G_GUINT64_FORMAT " bytes)",
+                    g_dngettext(GETTEXT_PACKAGE,
+                                "%s is too large (%" PRIu64 " byte)",
+                                "%s is too large (%" PRIu64 " bytes)",
+                                st.size),
                     name,
                     (guint64) st.size);
         return NULL;
@@ -325,7 +332,7 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, 
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "The metadata of the bundle is larger than %" G_GUINT64_FORMAT " MiB altogether",
+                    _("The metadata of the bundle is larger than %" PRIu64 " MiB altogether"),
                     METADATA_TOTAL_SIZE_MAX / (1024 * 1024));
         return NULL;
     }
@@ -352,7 +359,7 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, 
     zip_fclose(file);
 
     if (total != st.size) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "%s is shorter than declared", name);
+        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("%s is shorter than declared"), name);
         return NULL;
     }
 
@@ -395,7 +402,7 @@ mf_bundle_reader_parse_manifest(MfBundleReader *reader, const char *name, GBytes
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_VERIFICATION_FAILED,
-                    "Image %s does not have the size its manifest records",
+                    _("Image %s does not have the size its manifest records"),
                     image_name);
         return NULL;
     }
@@ -427,7 +434,12 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
     guint64 size;
 
     if (!sd_json_variant_is_object(entry)) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "%s: file entry is not an object", INDEX_NAME);
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    /* TRANSLATORS: %s is the name of the index file of the bundle */
+                    _("%s: file entry is not an object"),
+                    INDEX_NAME);
         return NULL;
     }
 
@@ -435,7 +447,8 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
     if (name == NULL)
         return NULL;
     if (!mf_file_name_is_valid(name)) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "%s: a file name is not valid", INDEX_NAME);
+        /* TRANSLATORS: %s is the name of the index file of the bundle */
+        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("%s: a file name is not valid"), INDEX_NAME);
         return NULL;
     }
     if (!mf_json_get_unsigned_field(entry, INDEX_NAME, "size", MF_ERROR_INVALID_BUNDLE, &size, error))
@@ -462,7 +475,7 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_VERIFICATION_FAILED,
-                    "%s does not match what the index records",
+                    _("%s does not match what the index records"),
                     name);
         return NULL;
     }
@@ -498,20 +511,31 @@ mf_bundle_image_make_sanitized_metainfo(MfBundleImage *image,
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s is not valid: %s",
+                    _("%s is not valid: %s"),
                     name,
                     local_error->message);
         return NULL;
     }
     component = as_metadata_get_component(metadata);
     id = component != NULL ? as_component_get_id(component) : NULL;
-    if (g_strcmp0(id, component_id) != 0) {
+    if (id == NULL) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s describes %s, not %s",
+                    /* TRANSLATORS: the MetaInfo file, and the component it should describe */
+                    _("%s describes no component, not %s"),
                     name,
-                    id != NULL ? id : "no component",
+                    component_id);
+        return NULL;
+    }
+    if (!g_str_equal(id, component_id)) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    /* TRANSLATORS: the MetaInfo file, the component it describes, and the expected one */
+                    _("%s describes %s, not %s"),
+                    name,
+                    id,
                     component_id);
         return NULL;
     }
@@ -520,7 +544,7 @@ mf_bundle_image_make_sanitized_metainfo(MfBundleImage *image,
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s cannot be written: %s",
+                    _("%s cannot be written: %s"),
                     name,
                     local_error->message);
         return NULL;
@@ -549,7 +573,8 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
     contents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
     index_entry = g_hash_table_lookup(reader->entries, INDEX_NAME);
     if (index_entry == NULL) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "The bundle has no %s", INDEX_NAME);
+        /* TRANSLATORS: %s is the name of the index file of the bundle */
+        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("The bundle has no %s"), INDEX_NAME);
         return FALSE;
     }
     /* the index cannot list itself */
@@ -571,7 +596,8 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s has format %" G_GUINT64_FORMAT ", only %d is supported",
+                    /* TRANSLATORS: the index file of the bundle, its format, and the supported one */
+                    _("%s has format %" PRIu64 ", only %d is supported"),
                     INDEX_NAME,
                     format,
                     BUNDLE_FORMAT);
@@ -583,7 +609,8 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    "%s: files is missing or not an array",
+                    /* TRANSLATORS: %s is the index file of the bundle, "files" is not translated */
+                    _("%s: files is missing or not an array"),
                     INDEX_NAME);
         return FALSE;
     }
@@ -619,7 +646,8 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_INVALID_BUNDLE,
-                        "The MetaInfo of %s, %s, is not in the bundle",
+                        /* TRANSLATORS: the component, and the name of its MetaInfo file */
+                        _("The MetaInfo of %s, %s, is not in the bundle"),
                         mf_manifest_get_component_id(image->manifest),
                         metainfo_name);
             return FALSE;
@@ -656,7 +684,7 @@ mf_bundle_check_kinds(MfBundle *bundle, GError **error)
                 g_set_error(error,
                             MF_ERROR,
                             MF_ERROR_INVALID_BUNDLE,
-                            "The bundle contains %s as two different kinds of component",
+                            _("The bundle contains %s as two different kinds of component"),
                             mf_manifest_get_component_id(manifest));
                 return FALSE;
             }
@@ -701,13 +729,13 @@ mf_bundle_new_from_fd(int fd, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "Unable to duplicate file descriptor: %s",
+                    _("Unable to duplicate file descriptor: %s"),
                     g_strerror(errno));
         return NULL;
     }
     file = fdopen(fd_copy, "rb");
     if (file == NULL) {
-        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "Unable to read the bundle: %s", g_strerror(errno));
+        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, _("Unable to read the bundle: %s"), g_strerror(errno));
         close(fd_copy);
         return NULL;
     }
@@ -724,7 +752,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
     else if ((priv->zip = zip_open_from_source(source, ZIP_RDONLY, &zerr)) == NULL)
         zip_source_free(source);
     if (priv->zip == NULL) {
-        mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, &zerr, "Not a bundle");
+        mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, &zerr, _("Not a bundle"));
         zip_error_fini(&zerr);
         return NULL;
     }
@@ -738,14 +766,14 @@ mf_bundle_new_from_fd(int fd, GError **error)
         MfBundleEntry *entry;
 
         if (!mf_file_name_is_valid(name)) {
-            g_set_error(error,
-                        MF_ERROR,
-                        MF_ERROR_INVALID_BUNDLE,
-                        "The bundle contains a file with an invalid name");
+            g_set_error_literal(error,
+                                MF_ERROR,
+                                MF_ERROR_INVALID_BUNDLE,
+                                _("The bundle contains a file with an invalid name"));
             return NULL;
         }
         if (g_hash_table_contains(reader.entries, name)) {
-            g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "The bundle contains %s twice", name);
+            g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("The bundle contains %s twice"), name);
             return NULL;
         }
         entry = g_new0(MfBundleEntry, 1);
@@ -763,7 +791,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
         return NULL;
 
     if (priv->images->len == 0) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "The bundle contains no images");
+        g_set_error_literal(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("The bundle contains no images"));
         return NULL;
     }
     if (!mf_bundle_check_kinds(bundle, error))
@@ -778,7 +806,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_INVALID_BUNDLE,
-                        "The bundle contains %s, which its index does not list",
+                        _("The bundle contains %s, which its index does not list"),
                         (const char *) entry_name);
             return NULL;
         }
@@ -805,7 +833,7 @@ mf_bundle_new_from_path(const char *path, GError **error)
 
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "Unable to open %s: %s", path, g_strerror(errno));
+        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, _("Unable to open %s: %s"), path, g_strerror(errno));
         return NULL;
     }
     bundle = mf_bundle_new_from_fd(fd, error);
@@ -947,7 +975,7 @@ mf_bundle_copy_image(MfBundle *bundle,
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_VERIFICATION_FAILED,
-                    "Image %s does not match what its manifest records",
+                    _("Image %s does not match what its manifest records"),
                     image_name);
         goto out;
     }

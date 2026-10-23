@@ -111,6 +111,7 @@ udev_dep = dependency('udev')
 fs    = import('fs')
 pkgc  = import('pkgconfig')
 gnome = import('gnome')
+i18n  = import('i18n')
 
 #
 # Directories
@@ -182,5 +183,6 @@ configure_file(output: 'config.h', configuration: conf)
 subdir('capsule')
 subdir('data')
 subdir('src')
+subdir('po')
 subdir('tests')
 subdir('docs')

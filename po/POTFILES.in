@@ -1,0 +1,17 @@
+# List of source files containing translatable strings.
+#
+# library sources
+src/libmanifold/mf-bundle.c
+src/libmanifold/mf-component.c
+src/libmanifold/mf-json.c
+src/libmanifold/mf-manager.c
+src/libmanifold/mf-manifest.c
+src/libmanifold/mf-result.c
+src/libmanifold/mf-store.c
+src/libmanifold/mf-utils.c
+# client sources
+src/client/manifold.c
+src/client/mfc-manage.c
+src/client/mfc-progress-bar.c
+src/client/mfc-query.c
+src/client/mfc-util.c

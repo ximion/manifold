@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <glib/gi18n-lib.h>
 
 #include "mfc-util.h"
 
@@ -32,13 +33,16 @@ mfc_on_progress(const MfProgress *progress, gpointer user_data)
 
     switch (mf_item_progress_get_action(item)) {
     case MF_ACTION_INSTALL:
-        label = g_strdup_printf("Installing %s %s", subject, version ? version : "");
+        /* TRANSLATORS: label of a progress bar, with the component and its version */
+        label = g_strdup_printf(_("Installing %s %s"), subject, version ? version : "");
         break;
     case MF_ACTION_REMOVE:
-        label = g_strdup_printf("Removing %s %s", subject, version ? version : "");
+        /* TRANSLATORS: label of a progress bar, with the component and its version */
+        label = g_strdup_printf(_("Removing %s %s"), subject, version ? version : "");
         break;
     case MF_ACTION_CLEANUP:
-        label = g_strdup_printf("Cleaning up %s %s", subject, version ? version : "");
+        /* TRANSLATORS: label of a progress bar, with the component and its version */
+        label = g_strdup_printf(_("Cleaning up %s %s"), subject, version ? version : "");
         break;
     default:
         label = g_strdup(subject);
@@ -65,24 +69,28 @@ mfc_print_result(MfResult *result)
     guint n_images = mf_result_get_removed_images(result)->len;
 
     if (installed->len > 0) {
-        g_print("Installed:\n");
+        g_print("%s\n", _("Installed:"));
         mfc_print_components(installed, FALSE);
     }
     if (removed->len > 0) {
-        g_print("Removed:\n");
+        g_print("%s\n", _("Removed:"));
         mfc_print_components(removed, FALSE);
     }
     if (n_images > 0)
-        g_print("Removed %u image%s nothing uses anymore.\n", n_images, n_images == 1 ? "" : "s");
+        g_print(g_dngettext(GETTEXT_PACKAGE,
+                            "Removed %u image nothing uses anymore.\n",
+                            "Removed %u images nothing uses anymore.\n",
+                            n_images),
+                n_images);
     if (mf_result_get_bytes_added(result) > 0) {
         g_autofree char *size = g_format_size(mf_result_get_bytes_added(result));
 
-        g_print("Disk space used: %s\n", size);
+        g_print(_("Disk space used: %s\n"), size);
     }
     if (mf_result_get_bytes_freed(result) > 0) {
         g_autofree char *size = g_format_size(mf_result_get_bytes_freed(result));
 
-        g_print("Disk space freed: %s\n", size);
+        g_print(_("Disk space freed: %s\n"), size);
     }
 }
 
@@ -100,7 +108,7 @@ mfc_install_bundle(MfcContext *ctx, const char *fname)
 
     int fd = open(fname, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        g_printerr("Unable to open %s: %s\n", fname, g_strerror(errno));
+        g_printerr(_("Unable to open %s: %s\n"), fname, g_strerror(errno));
         return MFC_EXIT_BAD_INPUT;
     }
 
@@ -109,7 +117,7 @@ mfc_install_bundle(MfcContext *ctx, const char *fname)
     mfc_progress_bar_finish(ctx->progress_bar);
     close(fd);
     if (result == NULL) {
-        g_printerr("Unable to install %s: %s\n", basename, error->message);
+        g_printerr(_("Unable to install %s: %s\n"), basename, error->message);
         return MFC_EXIT_FAILURE;
     }
 
@@ -135,7 +143,7 @@ mfc_run_install_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         return ret;
 
     if (argc < 2) {
-        g_printerr("You need to specify a bundle file to install.\n");
+        g_printerr("%s\n", _("You need to specify a bundle file to install."));
         return MFC_EXIT_BAD_INPUT;
     }
 
@@ -151,7 +159,7 @@ mfc_run_install_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
             skipped = g_string_new(argv[i + 1]);
             for (int j = i + 2; j < argc; j++)
                 g_string_append_printf(skipped, ", %s", argv[j]);
-            g_printerr("The remaining files were not installed: %s\n", skipped->str);
+            g_printerr(_("The remaining files were not installed: %s\n"), skipped->str);
         }
         return ret;
     }
@@ -180,7 +188,7 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
 
     versions = mf_store_list_components(store, component_id, MF_COMPONENT_KIND_UNKNOWN, &error);
     if (versions == NULL) {
-        g_printerr("Unable to look up %s: %s\n", component_id, error->message);
+        g_printerr(_("Unable to look up %s: %s\n"), component_id, error->message);
         return MFC_EXIT_FAILURE;
     }
     if (versions->len <= 1)
@@ -189,26 +197,29 @@ mfc_choose_version(MfcContext *ctx, const char *component_id, char **ret_version
     if (!isatty(STDIN_FILENO)) {
         g_autofree char *table = mfc_format_components(versions, FALSE);
 
-        g_printerr("Several versions of %s are installed, specify the one to remove:\n%s",
+        /* TRANSLATORS: the component, and a table of its versions */
+        g_printerr(_("Several versions of %s are installed, specify the one to remove:\n%s"),
                    component_id,
                    table);
         return MFC_EXIT_FAILURE;
     }
 
-    g_print("Several versions of %s are installed:\n", component_id);
+    g_print(_("Several versions of %s are installed:\n"), component_id);
     for (guint i = 0; i < versions->len; i++) {
         MfComponent *component = g_ptr_array_index(versions, i);
 
-        g_print("  [%u] %s%s\n",
-                i + 1,
-                mf_component_get_full_version(component),
-                mf_component_is_current(component) ? " (current)" : "");
+        if (mf_component_is_current(component))
+            /* TRANSLATORS: a version to choose for removal, after the number that chooses it */
+            g_print(_("  [%u] %s (current)\n"), i + 1, mf_component_get_full_version(component));
+        else
+            g_print("  [%u] %s\n", i + 1, mf_component_get_full_version(component));
     }
-    g_print("  [%u] all of them\n", versions->len + 1);
+    /* TRANSLATORS: the choice to remove all versions, after the number that chooses it */
+    g_print(_("  [%u] all of them\n"), versions->len + 1);
 
-    choice = mfc_prompt_number("Which one should be removed? [0 to abort]", versions->len + 1);
+    choice = mfc_prompt_number(_("Which one should be removed? [0 to abort]"), versions->len + 1);
     if (choice == 0) {
-        g_print("Aborted.\n");
+        g_print("%s\n", _("Aborted."));
         return MFC_EXIT_FAILURE;
     }
     if (choice <= versions->len) {
@@ -242,7 +253,7 @@ mfc_run_remove_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         return ret;
 
     if (argc < 2) {
-        g_printerr("You need to specify the component to remove.\n");
+        g_printerr("%s\n", _("You need to specify the component to remove."));
         return MFC_EXIT_INVALID_CMD;
     }
     if (argc > 3) {
@@ -251,7 +262,7 @@ mfc_run_remove_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
     }
     component_id = argv[1];
     if (!mf_component_id_is_valid(component_id)) {
-        g_printerr("'%s' is not a valid component identifier.\n", component_id);
+        g_printerr(_("'%s' is not a valid component identifier.\n"), component_id);
         return MFC_EXIT_INVALID_CMD;
     }
     if (argc > 2) {
@@ -272,7 +283,7 @@ mfc_run_remove_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
                                          &error);
     mfc_progress_bar_finish(ctx->progress_bar);
     if (result == NULL) {
-        g_printerr("Unable to remove %s: %s\n", component_id, error->message);
+        g_printerr(_("Unable to remove %s: %s\n"), component_id, error->message);
         return MFC_EXIT_FAILURE;
     }
 
@@ -309,12 +320,12 @@ mfc_run_cleanup_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
     result = mf_manager_cleanup(mfc_context_get_manager(ctx), mfc_on_progress, ctx, NULL, &error);
     mfc_progress_bar_finish(ctx->progress_bar);
     if (result == NULL) {
-        g_printerr("Unable to clean up: %s\n", error->message);
+        g_printerr(_("Unable to clean up: %s\n"), error->message);
         return MFC_EXIT_FAILURE;
     }
 
     if (mf_result_get_removed(result)->len == 0 && mf_result_get_removed_images(result)->len == 0) {
-        g_print("Nothing to clean up.\n");
+        g_print("%s\n", _("Nothing to clean up."));
         return MFC_EXIT_SUCCESS;
     }
     mfc_print_result(result);
@@ -344,7 +355,8 @@ mfc_run_mark_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
         return ret;
 
     if (argc < 3) {
-        g_printerr("You need to specify 'manual' or 'auto', and the component to mark.\n");
+        /* TRANSLATORS: 'manual' and 'auto' are arguments of the command, and not translated */
+        g_printerr("%s\n", _("You need to specify 'manual' or 'auto', and the component to mark."));
         return MFC_EXIT_INVALID_CMD;
     }
     if (argc > 4) {
@@ -353,12 +365,13 @@ mfc_run_mark_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
     }
     mode = mf_install_mode_from_string(argv[1]);
     if (mode == MF_INSTALL_MODE_UNKNOWN) {
-        g_printerr("'%s' is not a mode, it has to be 'manual' or 'auto'.\n", argv[1]);
+        /* TRANSLATORS: 'manual' and 'auto' are arguments of the command, and not translated */
+        g_printerr(_("'%s' is not a mode, it has to be 'manual' or 'auto'.\n"), argv[1]);
         return MFC_EXIT_INVALID_CMD;
     }
     component_id = argv[2];
     if (!mf_component_id_is_valid(component_id)) {
-        g_printerr("'%s' is not a valid component identifier.\n", component_id);
+        g_printerr(_("'%s' is not a valid component identifier.\n"), component_id);
         return MFC_EXIT_INVALID_CMD;
     }
 
@@ -369,11 +382,12 @@ mfc_run_mark_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **argv)
                                        NULL,
                                        &error);
     if (marked == NULL) {
-        g_printerr("Unable to mark %s: %s\n", component_id, error->message);
+        g_printerr(_("Unable to mark %s: %s\n"), component_id, error->message);
         return MFC_EXIT_FAILURE;
     }
 
-    g_print("Marked as %s:\n", mf_install_mode_to_string(mode));
+    /* TRANSLATORS: %s is the install mode, "manual" or "auto" */
+    g_print(_("Marked as %s:\n"), mf_install_mode_to_string(mode));
     mfc_print_components(marked, FALSE);
 
     return MFC_EXIT_SUCCESS;
@@ -388,22 +402,26 @@ mfc_register_manage_commands(MfcContext *ctx)
     mfc_context_register_command(ctx,
                                  "install",
                                  "FILES",
-                                 "Install the components of bundle files.",
+                                 /* TRANSLATORS: `manifold install` command description */
+                                 _("Install the components of bundle files."),
                                  mfc_run_install_command);
     mfc_context_register_command(ctx,
                                  "remove",
                                  "COMPONENT-ID [VERSION]",
-                                 "Remove a component, or one version of it.",
+                                 /* TRANSLATORS: `manifold remove` command description */
+                                 _("Remove a component, or one version of it."),
                                  mfc_run_remove_command);
     mfc_context_register_command(ctx,
                                  "cleanup",
                                  NULL,
-                                 "Remove what nothing needs anymore: unused dependencies and images.",
+                                 /* TRANSLATORS: `manifold cleanup` command description */
+                                 _("Remove what nothing needs anymore: unused dependencies and images."),
                                  mfc_run_cleanup_command);
     mfc_context_register_command(
         ctx,
         "mark",
         "MODE COMPONENT-ID [VERSION]",
-        "Mark a version to keep (manual), or to remove once nothing needs it (auto).",
+        /* TRANSLATORS: `manifold mark` command description, keep 'manual' and 'auto' as they are */
+        _("Mark a version to keep (manual), or to remove once nothing needs it (auto)."),
         mfc_run_mark_command);
 }

@@ -9,6 +9,7 @@
 #include "mf-store-private.h"
 
 #include <string.h>
+#include <glib/gi18n-lib.h>
 
 #include "mf-component-private.h"
 #include "mf-error.h"
@@ -324,7 +325,8 @@ mf_read_image_link(const char *version_dir, const char *link_name, GError **erro
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "Link %s does not point into the image store: %s",
+                    /* TRANSLATORS: the path of a symbolic link, and where it points to */
+                    _("Link %s does not point into the image store: %s"),
                     path,
                     target);
         return NULL;
@@ -335,7 +337,8 @@ mf_read_image_link(const char *version_dir, const char *link_name, GError **erro
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "Link %s does not name an image by its root hash: %s",
+                    /* TRANSLATORS: the path of a symbolic link, and where it points to */
+                    _("Link %s does not name an image by its root hash: %s"),
                     path,
                     target);
         return NULL;
@@ -366,7 +369,8 @@ mf_read_manifest_at(const char *version_dir, const char *component_id, const cha
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "%s says it is something else (expected: %s/%s)",
+                    /* TRANSLATORS: the manifest file, and the component and version it should describe */
+                    _("%s says it is something else (expected: %s/%s)"),
                     manifest_path,
                     component_id,
                     version);
@@ -401,7 +405,7 @@ mf_read_version_dir_at(const char *root,
     guint64 revision;
 
     if (!mf_split_full_version(version_name, &version, &revision)) {
-        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "%s is not a version directory", version_dir);
+        g_set_error(error, MF_ERROR, MF_ERROR_FAILED, _("%s is not a version directory"), version_dir);
         return NULL;
     }
     verity_hash = mf_read_image_link(version_dir, mf_store_image_link_for_subdir(subdir), error);
@@ -445,7 +449,7 @@ mf_find_component_subdir_at(const char *root, const char *component_id, GError *
             return COMPONENT_SUBDIRS[i];
     }
 
-    g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, "%s is not installed", component_id);
+    g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, _("%s is not installed"), component_id);
     return NULL;
 }
 
@@ -477,7 +481,7 @@ mf_version_dir_name_at(const char *root,
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_NOT_FOUND,
-                        "%s is installed, but has no current version",
+                        _("%s is installed, but has no current version"),
                         component_id);
             return NULL;
         }
@@ -504,7 +508,7 @@ mf_version_dir_name_at(const char *root,
     }
 
     if (newest == NULL)
-        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, "%s %s is not installed", component_id, version);
+        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, _("%s %s is not installed"), component_id, version);
     return g_steal_pointer(&newest);
 }
 
@@ -615,7 +619,8 @@ mf_store_read_base_link(MfComponent *component, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_NOT_FOUND,
-                    "%s %s was not read from a store",
+                    /* TRANSLATORS: a component and its version */
+                    _("%s %s was not read from a store"),
                     mf_component_get_id(component),
                     mf_component_get_version(component));
         return NULL;
@@ -626,7 +631,8 @@ mf_store_read_base_link(MfComponent *component, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_NOT_FOUND,
-                    "%s %s has no base",
+                    /* TRANSLATORS: a component and its version */
+                    _("%s %s has no base"),
                     mf_component_get_id(component),
                     mf_component_get_version(component));
         return NULL;
@@ -641,7 +647,8 @@ mf_store_read_base_link(MfComponent *component, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "Link %s does not point into the store: %s",
+                    /* TRANSLATORS: the path of a symbolic link, and where it points to */
+                    _("Link %s does not point into the store: %s"),
                     link_path,
                     target);
         return NULL;
@@ -653,7 +660,8 @@ mf_store_read_base_link(MfComponent *component, GError **error)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "Link %s does not name a version of a component: %s",
+                    /* TRANSLATORS: the path of a symbolic link, and where it points to */
+                    _("Link %s does not name a version of a component: %s"),
                     link_path,
                     target);
         return NULL;
@@ -933,15 +941,15 @@ mf_store_get_component(MfStore *store, const char *component_id, const char *ver
     if (found != NULL)
         return g_object_ref(found);
     if (!installed)
-        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, "%s is not installed", component_id);
+        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, _("%s is not installed"), component_id);
     else if (version == NULL)
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_NOT_FOUND,
-                    "%s is installed, but has no current version",
+                    _("%s is installed, but has no current version"),
                     component_id);
     else
-        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, "%s %s is not installed", component_id, version);
+        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, _("%s %s is not installed"), component_id, version);
     return NULL;
 }
 
@@ -990,7 +998,8 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
     g_set_error(error,
                 MF_ERROR,
                 MF_ERROR_NOT_FOUND,
-                "The base of %s, %s %s, is not installed",
+                /* TRANSLATORS: the component, and the identifier and version of its base */
+                _("The base of %s, %s %s, is not installed"),
                 mf_component_get_id(component),
                 base->component_id,
                 base->version_name);
@@ -1036,7 +1045,12 @@ mf_store_find_identity(MfStore *store, const char *identity, GError **error)
     }
 
     if (found == NULL) {
-        g_set_error(error, MF_ERROR, MF_ERROR_NOT_FOUND, "Nothing installed provides identity %s", identity);
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_NOT_FOUND,
+                    /* TRANSLATORS: %s is the identity hash of an image */
+                    _("Nothing installed provides identity %s"),
+                    identity);
         return NULL;
     }
     return g_object_ref(found);

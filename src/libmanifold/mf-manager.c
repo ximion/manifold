@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
+#include <glib/gi18n-lib.h>
 #include <systemd/sd-json.h>
 #include <systemd/sd-varlink.h>
 
@@ -250,21 +251,22 @@ mf_parameter_string(sd_json_variant *parameters, const gchar *key, const gchar *
 static void
 mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant *parameters)
 {
-    const gchar *message = mf_parameter_string(parameters, "message", "unknown error");
+    const gchar *message = mf_parameter_string(parameters, "message", _("unknown error"));
 
     if (g_strcmp0(error_id, MF_VARLINK_ERROR_INVALID_BUNDLE) == 0) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, "Not a valid bundle: %s", message);
+        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("Not a valid bundle: %s"), message);
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_VERIFICATION_FAILED) == 0) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_VERIFICATION_FAILED,
-                    "The bundle could not be verified: %s",
+                    _("The bundle could not be verified: %s"),
                     message);
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_MISSING_BASE) == 0) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_MISSING_BASE,
-                    "Component %s needs base %s %s, which is not installed",
+                    /* TRANSLATORS: the component, and the identifier and version of its base */
+                    _("Component %s needs base %s %s, which is not installed"),
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "baseId", "?"),
                     mf_parameter_string(parameters, "baseVersion", "?"));
@@ -272,70 +274,91 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_ALREADY_INSTALLED,
-                    "Component %s %s is installed already",
+                    /* TRANSLATORS: a component and its version */
+                    _("Component %s %s is installed already"),
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "version", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_NO_SUCH_COMPONENT) == 0) {
+        const char *component_id = mf_parameter_string(parameters, "componentId", "?");
         const char *version = mf_parameter_string(parameters, "version", NULL);
 
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_NOT_FOUND,
-                    "Component %s%s%s is not installed",
-                    mf_parameter_string(parameters, "componentId", "?"),
-                    version != NULL ? " " : "",
-                    version != NULL ? version : "");
+        if (version != NULL)
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_NOT_FOUND,
+                        _("Component %s %s is not installed"),
+                        component_id,
+                        version);
+        else
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_NOT_FOUND,
+                        _("Component %s is not installed"),
+                        component_id);
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_COMPONENT_IN_USE) == 0) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_COMPONENT_IN_USE,
-                    "Component %s is used by the installed component %s",
+                    _("Component %s is used by the installed component %s"),
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "usedBy", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_WRONG_ARCHITECTURE) == 0) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_WRONG_ARCHITECTURE,
-                    "Component %s is built for %s, but this system is %s",
+                    /* TRANSLATORS: the component, its architecture, and that of this system */
+                    _("Component %s is built for %s, but this system is %s"),
                     mf_parameter_string(parameters, "componentId", "?"),
                     mf_parameter_string(parameters, "architecture", "?"),
                     mf_parameter_string(parameters, "hostArchitecture", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_ID_CONFLICT) == 0) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_ID_CONFLICT,
-                    "Component %s is installed already as another kind of component (%s%s)",
-                    mf_parameter_string(parameters, "componentId", "?"),
-                    mf_parameter_string(parameters, "kind", "?"),
-                    sd_json_variant_boolean(sd_json_variant_by_key(parameters, "sdk")) ? " SDK" : "");
+        const char *component_id = mf_parameter_string(parameters, "componentId", "?");
+        const char *kind = mf_parameter_string(parameters, "kind", "?");
+
+        if (sd_json_variant_boolean(sd_json_variant_by_key(parameters, "sdk")))
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_ID_CONFLICT,
+                        /* TRANSLATORS: the component, and the kind it is installed as, like "app" */
+                        _("Component %s is installed already as another kind of component (%s SDK)"),
+                        component_id,
+                        kind);
+        else
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_ID_CONFLICT,
+                        /* TRANSLATORS: the component, and the kind it is installed as, like "app" */
+                        _("Component %s is installed already as another kind of component (%s)"),
+                        component_id,
+                        kind);
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_DISCONNECTED) == 0) {
         /* sd-varlink reports a connection closed during the call as a reply */
         g_set_error_literal(error,
                             MF_ERROR,
                             MF_ERROR_NO_SERVICE,
-                            "Lost the Manifold service: the connection was closed");
+                            _("Lost the Manifold service: the connection was closed"));
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_TIMEOUT) == 0) {
         /* ... and a call that took longer than CALL_TIMEOUT_USEC as well */
         g_set_error_literal(error,
                             MF_ERROR,
                             MF_ERROR_NO_SERVICE,
-                            "The Manifold service did not reply in time");
+                            _("The Manifold service did not reply in time"));
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_PERMISSION_DENIED) == 0) {
         g_set_error_literal(error,
                             MF_ERROR,
                             MF_ERROR_PERMISSION_DENIED,
-                            "Not permitted to change the installed components");
+                            _("Not permitted to change the installed components"));
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_METHOD_NOT_IMPLEMENTED) == 0 ||
                g_strcmp0(error_id, SD_VARLINK_ERROR_METHOD_NOT_FOUND) == 0) {
         g_set_error_literal(error,
                             MF_ERROR,
                             MF_ERROR_NOT_IMPLEMENTED,
-                            "The Manifold service does not implement this operation");
+                            _("The Manifold service does not implement this operation"));
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_INVALID_PARAMETER) == 0) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "The Manifold service rejected the parameter %s",
+                    _("The Manifold service rejected the parameter %s"),
                     mf_parameter_string(parameters, "parameter", "?"));
     } else if (g_strcmp0(error_id, MF_VARLINK_ERROR_FAILED) == 0) {
         g_set_error_literal(error, MF_ERROR, MF_ERROR_FAILED, message);
@@ -343,7 +366,8 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_FAILED,
-                    "The Manifold service replied with an error: %s",
+                    /* TRANSLATORS: %s is the identifier of the error, like org.freedesktop.manifold.Failed */
+                    _("The Manifold service replied with an error: %s"),
                     error_id);
     }
 }
@@ -511,7 +535,7 @@ mf_call_source_dispatch(GSource *source, GSourceFunc callback, gpointer user_dat
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_NO_SERVICE,
-                                "Lost the Manifold service: %s",
+                                _("Lost the Manifold service: %s"),
                                 g_strerror(-r));
         return G_SOURCE_REMOVE;
     }
@@ -592,7 +616,7 @@ mf_manager_call_async(MfManager *manager,
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_FAILED,
-                                "Unable to build call parameters: %s",
+                                _("Unable to build call parameters: %s"),
                                 g_strerror(-build_result));
         return;
     }
@@ -602,7 +626,7 @@ mf_manager_call_async(MfManager *manager,
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_NO_SERVICE,
-                                "Unable to reach the Manifold service at %s: %s",
+                                _("Unable to reach the Manifold service at %s: %s"),
                                 GET_PRIVATE(manager)->socket_path,
                                 g_strerror(-r));
         return;
@@ -615,7 +639,7 @@ mf_manager_call_async(MfManager *manager,
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_FAILED,
-                                "Unable to set up the connection to the Manifold service: %s",
+                                _("Unable to set up the connection to the Manifold service: %s"),
                                 g_strerror(-r));
         return;
     }
@@ -628,7 +652,7 @@ mf_manager_call_async(MfManager *manager,
             g_task_return_new_error(task,
                                     MF_ERROR,
                                     MF_ERROR_FAILED,
-                                    "Unable to duplicate file descriptor: %s",
+                                    _("Unable to duplicate file descriptor: %s"),
                                     g_strerror(errno));
             return;
         }
@@ -640,7 +664,7 @@ mf_manager_call_async(MfManager *manager,
             g_task_return_new_error(task,
                                     MF_ERROR,
                                     MF_ERROR_FAILED,
-                                    "Unable to pass file descriptor: %s",
+                                    _("Unable to pass file descriptor: %s"),
                                     g_strerror(-r));
             return;
         }
@@ -651,7 +675,7 @@ mf_manager_call_async(MfManager *manager,
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_NO_SERVICE,
-                                "Unable to call the Manifold service: %s",
+                                _("Unable to call the Manifold service: %s"),
                                 g_strerror(-r));
         return;
     }

@@ -10,6 +10,7 @@
 
 #include <string.h>
 #include <sys/utsname.h>
+#include <glib/gi18n-lib.h>
 #include <appstream.h>
 
 #include "mf-error.h"
@@ -193,7 +194,7 @@ mf_write_all(int fd, const char *buffer, gsize size, GError **error)
         if (n < 0) {
             if (errno == EINTR)
                 continue;
-            g_set_error(error, MF_ERROR, MF_ERROR_FAILED, "Unable to write: %s", g_strerror(errno));
+            g_set_error(error, MF_ERROR, MF_ERROR_FAILED, _("Unable to write: %s"), g_strerror(errno));
             return FALSE;
         }
         buffer += n;
