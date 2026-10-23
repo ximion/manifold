@@ -689,6 +689,32 @@ mf_store_read_base_at(const char *root, MfComponent *component, GError **error)
 }
 
 /**
+ * mf_store_component_is_revoked_at:
+ * @root: the root directory of a store
+ * @component_id: identifier of a component
+ *
+ * Check for the marker that says a component must not be used anymore,
+ * whichever version of it. A component that is not installed is not
+ * revoked.
+ *
+ * Returns: whether the component was revoked
+ */
+gboolean
+mf_store_component_is_revoked_at(const char *root, const char *component_id)
+{
+    g_autofree char *marker = NULL;
+    const char *subdir;
+
+    g_return_val_if_fail(mf_component_id_is_valid(component_id), FALSE);
+
+    subdir = mf_find_component_subdir_at(root, component_id, NULL);
+    if (subdir == NULL)
+        return FALSE;
+    marker = g_build_filename(root, subdir, component_id, MF_STORE_REVOKED_NAME, NULL);
+    return g_file_test(marker, G_FILE_TEST_EXISTS);
+}
+
+/**
  * mf_store_image_path_at:
  * @root: the root directory of a store
  * @verity_hash: the root hash of an image

@@ -13,8 +13,6 @@
 
 #include "mf-store-private.h"
 
-constexpr char REVOKED_NAME[] = "revoked";
-
 static const char *const LAYER_NAMES[MFR_LAYER_COUNT] = {
     [MFR_LAYER_CORE] = "core",
     [MFR_LAYER_PLATFORM] = "platform",
@@ -192,13 +190,11 @@ mfr_app_load(const char *component_id, GError **error)
     g_autoptr(MfrApp) app = NULL;
     g_autoptr(MfComponent) component = NULL;
     g_autoptr(MfManifest) manifest = NULL;
-    g_autofree char *revoked_path = NULL;
 
     g_return_val_if_fail(mf_component_id_is_valid(component_id), NULL);
 
     /* refuse to load if this application was revoked */
-    revoked_path = g_build_filename(MF_STORAGE_DIR, MF_STORE_APPS_SUBDIR, component_id, REVOKED_NAME, NULL);
-    if (g_file_test(revoked_path, G_FILE_TEST_EXISTS)) {
+    if (mf_store_component_is_revoked_at(MF_STORAGE_DIR, component_id)) {
         g_set_error(error, MF_ERROR, MF_ERROR_REVOKED, "%s was revoked", component_id);
         return NULL;
     }

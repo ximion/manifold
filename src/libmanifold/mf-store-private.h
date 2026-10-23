@@ -39,7 +39,9 @@ MF_BEGIN_PRIVATE_DECLS
 #define MF_STORE_CURRENT_NAME       "current"
 #define MF_STORE_ORIGIN_NAME        "origin"
 #define MF_STORE_MODE_NAME          "mode"
-#define MF_STORE_LOCAL_ORIGIN       "local"
+
+#define MF_STORE_REVOKED_NAME "revoked"
+#define MF_STORE_LOCAL_ORIGIN "local"
 
 /* the length of a hex encoded 256 bit hash, as used for image file names */
 #define MF_HEX_HASH_LENGTH 64
@@ -109,6 +111,9 @@ MfComponent *mf_store_read_base_at(const char  *root,
 MF_INTERNAL_VISIBLE
 MfBaseLink *mf_store_read_base_link(MfComponent *component,
                                     GError     **error);
+MF_INTERNAL_VISIBLE
+gboolean mf_store_component_is_revoked_at(const char *root,
+                                          const char *component_id);
 MF_INTERNAL_VISIBLE
 char *mf_store_image_path_at(const char *root,
                              const char *verity_hash);
