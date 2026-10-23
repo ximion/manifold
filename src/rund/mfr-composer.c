@@ -175,11 +175,13 @@ mfr_composer_new(GError **error)
         return NULL;
 
     /* clean up captures in case anything has changed on our host, except for the ones that
-     * applications launched before our restart still use. Also drop unused trees */
+     * applications launched before our restart still use. Also drop unused trees, and the
+     * verity devices an earlier start left behind */
     used_layers = mfr_tree_collect_used_layers();
     used_captures = mfr_tree_collect_used_captures(used_layers);
     mfr_capture_check_all(used_captures);
     mfr_tree_remove_unused(used_layers);
+    mfr_image_mounts_remove_stale_devices();
 
     return g_object_new(MFR_TYPE_COMPOSER, NULL);
 }

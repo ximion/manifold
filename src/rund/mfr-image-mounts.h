@@ -29,4 +29,6 @@ void                         mfr_image_mounts_release(MfrImageMounts *mounts,
 
 const char                  *mfr_image_mount_get_path(const MfrImageMount *img_mount);
 
+void                         mfr_image_mounts_remove_stale_devices(void);
+
 G_END_DECLS
