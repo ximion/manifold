@@ -343,6 +343,29 @@ mfd_set_not_installed_error(GError **error,
 }
 
 /**
+ * mfd_set_in_use_error:
+ * @used_by: the ID of a kept component that builds on it
+ */
+static void
+mfd_set_in_use_error(GError **error,
+                     MfdErrorDetail *ret_detail,
+                     const char *component_id,
+                     const char *used_by)
+{
+    if (ret_detail != NULL) {
+        mfd_error_detail_clear(ret_detail);
+        ret_detail->component_id = g_strdup(component_id);
+        ret_detail->used_by = g_strdup(used_by);
+    }
+    g_set_error(error,
+                MF_ERROR,
+                MF_ERROR_COMPONENT_IN_USE,
+                "Component %s is used by %s",
+                component_id,
+                used_by);
+}
+
+/**
  * mfd_set_missing_base_error:
  * @manifest: the manifest of the component whose base is missing
  * @base_version: the version of the base, with its revision if only that exact revision will do
@@ -1149,24 +1172,15 @@ mfd_manager_plan_removal(MfdManager *manager,
     for (guint i = 0; i < installed->len; i++) {
         MfComponent *candidate = g_ptr_array_index(installed, i);
         g_autoptr(GHashTable) used = NULL;
-        const char *used_by;
 
         if (!g_hash_table_contains(requested, candidate) ||
             g_hash_table_contains(rmplan->cpts_set, candidate))
             continue;
         used = mfd_manager_find_used(manager, installed, rmplan->cpts_set);
-        used_by = mf_component_get_id(g_hash_table_lookup(used, candidate));
-        if (ret_detail != NULL) {
-            mfd_error_detail_clear(ret_detail);
-            ret_detail->component_id = g_strdup(component_id);
-            ret_detail->used_by = g_strdup(used_by);
-        }
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_COMPONENT_IN_USE,
-                    "Component %s is used by %s",
-                    component_id,
-                    used_by);
+        mfd_set_in_use_error(error,
+                             ret_detail,
+                             component_id,
+                             mf_component_get_id(g_hash_table_lookup(used, candidate)));
         return NULL;
     }
 
