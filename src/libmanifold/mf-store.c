@@ -345,20 +345,15 @@ mf_read_image_link(const char *version_dir, const char *link_name, GError **erro
 }
 
 /**
- * mf_store_read_manifest_at:
- * @version_dir: the version directory of a component
- * @component_id: the component the manifest has to describe
- * @version: the version the manifest has to describe
- * @error: a #GError
+ * mf_read_manifest_at:
  *
- * Returns: (transfer full): the manifest of a version directory, if it is
- *   the manifest of that component and version, or %NULL on error
+ * Read the manifest of a version directory, and make sure it describes the
+ * component and version the directory is for.
+ *
+ * Returns: (transfer full): the manifest, or %NULL on error
  */
-MfManifest *
-mf_store_read_manifest_at(const char *version_dir,
-                          const char *component_id,
-                          const char *version,
-                          GError **error)
+static MfManifest *
+mf_read_manifest_at(const char *version_dir, const char *component_id, const char *version, GError **error)
 {
     g_autofree char *manifest_path = g_build_filename(version_dir, MF_STORE_MANIFEST_NAME, NULL);
     g_autoptr(MfManifest) manifest = NULL;
@@ -412,7 +407,7 @@ mf_read_version_dir_at(const char *root,
     verity_hash = mf_read_image_link(version_dir, mf_store_image_link_for_subdir(subdir), error);
     if (verity_hash == NULL)
         return NULL;
-    manifest = mf_store_read_manifest_at(version_dir, component_id, version, error);
+    manifest = mf_read_manifest_at(version_dir, component_id, version, error);
     if (manifest == NULL)
         return NULL;
 

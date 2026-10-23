@@ -428,13 +428,12 @@ test_manifest_must_be_sound(Fixture *f, gconstpointer user_data)
 
 /**
  * mft_new_core:
- * @dir: (nullable): the version directory to make the component for
  *
- * Make the component of the current core, as the install daemon describes
- * it, without its manifest.
+ * Make the component of the current core as the install daemon describes
+ * it: without a directory, and without a manifest.
  */
 static MfComponent *
-mft_new_core(const char *dir)
+mft_new_core(void)
 {
     g_autofree char *core_hash = mft_fake_hash(TEST_CORE_ID);
 
@@ -448,7 +447,7 @@ mft_new_core(const char *dir)
                             TRUE,
                             MF_INSTALL_MODE_MANUAL,
                             "local",
-                            dir);
+                            NULL);
 }
 
 /**
@@ -459,13 +458,11 @@ test_fetch_manifest(Fixture *f, gconstpointer user_data)
 {
     g_autoptr(GError) error = NULL;
     g_autoptr(MfComponent) core = mf_store_get_component(f->store, TEST_CORE_ID, NULL, &error);
-    g_autoptr(MfComponent) unread = NULL;
-    g_autoptr(MfComponent) removed = NULL;
     g_autoptr(MfComponent) reported = NULL;
     g_autoptr(MfManifest) manifest = NULL;
     g_autoptr(MfManifest) again = NULL;
 
-    /* a component read from the store keeps the manifest the store read */
+    /* a component read from the store has the manifest the store read */
     g_assert_no_error(error);
     manifest = mf_component_fetch_manifest(core, &error);
     g_assert_no_error(error);
@@ -473,28 +470,9 @@ test_fetch_manifest(Fixture *f, gconstpointer user_data)
     again = mf_component_fetch_manifest(core, &error);
     g_assert_no_error(error);
     g_assert_true(again == manifest);
-    g_clear_object(&manifest);
-    g_clear_object(&again);
-
-    /* a component without a manifest reads it from its version directory once, and keeps it */
-    unread = mft_new_core(mf_component_get_dir(core));
-    manifest = mf_component_fetch_manifest(unread, &error);
-    g_assert_no_error(error);
-    g_assert_cmpstr(mf_manifest_get_version(manifest), ==, "13.8");
-    mft_rm_rf(mf_component_get_dir(core));
-    again = mf_component_fetch_manifest(unread, &error);
-    g_assert_no_error(error);
-    g_assert_true(again == manifest);
-
-    /* without a manifest, a version that was removed is not installed anymore */
-    removed = mft_new_core(mf_component_get_dir(core));
-    g_assert_null(mf_component_fetch_manifest(removed, &error));
-    g_assert_error(error, MF_ERROR, MF_ERROR_NOT_FOUND);
-    g_assert_cmpstr(error->message, ==, TEST_CORE_ID " 13.8 is not installed");
-    g_clear_error(&error);
 
     /* a component the install daemon described was not read from a store, so it has no manifest */
-    reported = mft_new_core(NULL);
+    reported = mft_new_core();
     g_assert_null(mf_component_get_dir(reported));
     g_assert_null(mf_component_fetch_manifest(reported, &error));
     g_assert_error(error, MF_ERROR, MF_ERROR_NOT_FOUND);

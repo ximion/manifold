@@ -44,7 +44,6 @@ MF_BEGIN_PRIVATE_DECLS
 /* the length of a hex encoded 256 bit hash, as used for image file names */
 #define MF_HEX_HASH_LENGTH 64
 
-#define MF_COMPONENT_ID_LENGTH_MAX 255
 
 /* the layout of the store */
 MF_INTERNAL_VISIBLE
@@ -110,10 +109,6 @@ MfComponent *mf_store_read_base_at(const char  *root,
 MF_INTERNAL_VISIBLE
 MfBaseLink *mf_store_read_base_link(MfComponent *component,
                                     GError     **error);
-MfManifest *mf_store_read_manifest_at(const char *version_dir,
-                                      const char *component_id,
-                                      const char *version,
-                                      GError    **error);
 MF_INTERNAL_VISIBLE
 char *mf_store_image_path_at(const char *root,
                              const char *verity_hash);
