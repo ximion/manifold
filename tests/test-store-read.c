@@ -336,7 +336,8 @@ test_list_images(Fixture *f, gconstpointer user_data)
     g_autofree char *core_hash = mft_fake_hash(TEST_CORE_ID);
     g_autofree char *app_hash = mft_fake_hash(TEST_APP_ID);
     g_autofree char *stray_file = g_build_filename(images_dir, "notes.txt", NULL);
-    g_autofree char *stray_dir_name = g_strconcat(mft_fake_hash(TEST_KIT_ID), ".raw", NULL);
+    g_autofree char *kit_hash = mft_fake_hash(TEST_KIT_ID);
+    g_autofree char *stray_dir_name = g_strconcat(kit_hash, ".raw", NULL);
     g_autofree char *stray_dir = g_build_filename(images_dir, stray_dir_name, NULL);
     g_autoptr(GPtrArray) images = NULL;
 
