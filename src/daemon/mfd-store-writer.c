@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <libglnx.h>
 
+#include "mf-component-private.h"
 #include "mf-store-private.h"
 #include "mf-utils-private.h"
 #include "mfd-utils.h"
@@ -156,7 +157,7 @@ mfd_store_writer_remove_image(MfdStoreWriter *writer, const char *verity_hash, G
 {
     g_autofree char *path = mf_store_image_path_at(mf_store_get_path(writer->store), verity_hash);
 
-    g_info("Removing image %s", verity_hash);
+    g_message("Removing image %s", verity_hash);
     if (unlink(path) < 0 && errno != ENOENT) {
         glnx_throw_errno_prefix(error, "Unable to remove %s", path);
         return FALSE;
@@ -287,8 +288,11 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
                                    MfInstallMode mode,
                                    GError **error)
 {
-    const char *subdir = mf_store_subdir_for_kind(mf_manifest_get_kind(manifest),
-                                                  mf_manifest_is_sdk(manifest));
+    MfComponentKind kind = mf_manifest_get_kind(manifest);
+    gboolean sdk = mf_manifest_is_sdk(manifest);
+    const char *subdir = mf_store_subdir_for_kind(kind, sdk);
+    /* an application or plugin is always auto, a runtime only if it came along */
+    gboolean dependency = mode == MF_INSTALL_MODE_AUTO && !mf_component_kind_is_always_auto(kind, sdk);
     const char *component_id = mf_manifest_get_component_id(manifest);
     const char *version = mf_manifest_get_version(manifest);
     guint64 revision = mf_manifest_get_revision(manifest);
@@ -366,10 +370,7 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
         goto out;
     }
 
-    g_info("Installed %s %s%s",
-           component_id,
-           version,
-           mode == MF_INSTALL_MODE_AUTO ? " as a dependency" : "");
+    g_message("Installed %s %s%s", component_id, version, dependency ? " as a dependency" : "");
     ret = TRUE;
     if (!mfd_store_writer_update_current(writer, component_dir, NULL, &current_error))
         g_warning("Unable to make the newest version of %s current: %s",
@@ -416,7 +417,7 @@ mfd_store_writer_remove_component(MfdStoreWriter *writer, MfComponent *component
     version_name = g_path_get_basename(version_dir);
     tmp_name = g_strconcat(MF_TMP_PREFIX, version_name, NULL);
     tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
-    g_info("Removing %s", version_dir);
+    g_message("Removing %s", version_dir);
     if (!mfd_remove_if_exists(tmp_dir, error))
         return FALSE;
 

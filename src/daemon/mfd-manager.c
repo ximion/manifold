@@ -1636,7 +1636,7 @@ mfd_manager_mark(MfdManager *manager,
             continue;
         if (!mfd_store_writer_set_mode(manager->writer, component, mode, error))
             return NULL;
-        g_info("Marked %s as %s", mf_component_get_dir(component), mf_install_mode_to_string(mode));
+        g_message("Marked %s as %s", mf_component_get_dir(component), mf_install_mode_to_string(mode));
         n_marked++;
     }
     if (n_marked == 0) {
