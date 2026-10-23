@@ -31,6 +31,6 @@ G_BEGIN_DECLS
     do {                                \
         ((bitfield) ^= (flag));         \
     } while (0)
-#define mf_flags_contains(bitfield, flag) (((bitfield) & (flag)) > 0)
+#define mf_flags_contains(bitfield, flag) (((bitfield) & (flag)) != 0)
 
 G_END_DECLS
