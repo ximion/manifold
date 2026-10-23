@@ -741,6 +741,7 @@ mfr_capture_job_find_drivers(MfrCaptureJob *job, GError **error)
 
     for (size_t i = 0; i < G_N_ELEMENTS(job->drivers); i++) {
         MfrDriverList *list = &job->drivers[i];
+        g_autoptr(GHashTable) libdirs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
         for (size_t j = 0; list->kind->loaders[j] != NULL; j++) {
             g_autofree char *link = g_build_filename(links_dir.path, list->kind->loaders[j], NULL);
@@ -754,6 +755,9 @@ mfr_capture_job_find_drivers(MfrCaptureJob *job, GError **error)
             canonical = realpath(libdir, NULL);
             if (canonical != NULL)
                 g_set_str(&libdir, canonical);
+            /* the loaders of a kind are usually in the same directory, which we scan only once */
+            if (!g_hash_table_add(libdirs, g_strdup(libdir)))
+                continue;
             if (!g_ptr_array_find_with_equal_func(job->host_dirs, libdir, g_str_equal, NULL))
                 g_ptr_array_add(job->host_dirs, g_strdup(libdir));
             for (size_t k = 0; list->kind->lookups[k] != NULL; k++) {
