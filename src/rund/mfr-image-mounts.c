@@ -204,11 +204,14 @@ out:
 
 /**
  * mfr_verity_deactivate:
+ *
+ * Remove a verity device once nothing uses it anymore: a device that was
+ * reused may still be in use by an application launched earlier.
  */
 static gboolean
-mfr_verity_deactivate(const char *device_name, gboolean deferred, GError **error)
+mfr_verity_deactivate(const char *device_name, GError **error)
 {
-    int r = crypt_deactivate_by_name(NULL, device_name, deferred ? CRYPT_DEACTIVATE_DEFERRED : 0);
+    int r = crypt_deactivate_by_name(NULL, device_name, CRYPT_DEACTIVATE_DEFERRED);
     if (r < 0 && r != -ENODEV)
         return glnx_throw(error, "Unable to remove %s: %s", device_name, g_strerror(-r));
     return TRUE;
@@ -310,8 +313,7 @@ mfr_image_mounts_acquire(MfrImageMounts *mounts, const MfrImage *image, GError *
 
 fail:
     (void) rmdir(path);
-    /* deferred, as a device that was reused may still be in use */
-    mfr_verity_deactivate(device_name, TRUE, NULL);
+    mfr_verity_deactivate(device_name, NULL);
     return NULL;
 }
 
@@ -340,7 +342,7 @@ mfr_image_mounts_release(MfrImageMounts *mounts, MfrImageMount *img_mount)
         g_warning("Unable to unmount %s: %s", img_mount->mountpoint, g_strerror(errno));
     if (rmdir(img_mount->mountpoint) != 0)
         g_warning("Unable to remove %s: %s", img_mount->mountpoint, g_strerror(errno));
-    if (!mfr_verity_deactivate(device_name, TRUE, &error))
+    if (!mfr_verity_deactivate(device_name, &error))
         g_warning("%s", error->message);
     g_debug("Unmounted image %s", img_mount->verity_hash);
 

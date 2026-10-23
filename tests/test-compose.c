@@ -100,7 +100,6 @@ test_load(Fixture *fixture, gconstpointer user_data)
     g_assert_cmpstr(app->arch_tuple, ==, "x86_64-linux-gnu");
 
     layer = &app->layers[MFR_LAYER_APP];
-    g_assert_cmpint(layer->kind, ==, MFR_LAYER_APP);
     g_assert_cmpstr(layer->component_id, ==, TEST_APP_ID);
     g_assert_cmpstr(layer->image.verity_hash, ==, app_hash);
     g_assert_cmpuint(layer->image.data_offset, ==, 20480);

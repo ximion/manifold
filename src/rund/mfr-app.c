@@ -235,8 +235,6 @@ mfr_app_load(const char *component_id, GError **error)
 static void
 mfr_app_init(MfrApp *app)
 {
-    for (MfrLayerKind kind = 0; kind < MFR_LAYER_COUNT; kind++)
-        app->layers[kind].kind = kind;
 }
 
 /**

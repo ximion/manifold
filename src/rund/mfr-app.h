@@ -47,10 +47,9 @@ typedef struct {
  * application does not have has no image: its verity hash is %NULL.
  */
 typedef struct {
-    MfrLayerKind kind;
-    char        *component_id;
-    char        *version;
-    MfrImage     image;
+    char    *component_id;
+    char    *version;
+    MfrImage image;
 } MfrLayer;
 
 #define MFR_TYPE_APP (mfr_app_get_type())
