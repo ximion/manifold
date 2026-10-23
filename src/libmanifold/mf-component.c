@@ -14,7 +14,7 @@
 #include "mf-utils-private.h"
 
 /* the longest an identifier may be, as it is a directory name */
-constexpr size_t MF_COMPONENT_ID_LENGTH_MAX = 255;
+constexpr size_t COMPONENT_ID_LENGTH_MAX = 255;
 
 /**
  * MfComponent:
@@ -241,7 +241,7 @@ mf_install_mode_from_string(const char *mode_str)
 gboolean
 mf_component_id_is_valid(const char *component_id)
 {
-    return mf_name_is_valid(component_id, "._-", MF_COMPONENT_ID_LENGTH_MAX);
+    return mf_name_is_valid(component_id, "._-", COMPONENT_ID_LENGTH_MAX);
 }
 
 /**

@@ -67,7 +67,7 @@ constexpr char OVERRIDES_NAME[] = "overrides";
 constexpr char ENVIRONMENT_NAME[] = "environment.json";
 constexpr char STAMP_NAME[] = "stamp";
 
-constexpr char MF_STALE_PREFIX[] = ".stale-";
+constexpr char STALE_PREFIX[] = ".stale-";
 
 /**
  * MfrDriverKind:
@@ -2180,10 +2180,10 @@ mfr_capture_move_aside(const MfrCapture *capture, const char *reason, GError **e
     g_autofree char *name = g_path_get_basename(capture->dir);
     g_autofree char *stale_dir = NULL;
 
-    if (g_str_has_prefix(name, MF_STALE_PREFIX))
+    if (g_str_has_prefix(name, STALE_PREFIX))
         return TRUE;
 
-    stale_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_STALE_PREFIX, capture->id, NULL);
+    stale_dir = g_strconcat(MFR_CAPTURE_DIR "/", STALE_PREFIX, capture->id, NULL);
     g_info("Moving capture %s aside: %s", name, reason);
     if (rename(capture->dir, stale_dir) != 0)
         return glnx_throw_errno_prefix(error, "Unable to rename %s to %s", capture->dir, stale_dir);
@@ -2289,7 +2289,7 @@ mfr_capture_check_all(GHashTable *used_ids)
             capture = mfr_capture_new_from_dir(dir, &error);
             if (capture == NULL)
                 reason = g_strdup(error->message);
-            else if (g_str_has_prefix(name, MF_STALE_PREFIX))
+            else if (g_str_has_prefix(name, STALE_PREFIX))
                 reason = g_strdup("it was replaced");
             else if (mfr_stamp_find_changed(capture->stamp, "dirs", &changed) ||
                      mfr_stamp_find_changed(capture->stamp, "targets", &changed))
