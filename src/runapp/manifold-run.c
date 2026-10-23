@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <linux/capability.h>
@@ -505,12 +506,14 @@ mfx_execute_command(const char *command, char **args)
     for (const char *dir = strtok_r(search, ":", &saveptr); dir != nullptr;
          dir = strtok_r(nullptr, ":", &saveptr)) {
         char path[PATH_MAX];
+        struct stat st;
 
         if (dir[0] != '/')
             continue;
         if (snprintf(path, sizeof(path), "%s/%s", dir, command) >= (int) sizeof(path))
             continue;
-        if (access(path, X_OK) != 0)
+        /* like the shell, we skip a directory that has the name of the program */
+        if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || access(path, X_OK) != 0)
             continue;
         free(search);
         return mfx_execute_path(path, args);
