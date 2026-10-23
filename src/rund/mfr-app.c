@@ -85,10 +85,6 @@ mfr_fill_layer_info(const char *root, MfComponent *component, MfrLayer *layer, G
 
     if (manifest == NULL)
         return FALSE;
-    if (!mf_manifest_has_image(manifest))
-        return glnx_throw(error,
-                          "The manifest of %s does not say where the partitions of its image are",
-                          mf_component_get_id(component));
 
     layer->component_id = g_strdup(mf_component_get_id(component));
     layer->version = g_strdup(mf_component_get_version(component));

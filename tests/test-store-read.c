@@ -414,6 +414,12 @@ test_manifest_must_be_sound(Fixture *f, gconstpointer user_data)
     mft_replace_in_file(manifest, "\"hash-offset\": 22528", "\"hash-offset\": 1");
     mft_assert_read_fails(f, TEST_APP_ID, MF_ERROR_INVALID_MANIFEST, expected);
 
+    /* every manifest describes its image */
+    g_free(expected);
+    expected = g_strdup_printf("%s: image is missing or not an object", manifest);
+    mft_replace_in_file(manifest, "\"image\": {", "\"no-image\": {");
+    mft_assert_read_fails(f, TEST_APP_ID, MF_ERROR_INVALID_MANIFEST, expected);
+
     mft_write_file(manifest, "not json");
     mft_assert_read_fails(f, TEST_APP_ID, MF_ERROR_INVALID_MANIFEST, NULL);
 

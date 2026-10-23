@@ -69,7 +69,6 @@ guint64         mf_manifest_get_base_revision(MfManifest *manifest);
 const char     *mf_manifest_get_base_identity(MfManifest *manifest);
 const char     *mf_manifest_get_base_content_hash(MfManifest *manifest);
 
-gboolean        mf_manifest_has_image(MfManifest *manifest);
 const char     *mf_manifest_get_image_file(MfManifest *manifest);
 guint64         mf_manifest_get_image_size(MfManifest *manifest);
 const char     *mf_manifest_get_image_checksum(MfManifest    *manifest,

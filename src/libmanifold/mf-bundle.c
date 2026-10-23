@@ -382,10 +382,6 @@ mf_bundle_reader_parse_manifest(MfBundleReader *reader, const char *name, GBytes
         g_prefix_error(error, "%s: ", name);
         return NULL;
     }
-    if (!mf_manifest_has_image(image->manifest)) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_MANIFEST, "%s: image section is missing", name);
-        return NULL;
-    }
 
     /* the image has to be in the bundle, and as large as the manifest says */
     image_name = mf_manifest_get_image_file(image->manifest);

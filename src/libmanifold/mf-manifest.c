@@ -78,7 +78,6 @@ typedef struct {
     char *base_identity;
     char *base_content_hash; /* (nullable) */
 
-    gboolean has_image;
     char *image_file;
     guint64 image_size;
     char *image_checksums[MF_CHECKSUM_KIND_LAST];
@@ -243,23 +242,18 @@ mf_manifest_json_parse_base(sd_json_variant *manifest, MfManifestPrivate *priv, 
 /**
  * mf_manifest_json_parse_image:
  *
- * Parse the image section of a manifest, which describes the image file. The
- * manifest that a bundle carries next to the image has it, the copy of the
- * manifest inside the image does not.
+ * Parse the image section of a manifest, which describes the image file.
  */
 static gboolean
 mf_manifest_json_parse_image(sd_json_variant *manifest, MfManifestPrivate *priv, GError **error)
 {
     sd_json_variant *image = sd_json_variant_by_key(manifest, "image");
 
-    if (image == NULL || sd_json_variant_is_null(image))
-        return TRUE;
-    if (!sd_json_variant_is_object(image)) {
-        mf_set_invalid_manifest_error(error, "image is not an object");
+    if (image == NULL || !sd_json_variant_is_object(image)) {
+        mf_set_invalid_manifest_error(error, "image is missing or not an object");
         return FALSE;
     }
 
-    priv->has_image = TRUE;
     priv->image_file = g_strdup(FIELD_STRING(image, "image", "file", error));
     if (priv->image_file == NULL)
         return FALSE;
@@ -650,24 +644,10 @@ mf_manifest_get_base_content_hash(MfManifest *manifest)
 }
 
 /**
- * mf_manifest_has_image:
- * @manifest: an #MfManifest
- *
- * Returns: whether the manifest describes the image file, which the one
- *   inside an image does not
- */
-gboolean
-mf_manifest_has_image(MfManifest *manifest)
-{
-    g_return_val_if_fail(MF_IS_MANIFEST(manifest), FALSE);
-    return GET_PRIVATE(manifest)->has_image;
-}
-
-/**
  * mf_manifest_get_image_file:
  * @manifest: an #MfManifest
  *
- * Returns: (nullable): the name of the image file, beside the manifest
+ * Returns: the name of the image file, beside the manifest
  */
 const char *
 mf_manifest_get_image_file(MfManifest *manifest)
@@ -694,7 +674,7 @@ mf_manifest_get_image_size(MfManifest *manifest)
  * @manifest: an #MfManifest
  * @kind: the kind of checksum
  *
- * Returns: (nullable): the checksum of the image file, as hex
+ * Returns: the checksum of the image file, as hex
  */
 const char *
 mf_manifest_get_image_checksum(MfManifest *manifest, MfChecksumKind kind)
@@ -708,7 +688,7 @@ mf_manifest_get_image_checksum(MfManifest *manifest, MfChecksumKind kind)
  * mf_manifest_get_verity_hash:
  * @manifest: an #MfManifest
  *
- * Returns: (nullable): the dm-verity root hash of the image
+ * Returns: the dm-verity root hash of the image
  */
 const char *
 mf_manifest_get_verity_hash(MfManifest *manifest)

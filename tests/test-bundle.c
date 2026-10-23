@@ -312,7 +312,6 @@ test_valid_bundle(Fixture *f, gconstpointer user_data)
     g_assert_cmpstr(mf_manifest_get_command(manifest), ==, "app");
     g_assert_cmpstr(mf_bundle_image_get_manifest_name(app), ==, TEST_APP_ID "_0.1.0.manifold.json");
     g_assert_nonnull(mf_bundle_image_get_metainfo(app));
-    g_assert_true(mf_manifest_has_image(manifest));
     g_assert_cmpstr(mf_manifest_get_image_file(manifest), ==, TEST_APP_ID "_0.1.0.raw");
     g_assert_cmpuint(mf_manifest_get_image_size(manifest), ==, 12288);
     g_assert_cmpstr(mf_manifest_get_image_checksum(manifest, MF_CHECKSUM_KIND_SHA256), ==, expected_sha256);
