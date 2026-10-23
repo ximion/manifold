@@ -227,7 +227,7 @@ mf_bundle_init(MfBundle *bundle)
 }
 
 static void
-mf_set_zip_error(GError **error, MfError code, zip_error_t *zerr, const char *message)
+mf_set_error_from_zip(GError **error, MfError code, zip_error_t *zerr, const char *message)
 {
     g_set_error(error, MF_ERROR, code, "%s: %s", message, zip_error_strerror(zerr));
 }
@@ -340,7 +340,7 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, 
 
     file = zip_fopen_index(zip, index, 0);
     if (file == NULL) {
-        mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, zip_get_error(zip), name);
+        mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, zip_get_error(zip), name);
         return NULL;
     }
 
@@ -348,7 +348,7 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, 
     while (total < st.size) {
         n = zip_fread(file, data + total, st.size - total);
         if (n < 0) {
-            mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, zip_file_get_error(file), name);
+            mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, zip_file_get_error(file), name);
             zip_fclose(file);
             return NULL;
         }
@@ -752,7 +752,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
     else if ((priv->zip = zip_open_from_source(source, ZIP_RDONLY, &zerr)) == NULL)
         zip_source_free(source);
     if (priv->zip == NULL) {
-        mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, &zerr, _("Not a bundle"));
+        mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, &zerr, _("Not a bundle"));
         zip_error_fini(&zerr);
         return NULL;
     }
@@ -939,7 +939,7 @@ mf_bundle_copy_image(MfBundle *bundle,
 
     file = zip_fopen_index(priv->zip, image->image_index, 0);
     if (file == NULL) {
-        mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, zip_get_error(priv->zip), image_name);
+        mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, zip_get_error(priv->zip), image_name);
         return FALSE;
     }
 
@@ -947,7 +947,7 @@ mf_bundle_copy_image(MfBundle *bundle,
         zip_int64_t n = zip_fread(file, buffer, COPY_BUFFER_SIZE);
 
         if (n < 0) {
-            mf_set_zip_error(error, MF_ERROR_INVALID_BUNDLE, zip_file_get_error(file), image_name);
+            mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, zip_file_get_error(file), image_name);
             goto out;
         }
         if (n == 0)

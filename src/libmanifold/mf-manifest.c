@@ -141,15 +141,15 @@ mf_manifest_init(MfManifest *manifest)
 #define FIELD_HASH(object, section, key, error) \
     mf_json_get_hash_field(object, section, key, MF_ERROR_INVALID_MANIFEST, error)
 
-static void mf_set_invalid_manifest_error(GError **error, const char *format, ...) G_GNUC_PRINTF(2, 3);
+static void mf_set_error_invalid_manifest(GError **error, const char *format, ...) G_GNUC_PRINTF(2, 3);
 
 /**
- * mf_set_invalid_manifest_error:
+ * mf_set_error_invalid_manifest:
  *
  * Set an %MF_ERROR_INVALID_MANIFEST error.
  */
 static void
-mf_set_invalid_manifest_error(GError **error, const char *format, ...)
+mf_set_error_invalid_manifest(GError **error, const char *format, ...)
 {
     g_autofree char *message = NULL;
     va_list args;
@@ -173,7 +173,7 @@ mf_manifest_json_get_component_id(sd_json_variant *object, const char *section, 
     if (component_id == NULL)
         return NULL;
     if (!mf_component_id_is_valid(component_id)) {
-        mf_set_invalid_manifest_error(error,
+        mf_set_error_invalid_manifest(error,
                                       "%s%s%s",
                                       section ? section : "",
                                       section ? ": " : "",
@@ -196,7 +196,7 @@ mf_manifest_json_get_version(sd_json_variant *object, const char *section, GErro
     if (version == NULL)
         return NULL;
     if (!mf_version_is_valid(version)) {
-        mf_set_invalid_manifest_error(error,
+        mf_set_error_invalid_manifest(error,
                                       "%s%s%s",
                                       section ? section : "",
                                       section ? ": " : "",
@@ -222,7 +222,7 @@ mf_manifest_json_parse_base(sd_json_variant *manifest, MfManifestPrivate *priv, 
         return TRUE;
     if (!sd_json_variant_is_object(base)) {
         /* TRANSLATORS: "base" is a section of the manifest, and not translated */
-        mf_set_invalid_manifest_error(error, "%s", _("base is not an object"));
+        mf_set_error_invalid_manifest(error, "%s", _("base is not an object"));
         return FALSE;
     }
 
@@ -256,7 +256,7 @@ mf_manifest_json_parse_image(sd_json_variant *manifest, MfManifestPrivate *priv,
 
     if (image == NULL || !sd_json_variant_is_object(image)) {
         /* TRANSLATORS: "image" is a section of the manifest, and not translated */
-        mf_set_invalid_manifest_error(error, "%s", _("image is missing or not an object"));
+        mf_set_error_invalid_manifest(error, "%s", _("image is missing or not an object"));
         return FALSE;
     }
 
@@ -286,7 +286,7 @@ mf_manifest_json_parse_image(sd_json_variant *manifest, MfManifestPrivate *priv,
         return FALSE;
     if (priv->hash_offset <= priv->data_offset) {
         /* TRANSLATORS: "image" is the section of the manifest this is about, and not translated */
-        mf_set_invalid_manifest_error(error, "%s", _("image: the hash partition is placed before the data"));
+        mf_set_error_invalid_manifest(error, "%s", _("image: the hash partition is placed before the data"));
         return FALSE;
     }
 
@@ -318,7 +318,7 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
     if (!FIELD_UNSIGNED(jo, NULL, "format", &format, error))
         return FALSE;
     if (format != (guint64) MANIFEST_FORMAT) {
-        mf_set_invalid_manifest_error(error,
+        mf_set_error_invalid_manifest(error,
                                       /* TRANSLATORS: "format" is a manifest field, and not translated */
                                       _("format %" PRIu64 " is not supported, only %d is"),
                                       format,
@@ -336,7 +336,7 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
     priv->kind = mf_component_kind_from_string(value);
     if (priv->kind == MF_COMPONENT_KIND_UNKNOWN) {
         /* TRANSLATORS: "kind" is a field of the manifest, and not translated, %s is its value */
-        mf_set_invalid_manifest_error(error, _("kind %s is not known"), value);
+        mf_set_error_invalid_manifest(error, _("kind %s is not known"), value);
         return FALSE;
     }
 
@@ -361,11 +361,11 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
         return FALSE;
     /* only a core has nothing below it, and the SDK of a core builds on that core */
     if (priv->sdk && priv->base_id == NULL) {
-        mf_set_invalid_manifest_error(error, "%s", _("an SDK must name the component it extends"));
+        mf_set_error_invalid_manifest(error, "%s", _("an SDK must name the component it extends"));
         return FALSE;
     }
     if (priv->kind != MF_COMPONENT_KIND_CORE && priv->base_id == NULL) {
-        mf_set_invalid_manifest_error(error,
+        mf_set_error_invalid_manifest(error,
                                       /* TRANSLATORS: %s is the kind of the component, like "app" or "kit" */
                                       _("a %s must name the layer it is built on"),
                                       mf_component_kind_to_string(priv->kind));
@@ -379,7 +379,7 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
     if (app != NULL && !sd_json_variant_is_null(app)) {
         if (!sd_json_variant_is_object(app)) {
             /* TRANSLATORS: "app" is a section of the manifest, and not translated */
-            mf_set_invalid_manifest_error(error, "%s", _("app is not an object"));
+            mf_set_error_invalid_manifest(error, "%s", _("app is not an object"));
             return FALSE;
         }
         priv->command = g_strdup(FIELD_STRING(app, "app", "command", error));
@@ -387,11 +387,11 @@ mf_manifest_parse_json(MfManifest *manifest, GError **error)
             return FALSE;
         if (strchr(priv->command, '/') != NULL) {
             /* TRANSLATORS: "app" and "command" are a section and field of the manifest, not translated */
-            mf_set_invalid_manifest_error(error, _("app: command is not a plain name: %s"), priv->command);
+            mf_set_error_invalid_manifest(error, _("app: command is not a plain name: %s"), priv->command);
             return FALSE;
         }
     } else if (priv->kind == MF_COMPONENT_KIND_APP && !priv->sdk) {
-        mf_set_invalid_manifest_error(error, "%s", _("an app must say what to run"));
+        mf_set_error_invalid_manifest(error, "%s", _("an app must say what to run"));
         return FALSE;
     }
 

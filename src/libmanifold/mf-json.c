@@ -12,17 +12,17 @@
 #include "mf-utils.h"
 
 static void
-mf_json_set_field_error(GError **error, MfError code, const char *context, const char *format, ...)
+mf_json_set_error_field(GError **error, MfError code, const char *context, const char *format, ...)
     G_GNUC_PRINTF(4, 5);
 
 /**
- * mf_json_set_field_error:
+ * mf_json_set_error_field:
  *
  * Set an error about a field of a JSON document, with the message prefixed
  * by "<context>: " if there is a context.
  */
 static void
-mf_json_set_field_error(GError **error, MfError code, const char *context, const char *format, ...)
+mf_json_set_error_field(GError **error, MfError code, const char *context, const char *format, ...)
 {
     g_autofree char *message = NULL;
     va_list args;
@@ -101,12 +101,12 @@ mf_json_get_string_field(sd_json_variant *object,
 
     if (value == NULL || sd_json_variant_is_null(value)) {
         /* TRANSLATORS: %s is the name of a field of a JSON document */
-        mf_json_set_field_error(error, code, context, _("%s is missing"), key);
+        mf_json_set_error_field(error, code, context, _("%s is missing"), key);
         return NULL;
     }
     if (!sd_json_variant_is_string(value)) {
         /* TRANSLATORS: %s is the name of a field of a JSON document */
-        mf_json_set_field_error(error, code, context, _("%s is not a string"), key);
+        mf_json_set_error_field(error, code, context, _("%s is not a string"), key);
         return NULL;
     }
 
@@ -130,7 +130,7 @@ mf_json_get_unsigned_field(sd_json_variant *object,
 
     if (value == NULL || !sd_json_variant_is_unsigned(value)) {
         /* TRANSLATORS: %s is the name of a field of a JSON document */
-        mf_json_set_field_error(error, code, context, _("%s is missing or not a non-negative integer"), key);
+        mf_json_set_error_field(error, code, context, _("%s is missing or not a non-negative integer"), key);
         return FALSE;
     }
 
@@ -155,7 +155,7 @@ mf_json_get_boolean_field(sd_json_variant *object,
 
     if (value == NULL || !sd_json_variant_is_boolean(value)) {
         /* TRANSLATORS: %s is the name of a field of a JSON document */
-        mf_json_set_field_error(error, code, context, _("%s is missing or not a boolean"), key);
+        mf_json_set_error_field(error, code, context, _("%s is missing or not a boolean"), key);
         return FALSE;
     }
 
@@ -181,7 +181,7 @@ mf_json_get_hash_field(sd_json_variant *object,
         return NULL;
     if (!mf_hex_hash_is_valid(hash)) {
         /* TRANSLATORS: %s is the name of a field of a JSON document */
-        mf_json_set_field_error(error, code, context, _("%s is not a valid hash"), key);
+        mf_json_set_error_field(error, code, context, _("%s is not a valid hash"), key);
         return NULL;
     }
 
