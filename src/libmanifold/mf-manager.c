@@ -314,6 +314,12 @@ mf_set_error_from_service(GError **error, const gchar *error_id, sd_json_variant
                             MF_ERROR,
                             MF_ERROR_NO_SERVICE,
                             "Lost the Manifold service: the connection was closed");
+    } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_TIMEOUT) == 0) {
+        /* ... and a call that took longer than CALL_TIMEOUT_USEC as well */
+        g_set_error_literal(error,
+                            MF_ERROR,
+                            MF_ERROR_NO_SERVICE,
+                            "The Manifold service did not reply in time");
     } else if (g_strcmp0(error_id, SD_VARLINK_ERROR_PERMISSION_DENIED) == 0) {
         g_set_error_literal(error,
                             MF_ERROR,
