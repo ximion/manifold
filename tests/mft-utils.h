@@ -38,7 +38,10 @@ void  mft_rm_rf(const char *path);
 
 void  mft_clear_store(void);
 
-char *mft_metainfo_xml(const char *component_id);
+char *mft_catalog_component_xml(const char *component_id,
+                                const char *ref,
+                                const char *extra);
+char *mft_catalog_xml(const char *components);
 
 /**
  * MftManifest:

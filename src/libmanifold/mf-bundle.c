@@ -29,12 +29,13 @@
  *
  * A bundle, read and verified.
  *
- * A bundle is a ZIP archive with images, their manifests and MetaInfo, an
- * index that records the size and hashes of the manifests and MetaInfo
- * files, and a signature over the index. Opening a bundle checks every file
- * the index lists against it, by size and by both its hashes, sha256 and
- * blake3, parses the manifests, and sanitizes the metaInfo file, so what
- * reaches the storage is well-formed and describes the component it came with.
+ * A bundle is a ZIP archive with images, their manifests, an AppStream
+ * catalog with a component for every image, an index that records the size
+ * and hashes of the manifests and of the files of the catalog, and a
+ * signature over the index. Opening a bundle checks every file the index
+ * lists against it, by size and by both its hashes, sha256 and blake3,
+ * parses the manifests, and sanitizes the catalog, so what reaches the
+ * storage is well-formed and describes the components it came with.
  *
  * The images are only verified while they are copied out.
  */
@@ -42,6 +43,14 @@
 constexpr char INDEX_NAME[] = "index.json";
 constexpr char SIGNATURE_NAME[] = "index.json.sig";
 constexpr char MANIFEST_SUFFIX[] = ".manifold.json";
+
+constexpr char CATALOG_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/";
+constexpr char CATALOG_NAME[] = MF_BUNDLE_CATALOG_DIR "/" MF_BUNDLE_CATALOG_ORIGIN ".xml";
+constexpr char CATALOG_ICONS_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/icons/";
+constexpr char CATALOG_MEDIA_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/media/";
+
+/* the custom value of a catalog component that names its image */
+constexpr char MANIFOLD_ID_KEY[] = "manifold.id";
 
 constexpr int BUNDLE_FORMAT = 1;
 
@@ -53,23 +62,17 @@ constexpr guint64 METADATA_TOTAL_SIZE_MAX = 64 * 1024 * 1024;
 constexpr size_t COPY_BUFFER_SIZE = 1024 * 1024;
 
 constexpr size_t FILE_NAME_LENGTH_MAX = 255;
+constexpr size_t PATH_LENGTH_MAX = 1024;
 
 /**
- * mf_file_name_is_valid:
+ * mf_plain_name_is_valid:
  *
- * The names of the files in a bundle are only used to look entries up and in messages,
- * nothing is ever written to disk under them. We still require plain names (no directories,
- * nothing hidden, no control characters), so a bundle is a flat list of files and
- * names are safe to print.
+ * Check the first @len bytes of a name for a plain file name: not empty, not
+ * hidden, without directories or control characters.
  */
 static gboolean
-mf_file_name_is_valid(const char *name)
+mf_plain_name_is_valid(const char *name, size_t len)
 {
-    size_t len;
-
-    if (name == NULL)
-        return FALSE;
-    len = strnlen(name, FILE_NAME_LENGTH_MAX + 1);
     if (len == 0 || len > FILE_NAME_LENGTH_MAX || name[0] == '.')
         return FALSE;
     for (size_t i = 0; i < len; i++) {
@@ -78,6 +81,41 @@ mf_file_name_is_valid(const char *name)
     }
 
     return TRUE;
+}
+
+/**
+ * mf_file_name_is_valid:
+ *
+ * The names of the files in a bundle are only used to look entries up and in messages,
+ * nothing is ever written to disk under them. We still require plain names (nothing
+ * hidden, no control characters), so names are safe to print. Only the catalog has
+ * directories: its files have a path of plain names below %MF_BUNDLE_CATALOG_DIR.
+ */
+static gboolean
+mf_file_name_is_valid(const char *name)
+{
+    const char *part;
+    size_t len;
+
+    if (name == NULL)
+        return FALSE;
+    len = strnlen(name, PATH_LENGTH_MAX + 1);
+    if (len > PATH_LENGTH_MAX)
+        return FALSE;
+    if (!g_str_has_prefix(name, CATALOG_PREFIX))
+        return mf_plain_name_is_valid(name, len);
+
+    part = name + strlen(CATALOG_PREFIX);
+    for (;;) {
+        const char *slash = strchr(part, '/');
+        size_t part_len = slash != NULL ? (size_t) (slash - part) : strlen(part);
+
+        if (!mf_plain_name_is_valid(part, part_len))
+            return FALSE;
+        if (slash == NULL)
+            return TRUE;
+        part = slash + 1;
+    }
 }
 
 /**
@@ -124,7 +162,8 @@ struct _MfBundleImage {
 
     char *manifest_name;
     MfManifest *manifest;
-    GBytes *metainfo;
+    GBytes *catalog;
+    GHashTable *icons;   /* size directory and file name -> data */
     guint64 image_index; /* the index of the image file in the archive */
 };
 
@@ -137,7 +176,8 @@ mf_bundle_image_finalize(GObject *object)
 
     g_free(image->manifest_name);
     g_clear_object(&image->manifest);
-    g_clear_pointer(&image->metainfo, g_bytes_unref);
+    g_clear_pointer(&image->catalog, g_bytes_unref);
+    g_clear_pointer(&image->icons, g_hash_table_unref);
 
     G_OBJECT_CLASS(mf_bundle_image_parent_class)->finalize(object);
 }
@@ -151,6 +191,7 @@ mf_bundle_image_class_init(MfBundleImageClass *klass)
 static void
 mf_bundle_image_init(MfBundleImage *image)
 {
+    image->icons = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
 }
 
 /**
@@ -180,16 +221,34 @@ mf_bundle_image_get_manifest_name(MfBundleImage *image)
 }
 
 /**
- * mf_bundle_image_get_metainfo:
+ * mf_bundle_image_get_catalog:
  * @image: an #MfBundleImage
  *
- * Returns: (transfer none): the AppStream MetaInfo data of the component
+ * Returns: (transfer none): the AppStream catalog data of the component, as
+ *   catalog XML that holds only this component, with the origin %MF_BUNDLE_CATALOG_ORIGIN
  */
 GBytes *
-mf_bundle_image_get_metainfo(MfBundleImage *image)
+mf_bundle_image_get_catalog(MfBundleImage *image)
 {
     g_return_val_if_fail(MF_IS_BUNDLE_IMAGE(image), NULL);
-    return image->metainfo;
+    return image->catalog;
+}
+
+/**
+ * mf_bundle_image_get_icons:
+ * @image: an #MfBundleImage
+ *
+ * Get the cached icons of the component. Each is a JPEG XL file named after
+ * the component, in a directory named after its size, like "64x64" or "64x64@2".
+ *
+ * Returns: (transfer none) (element-type utf8 GBytes): the icons by their
+ *   size directory and file name, e.g. "64x64/org.example.App.jxl"
+ */
+GHashTable *
+mf_bundle_image_get_icons(MfBundleImage *image)
+{
+    g_return_val_if_fail(MF_IS_BUNDLE_IMAGE(image), NULL);
+    return image->icons;
 }
 
 typedef struct {
@@ -368,6 +427,57 @@ mf_zip_read_entry(zip_t *zip, guint64 index, const char *name, guint64 *budget, 
 }
 
 /**
+ * mf_zip_hash_entry:
+ * @size_max: we stop reading after this many bytes
+ *
+ * Compute the size and hashes of a file of the bundle, without keeping it in memory.
+ */
+static gboolean
+mf_zip_hash_entry(zip_t *zip,
+                  guint64 index,
+                  const char *name,
+                  guint64 size_max,
+                  guint64 *ret_size,
+                  char **ret_sha256,
+                  char **ret_blake3,
+                  GError **error)
+{
+    g_autofree char *buffer = g_malloc(COPY_BUFFER_SIZE);
+    g_autoptr(GChecksum) checksum = g_checksum_new(G_CHECKSUM_SHA256);
+    blake3_hasher hasher;
+    zip_file_t *file;
+    guint64 total = 0;
+
+    file = zip_fopen_index(zip, index, 0);
+    if (file == NULL) {
+        mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, zip_get_error(zip), name);
+        return FALSE;
+    }
+
+    blake3_hasher_init(&hasher);
+    while (total <= size_max) {
+        zip_int64_t n = zip_fread(file, buffer, COPY_BUFFER_SIZE);
+
+        if (n < 0) {
+            mf_set_error_from_zip(error, MF_ERROR_INVALID_BUNDLE, zip_file_get_error(file), name);
+            zip_fclose(file);
+            return FALSE;
+        }
+        if (n == 0)
+            break;
+        total += (guint64) n;
+        g_checksum_update(checksum, (const guchar *) buffer, (gsize) n);
+        blake3_hasher_update(&hasher, buffer, (gsize) n);
+    }
+    zip_fclose(file);
+
+    *ret_size = total;
+    *ret_sha256 = g_strdup(g_checksum_get_string(checksum));
+    *ret_blake3 = mf_blake3_hex(&hasher);
+    return TRUE;
+}
+
+/**
  * mf_bundle_reader_parse_manifest:
  *
  * Parse a manifest file of the bundle into a #MfBundleImage, and record
@@ -412,15 +522,17 @@ mf_bundle_reader_parse_manifest(MfBundleReader *reader, const char *name, GBytes
 
 /**
  * mf_bundle_reader_verify_indexed_file:
+ * @ret_name: (out): the name of the file
+ * @ret_data: (out): the contents of the file, or %NULL for screenshot media, which we only hash
  *
  * Check a file that the index lists against its size and hashes in the
- * index, and return its contents. We also record that the index refers to
- * the file.
+ * index. We also record that the index refers to the file.
  */
-static GBytes *
+static gboolean
 mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
                                      sd_json_variant *entry,
                                      char **ret_name,
+                                     GBytes **ret_data,
                                      GError **error)
 {
     MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
@@ -432,6 +544,7 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
     const char *expected_sha256;
     const char *expected_blake3;
     guint64 size;
+    guint64 actual_size;
 
     if (!sd_json_variant_is_object(entry)) {
         g_set_error(error,
@@ -440,112 +553,186 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
                     /* TRANSLATORS: %s is the name of the index file of the bundle */
                     _("%s: file entry is not an object"),
                     INDEX_NAME);
-        return NULL;
+        return FALSE;
     }
 
     name = mf_json_get_string_field(entry, INDEX_NAME, "name", MF_ERROR_INVALID_BUNDLE, error);
     if (name == NULL)
-        return NULL;
+        return FALSE;
     if (!mf_file_name_is_valid(name)) {
         /* TRANSLATORS: %s is the name of the index file of the bundle */
         g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("%s: a file name is not valid"), INDEX_NAME);
-        return NULL;
+        return FALSE;
     }
     if (!mf_json_get_unsigned_field(entry, INDEX_NAME, "size", MF_ERROR_INVALID_BUNDLE, &size, error))
-        return NULL;
+        return FALSE;
     expected_sha256 = mf_json_get_hash_field(entry, INDEX_NAME, "sha256", MF_ERROR_INVALID_BUNDLE, error);
     if (expected_sha256 == NULL)
-        return NULL;
+        return FALSE;
     expected_blake3 = mf_json_get_hash_field(entry, INDEX_NAME, "blake3", MF_ERROR_INVALID_BUNDLE, error);
     if (expected_blake3 == NULL)
-        return NULL;
+        return FALSE;
 
     archive_entry = mf_bundle_reader_take_reference(reader, name, INDEX_NAME, error);
     if (archive_entry == NULL)
-        return NULL;
+        return FALSE;
 
-    data = mf_zip_read_entry(priv->zip, archive_entry->index, name, &reader->budget, error);
-    if (data == NULL)
-        return NULL;
-
-    actual_sha256 = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, data);
-    actual_blake3 = mf_blake3_of_bytes(data);
-    if (g_bytes_get_size(data) != size || g_strcmp0(actual_sha256, expected_sha256) != 0 ||
+    if (g_str_has_prefix(name, CATALOG_MEDIA_PREFIX)) {
+        /* screenshots and videos can be large, so we only hash them */
+        if (!mf_zip_hash_entry(priv->zip,
+                               archive_entry->index,
+                               name,
+                               size,
+                               &actual_size,
+                               &actual_sha256,
+                               &actual_blake3,
+                               error))
+            return FALSE;
+    } else {
+        data = mf_zip_read_entry(priv->zip, archive_entry->index, name, &reader->budget, error);
+        if (data == NULL)
+            return FALSE;
+        actual_size = g_bytes_get_size(data);
+        actual_sha256 = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, data);
+        actual_blake3 = mf_blake3_of_bytes(data);
+    }
+    if (actual_size != size || g_strcmp0(actual_sha256, expected_sha256) != 0 ||
         g_strcmp0(actual_blake3, expected_blake3) != 0) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_VERIFICATION_FAILED,
                     _("%s does not match what the index records"),
                     name);
-        return NULL;
+        return FALSE;
     }
 
     *ret_name = g_strdup(name);
-    return g_steal_pointer(&data);
+    *ret_data = g_steal_pointer(&data);
+    return TRUE;
 }
 
 /**
- * mf_bundle_image_make_sanitized_metainfo:
+ * mf_bundle_image_build_ref:
  *
- * Parse the MetaInfo of the component of an image, check that it describes
- * that component, and write it out again, so that we only store MetaInfo we
- * could read.
+ * Returns: how the catalog names the image, "<architecture>/<component>/<version>"
+ */
+static char *
+mf_bundle_image_build_ref(MfBundleImage *image)
+{
+    return g_strdup_printf("%s/%s/%s",
+                           mf_manifest_get_architecture(image->manifest),
+                           mf_manifest_get_component_id(image->manifest),
+                           mf_manifest_get_version(image->manifest));
+}
+
+/**
+ * mf_bytes_are_jxl:
  *
- * Returns: (transfer full): the MetaInfo as we wrote it, or %NULL on error
+ * Check for a JPEG XL image, as a bare codestream or in its container.
+ */
+static gboolean
+mf_bytes_are_jxl(GBytes *bytes)
+{
+    static const guint8 codestream[] = {0xff, 0x0a};
+    static const guint8 container[] = {0x00, 0x00, 0x00, 0x0c, 'J', 'X', 'L', ' ', '\r', '\n', 0x87, '\n'};
+    gsize size;
+    const guint8 *data = g_bytes_get_data(bytes, &size);
+
+    return (size >= sizeof(codestream) && memcmp(data, codestream, sizeof(codestream)) == 0) ||
+           (size >= sizeof(container) && memcmp(data, container, sizeof(container)) == 0);
+}
+
+/**
+ * mf_bundle_image_collect_icons:
+ * @contents: the files the index lists, by name
+ *
+ * Collect the cached icons of the component of an image. We only accept JXL
+ * files named after the component, so that the icons of all components can
+ * share one directory per size once they are installed.
+ */
+static gboolean
+mf_bundle_image_collect_icons(MfBundleImage *image,
+                              AsComponent *component,
+                              GHashTable *contents,
+                              GError **error)
+{
+    const char *component_id = mf_manifest_get_component_id(image->manifest);
+    g_autofree char *icon_name = g_strconcat(component_id, MF_ICON_SUFFIX, NULL);
+    GPtrArray *icons = as_component_get_icons(component);
+
+    for (guint i = 0; i < icons->len; i++) {
+        AsIcon *icon = g_ptr_array_index(icons, i);
+        g_autofree char *size_dir = NULL;
+        g_autofree char *path = NULL;
+        GBytes *data;
+
+        if (as_icon_get_kind(icon) != AS_ICON_KIND_CACHED)
+            continue;
+        if (g_strcmp0(as_icon_get_name(icon), icon_name) != 0) {
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_INVALID_BUNDLE,
+                        /* TRANSLATORS: the component, and the file name its icons must have */
+                        _("The icons of %s must be named %s"),
+                        component_id,
+                        icon_name);
+            return FALSE;
+        }
+        if (as_icon_get_scale(icon) > 1)
+            size_dir = g_strdup_printf("%ux%u@%u",
+                                       as_icon_get_width(icon),
+                                       as_icon_get_height(icon),
+                                       as_icon_get_scale(icon));
+        else
+            size_dir = g_strdup_printf("%ux%u", as_icon_get_width(icon), as_icon_get_height(icon));
+
+        path = g_strconcat(CATALOG_ICONS_PREFIX, size_dir, "/", icon_name, NULL);
+        data = g_hash_table_lookup(contents, path);
+        if (data == NULL) {
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_INVALID_BUNDLE,
+                        /* TRANSLATORS: the icon file, and the component it belongs to */
+                        _("The icon %s of %s is not in the bundle"),
+                        path,
+                        component_id);
+            return FALSE;
+        }
+        if (!mf_bytes_are_jxl(data)) {
+            g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("%s is not a JPEG XL image"), path);
+            return FALSE;
+        }
+        g_hash_table_insert(image->icons, g_strconcat(size_dir, "/", icon_name, NULL), g_bytes_ref(data));
+    }
+
+    return TRUE;
+}
+
+/**
+ * mf_bundle_image_make_catalog:
+ *
+ * Write the component of an image as catalog XML of its own, with the
+ * origin of bundles, so that we only store catalog data we could read.
  */
 static GBytes *
-mf_bundle_image_make_sanitized_metainfo(MfBundleImage *image,
-                                        const char *name,
-                                        GBytes *metainfo,
-                                        GError **error)
+mf_bundle_image_make_catalog(MfBundleImage *image, AsComponent *component, GError **error)
 {
     g_autoptr(AsMetadata) metadata = as_metadata_new();
     g_autoptr(GError) local_error = NULL;
-    const char *component_id = mf_manifest_get_component_id(image->manifest);
-    AsComponent *component;
-    const char *id;
     char *xml;
 
-    as_metadata_set_format_style(metadata, AS_FORMAT_STYLE_METAINFO);
-    if (!as_metadata_parse_bytes(metadata, metainfo, AS_FORMAT_KIND_XML, &local_error)) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_INVALID_BUNDLE,
-                    _("%s is not valid: %s"),
-                    name,
-                    local_error->message);
-        return NULL;
-    }
-    component = as_metadata_get_component(metadata);
-    id = component != NULL ? as_component_get_id(component) : NULL;
-    if (id == NULL) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_INVALID_BUNDLE,
-                    /* TRANSLATORS: the MetaInfo file, and the component it should describe */
-                    _("%s describes no component, not %s"),
-                    name,
-                    component_id);
-        return NULL;
-    }
-    if (!g_str_equal(id, component_id)) {
-        g_set_error(error,
-                    MF_ERROR,
-                    MF_ERROR_INVALID_BUNDLE,
-                    /* TRANSLATORS: the MetaInfo file, the component it describes, and the expected one */
-                    _("%s describes %s, not %s"),
-                    name,
-                    id,
-                    component_id);
-        return NULL;
-    }
-    xml = as_metadata_component_to_metainfo(metadata, AS_FORMAT_KIND_XML, &local_error);
+    as_metadata_set_locale(metadata, "ALL");
+    as_metadata_set_format_style(metadata, AS_FORMAT_STYLE_CATALOG);
+    as_metadata_set_origin(metadata, MF_BUNDLE_CATALOG_ORIGIN);
+    as_metadata_add_component(metadata, component);
+    xml = as_metadata_components_to_catalog(metadata, AS_FORMAT_KIND_XML, &local_error);
     if (xml == NULL) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
-                    _("%s cannot be written: %s"),
-                    name,
+                    /* TRANSLATORS: the component, and why its catalog data cannot be written */
+                    _("The catalog data of %s cannot be written: %s"),
+                    mf_manifest_get_component_id(image->manifest),
                     local_error->message);
         return NULL;
     }
@@ -554,10 +741,116 @@ mf_bundle_image_make_sanitized_metainfo(MfBundleImage *image,
 }
 
 /**
+ * mf_bundle_reader_read_catalog:
+ * @contents: the files the index lists, by name
+ *
+ * Parse the catalog of the bundle, and give every image its component and
+ * icons. A component names its image with its `manifold.id` custom value,
+ * and every image has exactly one component.
+ */
+static gboolean
+mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GError **error)
+{
+    MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
+    GBytes *catalog = g_hash_table_lookup(contents, CATALOG_NAME);
+    g_autoptr(AsMetadata) metadata = as_metadata_new();
+    g_autoptr(GError) local_error = NULL;
+    AsComponentBox *components;
+
+    if (catalog == NULL) {
+        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("The bundle has no %s"), CATALOG_NAME);
+        return FALSE;
+    }
+    as_metadata_set_locale(metadata, "ALL");
+    as_metadata_set_format_style(metadata, AS_FORMAT_STYLE_CATALOG);
+    if (!as_metadata_parse_bytes(metadata, catalog, AS_FORMAT_KIND_XML, &local_error)) {
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    _("%s is not valid: %s"),
+                    CATALOG_NAME,
+                    local_error->message);
+        return FALSE;
+    }
+
+    components = as_metadata_get_components(metadata);
+    for (guint i = 0; i < as_component_box_len(components); i++) {
+        AsComponent *component = as_component_box_index(components, i);
+        const char *ref = as_component_get_custom_value(component, MANIFOLD_ID_KEY);
+        const char *id = as_component_get_id(component);
+        MfBundleImage *image = NULL;
+
+        for (guint j = 0; ref != NULL && image == NULL && j < priv->images->len; j++) {
+            MfBundleImage *candidate = g_ptr_array_index(priv->images, j);
+            g_autofree char *candidate_ref = mf_bundle_image_build_ref(candidate);
+
+            if (g_str_equal(ref, candidate_ref))
+                image = candidate;
+        }
+        if (image == NULL) {
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_INVALID_BUNDLE,
+                        /* TRANSLATORS: the catalog file, and a component in it */
+                        _("%s describes %s, which is not in the bundle"),
+                        CATALOG_NAME,
+                        ref != NULL ? ref : (id != NULL ? id : "?"));
+            return FALSE;
+        }
+        if (image->catalog != NULL) {
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_INVALID_BUNDLE,
+                        /* TRANSLATORS: the catalog file, and the image it describes twice */
+                        _("%s describes %s twice"),
+                        CATALOG_NAME,
+                        ref);
+            return FALSE;
+        }
+        if (g_strcmp0(id, mf_manifest_get_component_id(image->manifest)) != 0) {
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_INVALID_BUNDLE,
+                        /* TRANSLATORS: the catalog file, the component it describes, and the expected one */
+                        _("%s describes %s, not %s"),
+                        CATALOG_NAME,
+                        id != NULL ? id : "?",
+                        mf_manifest_get_component_id(image->manifest));
+            return FALSE;
+        }
+
+        if (!mf_bundle_image_collect_icons(image, component, contents, error))
+            return FALSE;
+        image->catalog = mf_bundle_image_make_catalog(image, component, error);
+        if (image->catalog == NULL)
+            return FALSE;
+    }
+
+    for (guint i = 0; i < priv->images->len; i++) {
+        MfBundleImage *image = g_ptr_array_index(priv->images, i);
+
+        if (image->catalog == NULL) {
+            g_autofree char *ref = mf_bundle_image_build_ref(image);
+
+            g_set_error(error,
+                        MF_ERROR,
+                        MF_ERROR_INVALID_BUNDLE,
+                        /* TRANSLATORS: the catalog file, and an image it has no component for */
+                        _("%s does not describe %s"),
+                        CATALOG_NAME,
+                        ref);
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
+/**
  * mf_bundle_reader_read_index:
  *
  * Verify every file the index lists, parse the manifests among them, and
- * give every image its MetaInfo.
+ * give every image its catalog data.
  */
 static gboolean
 mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
@@ -619,45 +912,28 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
         g_autofree char *name = NULL;
         g_autoptr(GBytes) data = NULL;
 
-        data = mf_bundle_reader_verify_indexed_file(reader, sd_json_variant_by_index(files, i), &name, error);
-        if (data == NULL)
+        if (!mf_bundle_reader_verify_indexed_file(reader,
+                                                  sd_json_variant_by_index(files, i),
+                                                  &name,
+                                                  &data,
+                                                  error))
             return FALSE;
 
-        if (g_str_has_suffix(name, MANIFEST_SUFFIX)) {
+        if (!g_str_has_prefix(name, CATALOG_PREFIX) && g_str_has_suffix(name, MANIFEST_SUFFIX)) {
             MfBundleImage *image = mf_bundle_reader_parse_manifest(reader, name, data, error);
 
             if (image == NULL)
                 return FALSE;
             g_ptr_array_add(priv->images, image);
-        } else {
+        } else if (data != NULL) {
             g_hash_table_insert(contents, g_steal_pointer(&name), g_steal_pointer(&data));
         }
     }
 
-    /* the MetaInfo of an image is named like its manifest */
-    for (guint i = 0; i < priv->images->len; i++) {
-        MfBundleImage *image = g_ptr_array_index(priv->images, i);
-        g_autofree char *stem = g_strndup(image->manifest_name,
-                                          strlen(image->manifest_name) - strlen(MANIFEST_SUFFIX));
-        g_autofree char *metainfo_name = g_strconcat(stem, MF_METAINFO_SUFFIX, NULL);
-        GBytes *metainfo = g_hash_table_lookup(contents, metainfo_name);
-
-        if (metainfo == NULL) {
-            g_set_error(error,
-                        MF_ERROR,
-                        MF_ERROR_INVALID_BUNDLE,
-                        /* TRANSLATORS: the component, and the name of its MetaInfo file */
-                        _("The MetaInfo of %s, %s, is not in the bundle"),
-                        mf_manifest_get_component_id(image->manifest),
-                        metainfo_name);
-            return FALSE;
-        }
-        image->metainfo = mf_bundle_image_make_sanitized_metainfo(image, metainfo_name, metainfo, error);
-        if (image->metainfo == NULL)
-            return FALSE;
-    }
-
-    return TRUE;
+    /* the caller reports a bundle without images */
+    if (priv->images->len == 0)
+        return TRUE;
+    return mf_bundle_reader_read_catalog(reader, contents, error);
 }
 
 /**

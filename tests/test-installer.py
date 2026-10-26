@@ -25,6 +25,7 @@ from mftest import (  # noqa: E402
     APP_ID,
     CORE_ID,
     EXIT_SKIPPED,
+    JXL_DATA,
     RUNTIME_DIR,
     STORE,
     Daemon,
@@ -531,25 +532,41 @@ class InstallerTest(unittest.TestCase):
             {c['componentId'] for c in result['installed']}, {CORE_ID, CORE_ID + '.sdk'}
         )
 
-    def test_metainfo_is_kept_and_linked(self):
+    def test_catalog_is_kept_and_linked(self):
         self.manifold('install', self.core_bundle)
         self.manifold('install', self.app_bundle)
-        farm = f'{STORE}/origins/local/metainfo'
+        catalog = f'{STORE}/origins/local/catalog'
         for directory, component in (('runtimes', CORE_ID), ('apps', APP_ID)):
-            name = f'{component}.metainfo.xml'
+            name = f'{component}.xml'
             self.assertTrue(os.path.isfile(f'{STORE}/{directory}/{component}/current/{name}'))
             self.assertEqual(
-                os.readlink(f'{farm}/{name}'), f'../../../{directory}/{component}/current/{name}'
+                os.readlink(f'{catalog}/{name}'), f'../../../{directory}/{component}/current/{name}'
             )
-            with open(f'{farm}/{name}', encoding='utf-8') as f:
-                self.assertIn(f'<id>{component}</id>', f.read())
-        self.manifold('remove', APP_ID)
-        self.assertFalse(os.path.lexists(f'{farm}/{APP_ID}.metainfo.xml'))
-        self.assertTrue(os.path.lexists(f'{farm}/{CORE_ID}.metainfo.xml'))
+            with open(f'{catalog}/{name}', encoding='utf-8') as f:
+                data = f.read()
+            self.assertIn(f'<id>{component}</id>', data)
+            self.assertIn('origin="manifold-local"', data)
+            # only a repository serves the screenshots
+            self.assertNotIn('<screenshot', data)
 
-    def test_metainfo_must_describe_the_component(self):
+        # icons are named after their component, so all share a directory per size
+        icons = f'{STORE}/origins/local/icons/manifold-local/64x64'
+        icon = f'{APP_ID}.jxl'
+        self.assertEqual(
+            os.readlink(f'{icons}/{icon}'),
+            f'../../../../../apps/{APP_ID}/current/icons/64x64/{icon}',
+        )
+        with open(f'{icons}/{icon}', 'rb') as f:
+            self.assertEqual(f.read(), JXL_DATA)
+
+        self.manifold('remove', APP_ID)
+        self.assertFalse(os.path.lexists(f'{catalog}/{APP_ID}.xml'))
+        self.assertFalse(os.path.lexists(f'{icons}/{icon}'))
+        self.assertTrue(os.path.lexists(f'{catalog}/{CORE_ID}.xml'))
+
+    def test_catalog_must_describe_the_component(self):
         bundle = self.bundle(
-            'wrong-metainfo', [self.core, self.sdk], metainfo_ids={CORE_ID: 'org.example.Other'}
+            'wrong-catalog', [self.core, self.sdk], catalog_ids={CORE_ID: 'org.example.Other'}
         )
         out = self.manifold('install', bundle, expect=1)
         self.assertIn('describes org.example.Other, not', out)

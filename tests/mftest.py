@@ -251,17 +251,41 @@ class Image:
         return m
 
 
-def write_bundle(path, images, signed=True, corrupt_image=None, metainfo_ids=None):
-    """Write a .manifold file as the builder would. metainfo_ids maps a component
-    to the identifier its MetaInfo claims, when that is to differ."""
+# the start of a JPEG XL codestream
+JXL_DATA = b'\xff\x0afake'
+
+
+def write_bundle(path, images, signed=True, corrupt_image=None, catalog_ids=None):
+    """Write a .manifold file as the builder would, with a catalog that gives
+    apps an icon and a screenshot. catalog_ids maps a component to the
+    identifier its catalog component claims, when that is to differ."""
     files = {}
+    components = []
     for image in images:
         base = image.name[: -len('.raw')]
-        metainfo_id = (metainfo_ids or {}).get(image.component, image.component)
+        catalog_id = (catalog_ids or {}).get(image.component, image.component)
         files[f'{base}.manifold.json'] = json.dumps(image.manifest(), indent=3).encode()
-        files[f'{base}.metainfo.xml'] = (
-            f'<component><id>{metainfo_id}</id><name>{metainfo_id}</name></component>\n'.encode()
+        extra = ''
+        if image.kind == 'app' and not image.sdk:
+            files[f'catalog/icons/64x64/{image.component}.jxl'] = JXL_DATA
+            files[f'catalog/media/{image.component}/screenshot.jxl'] = JXL_DATA
+            extra = (
+                f'<icon type="cached" width="64" height="64">{image.component}.jxl</icon>'
+                '<screenshots><screenshot type="default">'
+                f'<image type="source">{image.component}/screenshot.jxl</image>'
+                '</screenshot></screenshots>'
+            )
+        ref = f'{image.architecture}/{image.component}/{image.version}'
+        components.append(
+            f'<component type="generic"><id>{catalog_id}</id><name>{catalog_id}</name>{extra}'
+            f'<custom><value key="manifold.id">{ref}</value></custom></component>\n'
         )
+    files['catalog/manifold-local.xml'] = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<components version="1.0" origin="manifold-local">\n'
+        + ''.join(components)
+        + '</components>\n'
+    ).encode()
     index = {
         'format': 1,
         'files': [

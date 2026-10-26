@@ -16,12 +16,29 @@
 
 G_BEGIN_DECLS
 
+/**
+ * MF_BUNDLE_CATALOG_DIR:
+ *
+ * The directory of a bundle that holds its AppStream catalog (with the
+ * catalog XML, the icons and the screenshot media)
+ */
+#define MF_BUNDLE_CATALOG_DIR "catalog"
+
+/**
+ * MF_BUNDLE_CATALOG_ORIGIN:
+ *
+ * The origin of the AppStream catalog of a bundle, and of the components
+ * installed from local bundles.
+ */
+#define MF_BUNDLE_CATALOG_ORIGIN "manifold-local"
+
 #define MF_TYPE_BUNDLE_IMAGE (mf_bundle_image_get_type())
 G_DECLARE_FINAL_TYPE(MfBundleImage, mf_bundle_image, MF, BUNDLE_IMAGE, GObject)
 
 MfManifest *mf_bundle_image_get_manifest(MfBundleImage *image);
 const char *mf_bundle_image_get_manifest_name(MfBundleImage *image);
-GBytes     *mf_bundle_image_get_metainfo(MfBundleImage *image);
+GBytes     *mf_bundle_image_get_catalog(MfBundleImage *image);
+GHashTable *mf_bundle_image_get_icons(MfBundleImage *image);
 
 #define MF_TYPE_BUNDLE (mf_bundle_get_type())
 G_DECLARE_DERIVABLE_TYPE(MfBundle, mf_bundle, MF, BUNDLE, GObject)

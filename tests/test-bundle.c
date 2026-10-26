@@ -35,9 +35,20 @@ typedef struct {
     const TestImage *missing;  /* an image that is not in the bundle */
     /* an image whose manifest records a wrong blake3, next to the right sha256 */
     const TestImage *wrong_blake3;
-    /* an image whose MetaInfo the index lists twice */
+    /* an image whose manifest the index lists twice */
     const TestImage *listed_twice;
+    /* an image the catalog has no component for */
+    const TestImage *undescribed;
+    /* an image whose component in the catalog has another ID */
+    const TestImage *misdescribed;
+    /* the icon of the app is not a JPEG XL image */
+    gboolean bad_icon;
+    /* the screenshot of the app differs from what the index records */
+    gboolean corrupt_media;
 } BundleFlaws;
+
+/* the start of a JPEG XL codestream */
+static const guint8 JXL_DATA[] = {0xff, 0x0a, 'f', 'a', 'k', 'e'};
 
 typedef struct {
     char *dir;
@@ -124,10 +135,10 @@ mft_bundle_add(zip_t *zip, const char *name, gconstpointer data, gsize size)
 }
 
 static void
-mft_index_add(GString *index, const char *name, const char *contents)
+mft_index_add(GString *index, const char *name, gconstpointer data, gsize size)
 {
-    g_autofree char *sha256 = g_compute_checksum_for_string(G_CHECKSUM_SHA256, contents, -1);
-    g_autofree char *blake3 = mft_blake3_of(contents, strlen(contents));
+    g_autofree char *sha256 = g_compute_checksum_for_data(G_CHECKSUM_SHA256, data, size);
+    g_autofree char *blake3 = mft_blake3_of(data, size);
 
     /* clang-format off */
     g_string_append_printf(
@@ -141,10 +152,76 @@ mft_index_add(GString *index, const char *name, const char *contents)
         "      }",
         index->str[index->len - 1] == '[' ? "" : ",",
         name,
-        strlen(contents),
+        size,
         sha256,
         blake3);
     /* clang-format on */
+}
+
+/**
+ * mft_add_file:
+ *
+ * Add a file to a bundle and to its index.
+ */
+static void
+mft_add_file(zip_t *zip, GString *index, const char *name, gconstpointer data, gsize size)
+{
+    mft_index_add(index, name, data, size);
+    mft_bundle_add(zip, name, data, size);
+}
+
+/**
+ * mft_write_catalog:
+ *
+ * Add the catalog of the images to a bundle, with an icon and a screenshot
+ * for the app, and the given flaws.
+ */
+static void
+mft_write_catalog(zip_t *zip, GString *index, const TestImage *const *images, const BundleFlaws *flaws)
+{
+    g_autoptr(GString) components = g_string_new(NULL);
+    g_autofree char *catalog = NULL;
+
+    for (size_t i = 0; images[i] != NULL; i++) {
+        const TestImage *image = images[i];
+        g_autofree char *ref = g_strdup_printf("x86_64/%s/%s", image->component_id, image->version);
+        g_autofree char *extra = NULL;
+        g_autofree char *component = NULL;
+
+        if (image == flaws->undescribed)
+            continue;
+        if (g_str_equal(image->kind, "app")) {
+            g_autofree char *icon_name = g_strdup_printf("catalog/icons/64x64/%s.jxl", image->component_id);
+            g_autofree char *media_name = g_strdup_printf("catalog/media/%s/screenshot.jxl",
+                                                          image->component_id);
+
+            extra = g_strdup_printf(
+                "<icon type=\"cached\" width=\"64\" height=\"64\">%s.jxl</icon>"
+                "<screenshots><screenshot type=\"default\">"
+                "<image type=\"source\">%s/screenshot.jxl</image>"
+                "</screenshot></screenshots>",
+                image->component_id,
+                image->component_id);
+            if (flaws->bad_icon)
+                mft_add_file(zip, index, icon_name, "not an image", strlen("not an image"));
+            else
+                mft_add_file(zip, index, icon_name, JXL_DATA, sizeof(JXL_DATA));
+
+            mft_index_add(index, media_name, JXL_DATA, sizeof(JXL_DATA));
+            if (flaws->corrupt_media)
+                mft_bundle_add(zip, media_name, "changed", strlen("changed"));
+            else
+                mft_bundle_add(zip, media_name, JXL_DATA, sizeof(JXL_DATA));
+        }
+        component = mft_catalog_component_xml(image == flaws->misdescribed ? "org.example.Other"
+                                                                           : image->component_id,
+                                              ref,
+                                              extra);
+        g_string_append(components, component);
+    }
+
+    catalog = mft_catalog_xml(components->str);
+    mft_add_file(zip, index, "catalog/manifold-local.xml", catalog, strlen(catalog));
 }
 
 /**
@@ -165,16 +242,13 @@ mft_write_bundle(Fixture *f, const char *name, const TestImage *const *images, c
         g_autofree char *file_name = mft_image_file_name(image);
         g_autofree char *base_name = g_strndup(file_name, strlen(file_name) - strlen(".raw"));
         g_autofree char *manifest_name = g_strconcat(base_name, ".manifold.json", NULL);
-        g_autofree char *metainfo_name = g_strconcat(base_name, ".metainfo.xml", NULL);
         g_autofree char *manifest = mft_image_manifest_json(image, image == flaws->wrong_blake3);
-        g_autofree char *metainfo = mft_metainfo_xml(image->component_id);
         gsize data_size;
         const guint8 *data = g_bytes_get_data(image->data, &data_size);
 
-        mft_index_add(index, manifest_name, manifest);
-        mft_index_add(index, metainfo_name, metainfo);
+        mft_index_add(index, manifest_name, manifest, strlen(manifest));
         if (image == flaws->listed_twice)
-            mft_index_add(index, metainfo_name, metainfo);
+            mft_index_add(index, manifest_name, manifest, strlen(manifest));
 
         if (image == flaws->tampered) {
             g_autofree char *changed = g_strconcat(manifest, "\n", NULL);
@@ -183,7 +257,6 @@ mft_write_bundle(Fixture *f, const char *name, const TestImage *const *images, c
         } else {
             mft_bundle_add(zip, manifest_name, manifest, strlen(manifest));
         }
-        mft_bundle_add(zip, metainfo_name, metainfo, strlen(metainfo));
 
         if (image == flaws->corrupt) {
             g_autofree guint8 *changed = g_memdup2(data, data_size);
@@ -194,6 +267,7 @@ mft_write_bundle(Fixture *f, const char *name, const TestImage *const *images, c
             mft_bundle_add(zip, file_name, data, data_size);
         }
     }
+    mft_write_catalog(zip, index, images, flaws);
     g_string_append(index, "\n   ]\n}");
     mft_bundle_add(zip, "index.json", index->str, index->len);
 
@@ -298,6 +372,8 @@ test_valid_bundle(Fixture *f, gconstpointer user_data)
     g_autofree char *expected_blake3 = mft_blake3_of_bytes(f->app.data);
     g_autofree char *expected_verity = mft_fake_hash(expected_sha256);
     g_autofree char *kit_identity = mft_fake_hash(TEST_KIT_ID);
+    GHashTable *icons;
+    GBytes *icon;
 
     g_assert_no_error(error);
     g_assert_true(mf_bundle_is_signed(bundle));
@@ -311,7 +387,6 @@ test_valid_bundle(Fixture *f, gconstpointer user_data)
     g_assert_cmpstr(mf_manifest_get_architecture(manifest), ==, "x86_64");
     g_assert_cmpstr(mf_manifest_get_command(manifest), ==, "app");
     g_assert_cmpstr(mf_bundle_image_get_manifest_name(app), ==, TEST_APP_ID "_0.1.0.manifold.json");
-    g_assert_nonnull(mf_bundle_image_get_metainfo(app));
     g_assert_cmpstr(mf_manifest_get_image_file(manifest), ==, TEST_APP_ID "_0.1.0.raw");
     g_assert_cmpuint(mf_manifest_get_image_size(manifest), ==, 12288);
     g_assert_cmpstr(mf_manifest_get_image_checksum(manifest, MF_CHECKSUM_KIND_SHA256), ==, expected_sha256);
@@ -331,6 +406,24 @@ test_valid_bundle(Fixture *f, gconstpointer user_data)
     g_assert_true(mf_bundle_find_image_for_identity(bundle, kit_identity) ==
                   mft_find_image(bundle, TEST_KIT_ID));
     g_assert_null(mf_bundle_find_image_for_identity(bundle, "no-such-identity"));
+
+    /* every image has its own catalog data, the app also its icon */
+    g_assert_nonnull(
+        strstr(g_bytes_get_data(mf_bundle_image_get_catalog(app), NULL), "<id>" TEST_APP_ID "</id>"));
+    g_assert_nonnull(
+        strstr(g_bytes_get_data(mf_bundle_image_get_catalog(app), NULL), "origin=\"manifold-local\""));
+    g_assert_null(strstr(g_bytes_get_data(mf_bundle_image_get_catalog(app), NULL), TEST_KIT_ID));
+    g_assert_nonnull(
+        strstr(g_bytes_get_data(mf_bundle_image_get_catalog(mft_find_image(bundle, TEST_KIT_ID)), NULL),
+               "<id>" TEST_KIT_ID "</id>"));
+    icons = mf_bundle_image_get_icons(app);
+    g_assert_cmpuint(g_hash_table_size(icons), ==, 1);
+    icon = g_hash_table_lookup(icons, "64x64/" TEST_APP_ID ".jxl");
+    g_assert_nonnull(icon);
+    g_assert_cmpmem(g_bytes_get_data(icon, NULL), g_bytes_get_size(icon), JXL_DATA, sizeof(JXL_DATA));
+    g_assert_cmpuint(g_hash_table_size(mf_bundle_image_get_icons(mft_find_image(bundle, TEST_KIT_ID))),
+                     ==,
+                     0);
 }
 
 /**
@@ -470,7 +563,7 @@ test_listed_twice(Fixture *f, gconstpointer user_data)
     g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
     g_assert_cmpstr(error->message,
                     ==,
-                    "index.json refers to " TEST_APP_ID "_0.1.0.metainfo.xml, which is referred to already");
+                    "index.json refers to " TEST_APP_ID "_0.1.0.manifold.json, which is referred to already");
 }
 
 /**
@@ -536,6 +629,110 @@ test_unlisted_file(Fixture *f, gconstpointer user_data)
     g_assert_null(bundle);
     g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
     g_assert_cmpstr(error->message, ==, "The bundle contains evil.sh, which its index does not list");
+}
+
+/**
+ * test_invalid_path:
+ *
+ * Only the catalog has directories, and only plain names in them.
+ */
+static void
+test_invalid_path(Fixture *f, gconstpointer user_data)
+{
+    const char *names[] = {"catalog/../evil.sh", "catalog/.hidden", "catalog//x", "lib/evil.sh"};
+
+    for (size_t i = 0; i < G_N_ELEMENTS(names); i++) {
+        g_autofree char *path = mft_write_bundle(f,
+                                                 "path.manifold",
+                                                 (const TestImage *[]){&f->kit, &f->app, NULL},
+                                                 &(BundleFlaws){.unlisted_file = names[i]});
+        g_autoptr(GError) error = NULL;
+        g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+
+        g_assert_null(bundle);
+        g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+        g_assert_cmpstr(error->message, ==, "The bundle contains a file with an invalid name");
+    }
+}
+
+/**
+ * test_undescribed_image:
+ */
+static void
+test_undescribed_image(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = mft_write_bundle(f,
+                                             "undescribed.manifold",
+                                             (const TestImage *[]){&f->kit, &f->app, NULL},
+                                             &(BundleFlaws){.undescribed = &f->kit});
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message,
+                    ==,
+                    "catalog/manifold-local.xml does not describe x86_64/" TEST_KIT_ID "/20260112T0238");
+}
+
+/**
+ * test_misdescribed_image:
+ */
+static void
+test_misdescribed_image(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = mft_write_bundle(f,
+                                             "misdescribed.manifold",
+                                             (const TestImage *[]){&f->kit, &f->app, NULL},
+                                             &(BundleFlaws){.misdescribed = &f->kit});
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message,
+                    ==,
+                    "catalog/manifold-local.xml describes org.example.Other, not " TEST_KIT_ID);
+}
+
+/**
+ * test_bad_icon:
+ */
+static void
+test_bad_icon(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = mft_write_bundle(f,
+                                             "icon.manifold",
+                                             (const TestImage *[]){&f->kit, &f->app, NULL},
+                                             &(BundleFlaws){.bad_icon = TRUE});
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message, ==, "catalog/icons/64x64/" TEST_APP_ID ".jxl is not a JPEG XL image");
+}
+
+/**
+ * test_corrupt_media:
+ *
+ * Screenshots are only hashed, but they are checked as well.
+ */
+static void
+test_corrupt_media(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = mft_write_bundle(f,
+                                             "media.manifold",
+                                             (const TestImage *[]){&f->kit, &f->app, NULL},
+                                             &(BundleFlaws){.corrupt_media = TRUE});
+    g_autoptr(GError) error = NULL;
+    g_autoptr(MfBundle) bundle = mft_open_bundle(path, &error);
+
+    g_assert_null(bundle);
+    g_assert_error(error, MF_ERROR, MF_ERROR_VERIFICATION_FAILED);
+    g_assert_cmpstr(error->message,
+                    ==,
+                    "catalog/media/" TEST_APP_ID "/screenshot.jxl does not match what the index records");
 }
 
 /**
@@ -684,6 +881,11 @@ main(int argc, char **argv)
     add_test("tampered-manifest", test_tampered_manifest);
     add_test("wrong-blake3", test_wrong_blake3);
     add_test("unlisted-file", test_unlisted_file);
+    add_test("invalid-path", test_invalid_path);
+    add_test("undescribed-image", test_undescribed_image);
+    add_test("misdescribed-image", test_misdescribed_image);
+    add_test("bad-icon", test_bad_icon);
+    add_test("corrupt-media", test_corrupt_media);
     add_test("kit-without-base", test_kit_without_base);
     add_test("one-id-two-kinds", test_one_id_two_kinds);
     add_test("not-a-bundle", test_not_a_bundle);

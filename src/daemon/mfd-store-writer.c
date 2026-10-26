@@ -172,35 +172,99 @@ mfd_store_writer_remove_image(MfdStoreWriter *writer, const char *verity_hash, G
  */
 
 /**
- * mfd_store_writer_update_metainfo_link:
+ * mfd_store_writer_update_icon_links:
  *
- * Make the MetaInfo of the current version of a component available in the
- * metadata of the "local" origin, with a link through the `current` link of
- * the component. We remove that link if the current version has no MetaInfo,
- * or if there is no current version.
+ * Link the icons of the current version of a component into the icon
+ * directories of the "local" origin, through the `current` link of the
+ * component, and remove the links to sizes the current version lacks.
  */
 static gboolean
-mfd_store_writer_update_metainfo_link(MfdStoreWriter *writer, const char *component_dir, GError **error)
+mfd_store_writer_update_icon_links(MfdStoreWriter *writer,
+                                   const char *component_dir,
+                                   const char *dir_name,
+                                   const char *component_id,
+                                   GError **error)
+{
+    g_autofree char *icon_name = g_strconcat(component_id, MF_ICON_SUFFIX, NULL);
+    g_autofree char *current_icons = g_build_filename(component_dir,
+                                                      MF_STORE_CURRENT_NAME,
+                                                      MF_STORE_ICONS_NAME,
+                                                      NULL);
+    g_autofree char *icons_dir = mfd_store_writer_get_path(writer, MF_STORE_LOCAL_ICONS_SUBDIR, NULL);
+    g_autoptr(GDir) sizes = g_dir_open(current_icons, 0, NULL);
+    g_autoptr(GDir) linked = NULL;
+    const char *size;
+
+    while (sizes != NULL && (size = g_dir_read_name(sizes)) != NULL) {
+        g_autofree char *icon = g_build_filename(current_icons, size, icon_name, NULL);
+        g_autofree char *size_dir = g_build_filename(icons_dir, size, NULL);
+        g_autofree char *target = NULL;
+
+        if (mfd_is_hidden(size) || !g_file_test(icon, G_FILE_TEST_IS_REGULAR))
+            continue;
+        target = g_build_filename(MF_STORE_LOCAL_ICONS_TO_ROOT,
+                                  dir_name,
+                                  component_id,
+                                  MF_STORE_CURRENT_NAME,
+                                  MF_STORE_ICONS_NAME,
+                                  size,
+                                  icon_name,
+                                  NULL);
+        if (!mfd_make_dir(size_dir, error))
+            return FALSE;
+        if (!mfd_replace_link(target, size_dir, icon_name, error))
+            return FALSE;
+    }
+
+    /* links through `current` to an icon it does not have would dangle */
+    linked = g_dir_open(icons_dir, 0, NULL);
+    while (linked != NULL && (size = g_dir_read_name(linked)) != NULL) {
+        g_autofree char *icon = g_build_filename(current_icons, size, icon_name, NULL);
+        g_autofree char *link_path = g_build_filename(icons_dir, size, icon_name, NULL);
+
+        if (!g_file_test(icon, G_FILE_TEST_IS_REGULAR) && !mfd_remove_if_exists(link_path, error))
+            return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**
+ * mfd_store_writer_update_catalog_links:
+ *
+ * Make the catalog data and icons of the current version of a component
+ * available in the "local" origin, with links through the `current` link of
+ * the component. We remove the links if the current version has no catalog
+ * data, or if there is no current version.
+ */
+static gboolean
+mfd_store_writer_update_catalog_links(MfdStoreWriter *writer, const char *component_dir, GError **error)
 {
     g_autofree char *component_id = g_path_get_basename(component_dir);
     g_autofree char *parent = g_path_get_dirname(component_dir);
     g_autofree char *dir_name = g_path_get_basename(parent);
-    g_autofree char *file_name = g_strconcat(component_id, MF_METAINFO_SUFFIX, NULL);
+    g_autofree char *file_name = g_strconcat(component_id, MF_STORE_CATALOG_SUFFIX, NULL);
     g_autofree char *current = g_build_filename(component_dir, MF_STORE_CURRENT_NAME, file_name, NULL);
-    g_autofree char *metainfo_dir = mfd_store_writer_get_path(writer, MF_STORE_LOCAL_METAINFO_SUBDIR, NULL);
-    g_autofree char *link_path = g_build_filename(metainfo_dir, file_name, NULL);
-    g_autofree char *target = g_build_filename(MF_STORE_LOCAL_METAINFO_TO_ROOT,
+    g_autofree char *catalog_dir = mfd_store_writer_get_path(writer, MF_STORE_LOCAL_CATALOG_SUBDIR, NULL);
+    g_autofree char *link_path = g_build_filename(catalog_dir, file_name, NULL);
+    g_autofree char *target = g_build_filename(MF_STORE_LOCAL_CATALOG_TO_ROOT,
                                                dir_name,
                                                component_id,
                                                MF_STORE_CURRENT_NAME,
                                                file_name,
                                                NULL);
 
-    if (!g_file_test(current, G_FILE_TEST_IS_REGULAR))
-        return mfd_remove_if_exists(link_path, error);
-    if (!mfd_make_dir(metainfo_dir, error))
-        return FALSE;
-    return mfd_replace_link(target, metainfo_dir, file_name, error);
+    if (!g_file_test(current, G_FILE_TEST_IS_REGULAR)) {
+        if (!mfd_remove_if_exists(link_path, error))
+            return FALSE;
+    } else {
+        if (!mfd_make_dir(catalog_dir, error))
+            return FALSE;
+        if (!mfd_replace_link(target, catalog_dir, file_name, error))
+            return FALSE;
+    }
+
+    return mfd_store_writer_update_icon_links(writer, component_dir, dir_name, component_id, error);
 }
 
 /**
@@ -208,7 +272,7 @@ mfd_store_writer_update_metainfo_link(MfdStoreWriter *writer, const char *compon
  * @except: (nullable): the name of a version directory to leave out, as it is about to be removed
  *
  * Point the `current` link of a component at its newest installed
- * version, or remove it if there is none, and keep the MetaInfo link of
+ * version, or remove it if there is none, and keep the catalog links of
  * the local origin in step.
  */
 static gboolean
@@ -255,7 +319,39 @@ mfd_store_writer_update_current(MfdStoreWriter *writer,
         return FALSE;
     }
 
-    return mfd_store_writer_update_metainfo_link(writer, component_dir, error);
+    return mfd_store_writer_update_catalog_links(writer, component_dir, error);
+}
+
+/**
+ * mfd_store_writer_write_icons:
+ * @icons: (element-type utf8 GBytes): the icons by their size directory and file name
+ *
+ * Write the icons of a component into the `icons` directory of a version.
+ */
+static gboolean
+mfd_store_writer_write_icons(const char *version_dir, GHashTable *icons, GError **error)
+{
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+
+    g_hash_table_iter_init(&iter, icons);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        g_autofree char *path = g_build_filename(version_dir, MF_STORE_ICONS_NAME, key, NULL);
+        g_autofree char *dir = g_path_get_dirname(path);
+        g_autofree char *name = g_path_get_basename(path);
+
+        if (!mfd_make_dir(dir, error))
+            return FALSE;
+        if (!mfd_write_marker(dir,
+                              name,
+                              g_bytes_get_data(value, NULL),
+                              (gssize) g_bytes_get_size(value),
+                              error))
+            return FALSE;
+    }
+
+    return TRUE;
 }
 
 /**
@@ -263,13 +359,14 @@ mfd_store_writer_update_current(MfdStoreWriter *writer,
  * @writer: the #MfdStoreWriter
  * @manifest: the manifest of the component, as it was in the bundle
  * @base: (nullable): what the component builds on, or %NULL for a core
- * @metainfo: the MetaInfo of the component, sanitized
+ * @catalog: the AppStream catalog data of the component, for the local origin
+ * @icons: (element-type utf8 GBytes): the icons of the component by their size directory and file name
  * @mode: whether the component is a potential target for automatic removal
  *
  * Record an installed version of a component: a directory with links to its
- * image and its base, its manifest and MetaInfo, where it came from, and its
- * install mode. We write the directory under a temporary name, and rename it
- * once it is complete, so it appears as a whole.
+ * image and its base, its manifest, catalog data and icons, where it came
+ * from, and its install mode. We write the directory under a temporary name,
+ * and rename it once it is complete, so it appears as a whole.
  *
  * Then we point the `current` link of the component at its newest version.
  * The version is installed by then, so if that fails, we only warn about it.
@@ -284,7 +381,8 @@ gboolean
 mfd_store_writer_install_component(MfdStoreWriter *writer,
                                    MfManifest *manifest,
                                    const MfBaseLink *base,
-                                   GBytes *metainfo,
+                                   GBytes *catalog,
+                                   GHashTable *icons,
                                    MfInstallMode mode,
                                    GError **error)
 {
@@ -297,7 +395,7 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     const char *version = mf_manifest_get_version(manifest);
     guint64 revision = mf_manifest_get_revision(manifest);
     g_autofree char *component_dir = mfd_store_writer_get_path(writer, subdir, component_id);
-    g_autofree char *metainfo_name = g_strconcat(component_id, MF_METAINFO_SUFFIX, NULL);
+    g_autofree char *catalog_name = g_strconcat(component_id, MF_STORE_CATALOG_SUFFIX, NULL);
     g_autofree char *version_name = mf_build_full_version(version, revision);
     g_autofree char *tmp_name = g_strconcat(MF_TMP_PREFIX, version_name, NULL);
     g_autofree char *tmp_dir = g_build_filename(component_dir, tmp_name, NULL);
@@ -345,10 +443,12 @@ mfd_store_writer_install_component(MfdStoreWriter *writer,
     if (!mfd_write_marker(tmp_dir, MF_STORE_MANIFEST_NAME, manifest_data, (gssize) manifest_size, error))
         goto out;
     if (!mfd_write_marker(tmp_dir,
-                          metainfo_name,
-                          g_bytes_get_data(metainfo, NULL),
-                          (gssize) g_bytes_get_size(metainfo),
+                          catalog_name,
+                          g_bytes_get_data(catalog, NULL),
+                          (gssize) g_bytes_get_size(catalog),
                           error))
+        goto out;
+    if (!mfd_store_writer_write_icons(tmp_dir, icons, error))
         goto out;
 
     /* TODO: every installation is local until repository support is ported from Intrafold */

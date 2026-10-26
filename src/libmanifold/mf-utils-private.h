@@ -16,8 +16,8 @@ MF_BEGIN_PRIVATE_DECLS
 /* the prefix of the name of a directory or file that is not complete yet */
 #define MF_TMP_PREFIX ".tmp-"
 
-/* the suffix of AppStream MetaInfo files */
-#define MF_METAINFO_SUFFIX ".metainfo.xml"
+/* the suffix of the cached icons in AppStream catalogs (JXL images) */
+#define MF_ICON_SUFFIX ".jxl"
 
 gboolean mf_write_all(int         fd,
                       const char *buffer,

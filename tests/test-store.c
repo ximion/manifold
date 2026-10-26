@@ -34,9 +34,10 @@ mft_add_image(const char *hash, gsize size)
 }
 
 static GBytes *
-mft_metainfo_of(const char *component_id)
+mft_catalog_of(const char *component_id)
 {
-    char *xml = mft_metainfo_xml(component_id);
+    g_autofree char *component = mft_catalog_component_xml(component_id, NULL, NULL);
+    char *xml = mft_catalog_xml(component);
 
     return g_bytes_new_take(xml, strlen(xml));
 }
@@ -55,7 +56,8 @@ mft_install(const MftTestManifest *manifest, const char *base_version_dir, MfIns
 {
     char *json = mft_manifest_json(manifest);
     g_autoptr(GBytes) bytes = g_bytes_new_take(json, strlen(json));
-    g_autoptr(GBytes) metainfo = mft_metainfo_of(manifest->component_id);
+    g_autoptr(GBytes) catalog = mft_catalog_of(manifest->component_id);
+    g_autoptr(GHashTable) icons = g_hash_table_new(g_str_hash, g_str_equal);
     g_autoptr(GError) error = NULL;
     g_autoptr(MfManifest) parsed = mf_manifest_new_from_bytes(bytes, &error);
     g_autoptr(MfBaseLink) base = NULL;
@@ -63,7 +65,7 @@ mft_install(const MftTestManifest *manifest, const char *base_version_dir, MfIns
     g_assert_no_error(error);
     if (manifest->base_id != NULL)
         base = mf_base_link_new(MF_STORE_RUNTIMES_SUBDIR, manifest->base_id, base_version_dir);
-    g_assert_true(mfd_store_writer_install_component(writer, parsed, base, metainfo, mode, &error));
+    g_assert_true(mfd_store_writer_install_component(writer, parsed, base, catalog, icons, mode, &error));
     g_assert_no_error(error);
 }
 

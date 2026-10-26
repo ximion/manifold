@@ -8,6 +8,7 @@
 #include "mfd-manager.h"
 
 #include <sys/stat.h>
+#include <appstream.h>
 
 #include "mf-component-private.h"
 #include "mf-result-private.h"
@@ -1314,6 +1315,39 @@ mfd_manager_execute_removal(MfdManager *manager,
 }
 
 /**
+ * mfd_make_local_appstream_catalog:
+ *
+ * Create catalog data for a component of the "local" origin. We drop its
+ * screenshots (we only allow those for repos).
+ */
+static GBytes *
+mfd_make_local_appstream_catalog(GBytes *catalog, GError **error)
+{
+    g_autoptr(AsMetadata) metadata = as_metadata_new();
+    AsComponentBox *components;
+    gchar *xml;
+
+    as_metadata_set_locale(metadata, "ALL");
+    as_metadata_set_format_style(metadata, AS_FORMAT_STYLE_CATALOG);
+    if (!as_metadata_parse_bytes(metadata, catalog, AS_FORMAT_KIND_XML, error))
+        return NULL;
+
+    components = as_metadata_get_components(metadata);
+    for (guint i = 0; i < as_component_box_len(components); i++) {
+        AsComponent *component = as_component_box_index(components, i);
+
+        /* AppStream has no call to clear them, the array is the component's own */
+        g_ptr_array_set_size(as_component_get_screenshots_all(component), 0);
+    }
+
+    as_metadata_set_origin(metadata, MF_BUNDLE_CATALOG_ORIGIN);
+    xml = as_metadata_components_to_catalog(metadata, AS_FORMAT_KIND_XML, error);
+    if (xml == NULL)
+        return NULL;
+    return g_bytes_new_take(xml, strlen(xml));
+}
+
+/**
  * mfd_manager_execute_install_plan:
  * @bundle: the bundle the component is in
  * @iplan: the plan of the component
@@ -1346,10 +1380,19 @@ mfd_manager_execute_install_plan(MfdManager *manager,
     const char *version = mf_manifest_get_version(manifest);
     g_autofree char *full_version = mf_build_full_version(version, mf_manifest_get_revision(manifest));
     guint64 image_size = mf_manifest_get_image_size(manifest);
+    g_autoptr(GBytes) catalog = NULL;
     g_autoptr(GError) local_error = NULL;
     gboolean added = FALSE;
 
     *ret_bytes_added = 0;
+    /* before we write anything else, build the catalog data for our fake "local"
+     * origin, so a failure leaves nothing behind */
+    catalog = mfd_make_local_appstream_catalog(mf_bundle_image_get_catalog(iplan->image), error);
+    if (catalog == NULL) {
+        g_prefix_error(error, "%s: ", component_id);
+        return FALSE;
+    }
+
     if (iplan->add_image)
         mfd_progress_begin_item(tracker, MF_ACTION_INSTALL, component_id, full_version, image_size);
 
@@ -1371,7 +1414,8 @@ mfd_manager_execute_install_plan(MfdManager *manager,
     if (!mfd_store_writer_install_component(manager->writer,
                                             manifest,
                                             iplan->base,
-                                            mf_bundle_image_get_metainfo(iplan->image),
+                                            catalog,
+                                            mf_bundle_image_get_icons(iplan->image),
                                             iplan->mode,
                                             &local_error)) {
         g_autoptr(GError) remove_error = NULL;

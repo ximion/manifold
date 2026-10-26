@@ -10,6 +10,7 @@
 
 #include <glib.h>
 
+#include "mf-bundle.h"
 #include "mf-store.h"
 #include "mf-macros-private.h"
 
@@ -24,12 +25,14 @@ MF_BEGIN_PRIVATE_DECLS
 #define MF_STORE_APPS_DIR     MF_STORAGE_DIR "/" MF_STORE_APPS_SUBDIR
 #define MF_STORE_RUNTIMES_DIR MF_STORAGE_DIR "/" MF_STORE_RUNTIMES_SUBDIR
 
-#define MF_STORE_LOCAL_METAINFO_SUBDIR "origins/local/metainfo"
-#define MF_STORE_LOCAL_METAINFO_DIR    MF_STORAGE_DIR "/" MF_STORE_LOCAL_METAINFO_SUBDIR
+/* the AppStream catalog of what was installed from bundles, a file and icons per component */
+#define MF_STORE_LOCAL_CATALOG_SUBDIR "origins/local/catalog"
+#define MF_STORE_LOCAL_ICONS_SUBDIR   "origins/local/icons/" MF_BUNDLE_CATALOG_ORIGIN
 
-#define MF_STORE_COMPONENT_TO_ROOT      "../../.."
-#define MF_STORE_LOCAL_METAINFO_TO_ROOT "../../.."
-#define MF_STORE_COMPONENT_TO_IMAGES    MF_STORE_COMPONENT_TO_ROOT "/images/by-verity"
+#define MF_STORE_COMPONENT_TO_ROOT     "../../.."
+#define MF_STORE_LOCAL_CATALOG_TO_ROOT "../../.."
+#define MF_STORE_LOCAL_ICONS_TO_ROOT   "../../../../.."
+#define MF_STORE_COMPONENT_TO_IMAGES   MF_STORE_COMPONENT_TO_ROOT "/images/by-verity"
 
 #define MF_STORE_IMAGE_SUFFIX       ".raw"
 #define MF_STORE_APP_IMAGE_LINK     "app.raw"
@@ -39,6 +42,8 @@ MF_BEGIN_PRIVATE_DECLS
 #define MF_STORE_CURRENT_NAME       "current"
 #define MF_STORE_ORIGIN_NAME        "origin"
 #define MF_STORE_MODE_NAME          "mode"
+#define MF_STORE_ICONS_NAME         "icons"
+#define MF_STORE_CATALOG_SUFFIX     ".xml"
 
 #define MF_STORE_REVOKED_NAME "revoked"
 #define MF_STORE_LOCAL_ORIGIN "local"
