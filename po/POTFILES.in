@@ -7,6 +7,7 @@ src/libmanifold/mf-json.c
 src/libmanifold/mf-manager.c
 src/libmanifold/mf-manifest.c
 src/libmanifold/mf-result.c
+src/libmanifold/mf-signer.c
 src/libmanifold/mf-store.c
 src/libmanifold/mf-utils.c
 # client sources

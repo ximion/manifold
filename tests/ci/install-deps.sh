@@ -61,6 +61,7 @@ case " $ID ${ID_LIKE:-} " in
             gobject-introspection
             libgirepository1.0-dev
             b3sum
+            openssh-client
         )
         blake3_build_packages=(cmake curl)
 
@@ -98,6 +99,7 @@ case " $ID ${ID_LIKE:-} " in
             'pkgconfig(gobject-introspection-1.0)'
             'pkgconfig(libblake3)'
             b3sum
+            openssh-clients
             gcc-c++
         )
         blake3_build_packages=(cmake curl)
@@ -130,6 +132,7 @@ case " $ID ${ID_LIKE:-} " in
             gobject-introspection
             libblake3
             b3sum
+            openssh
         )
         blake3_build_packages=(cmake)
 

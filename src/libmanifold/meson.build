@@ -14,6 +14,7 @@ mflib_src = [
     'mf-manifest.c',
     'mf-progress.c',
     'mf-result.c',
+    'mf-signer.c',
     'mf-store.c',
     'mf-utils.c',
     'mf-version.c',
@@ -28,6 +29,7 @@ mflib_pub_headers = [
     'mf-manifest.h',
     'mf-progress.h',
     'mf-result.h',
+    'mf-signer.h',
     'mf-store.h',
     'mf-utils.h',
 ]

@@ -15,6 +15,7 @@
 #include <mf-component.h>
 #include <mf-manifest.h>
 #include <mf-bundle.h>
+#include <mf-signer.h>
 #include <mf-store.h>
 #include <mf-progress.h>
 #include <mf-result.h>
