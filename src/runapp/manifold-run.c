@@ -40,7 +40,7 @@
  * don't have capabilities, we create a user namespace first.
  */
 
-#define PROGRAM_NAME "manifold-run"
+#define PROGRAM_NAME "mfrun"
 
 /*
  * The exit statuses we use when we can not run the program, the same ones
