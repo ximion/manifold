@@ -56,8 +56,8 @@ if apparmor_parser_exe.found()
     apparmor_conf.set('MF_BINDIR', mf_bindir)
 
     configure_file(
-        input: 'manifold-run.apparmor.in',
-        output: 'manifold-run',
+        input: 'mfrun.apparmor.in',
+        output: 'mfrun',
         configuration: apparmor_conf,
         install: true,
         install_dir: get_option('apparmor_dir'),

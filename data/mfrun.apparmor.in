@@ -4,15 +4,15 @@
 # tree of a component. Hosts restricting those only permit it to
 # programs whose profile grants the "userns" permission.
 #
-# /!\ All apps launched by manifold-run inherit this, so the userns restriction
+# /!\ All apps launched by mfrun inherit this, so the userns restriction
 # is effectively lifted! Maybe we can do something better in future?
 
 abi <abi/4.0>,
 include <tunables/global>
 
-profile manifold-run @MF_BINDIR@/manifold-run flags=(unconfined) {
+profile mfrun @MF_BINDIR@/mfrun flags=(unconfined) {
   userns,
 
   # Site-specific additions and overrides.
-  include if exists <local/manifold-run>
+  include if exists <local/mfrun>
 }
