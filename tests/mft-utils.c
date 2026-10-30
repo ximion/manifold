@@ -12,6 +12,7 @@
 #include <glib/gstdio.h>
 #include <libglnx.h>
 
+#include "mf-signer.h"
 #include "mf-store-private.h"
 
 /**
@@ -92,6 +93,65 @@ mft_rm_rf(const char *path)
 
     g_assert_true(glnx_shutil_rm_rf_at(AT_FDCWD, path, NULL, &error));
     g_assert_no_error(error);
+}
+
+/**
+ * mft_run:
+ *
+ * Run a command and fail the test if it fails.
+ */
+void
+mft_run(const char *stdin_file, const char *const *argv)
+{
+    g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE);
+    g_autoptr(GSubprocess) proc = NULL;
+    g_autoptr(GError) error = NULL;
+
+    if (stdin_file != NULL)
+        g_subprocess_launcher_set_stdin_file_path(launcher, stdin_file);
+    proc = g_subprocess_launcher_spawnv(launcher, argv, &error);
+    g_assert_no_error(error);
+    g_subprocess_wait_check(proc, NULL, &error);
+    g_assert_no_error(error);
+}
+
+/**
+ * mft_make_key:
+ *
+ * Make an unprotected ed25519 key pair in @dir.
+ *
+ * Returns: (transfer full): the path of the private key
+ */
+char *
+mft_make_key(const char *dir, const char *name)
+{
+    char *path = g_build_filename(dir, name, NULL);
+    const char *argv[] = {"ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", path, NULL};
+
+    mft_make_dirs(dir);
+    mft_run(NULL, argv);
+    return path;
+}
+
+/**
+ * mft_check_signature:
+ *
+ * Check that @signature is a valid signature over @data in the bundle namespace.
+ * We need a directory to write them to, as ssh-keygen only reads signature files.
+ */
+void
+mft_check_signature(const char *dir, GBytes *data, GBytes *signature)
+{
+    g_autofree char *data_file = g_build_filename(dir, "data", NULL);
+    g_autofree char *sig_file = g_build_filename(dir, "data.sig", NULL);
+    const char *argv[] =
+        {"ssh-keygen", "-Y", "check-novalidate", "-n", MF_SIGNATURE_NAMESPACE_BUNDLE, "-s", sig_file, NULL};
+
+    g_assert_true(g_str_has_prefix(g_bytes_get_data(signature, NULL), "-----BEGIN SSH SIGNATURE-----"));
+    g_assert_true(g_file_set_contents(data_file, g_bytes_get_data(data, NULL), g_bytes_get_size(data), NULL));
+    g_assert_true(
+        g_file_set_contents(sig_file, g_bytes_get_data(signature, NULL), g_bytes_get_size(signature), NULL));
+    mft_run(data_file, argv);
 }
 
 /**

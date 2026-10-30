@@ -36,6 +36,14 @@ void  mft_replace_in_file(const char *path,
 char *mft_make_tmp_dir(const char *name);
 void  mft_rm_rf(const char *path);
 
+void  mft_run(const char        *stdin_file,
+              const char *const *argv);
+char *mft_make_key(const char *dir,
+                   const char *name);
+void  mft_check_signature(const char *dir,
+                          GBytes     *data,
+                          GBytes     *signature);
+
 void  mft_clear_store(void);
 
 char *mft_catalog_component_xml(const char *component_id,

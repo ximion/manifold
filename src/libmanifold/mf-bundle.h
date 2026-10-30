@@ -13,6 +13,7 @@
 #include <glib-object.h>
 
 #include "mf-manifest.h"
+#include "mf-signer.h"
 
 G_BEGIN_DECLS
 
@@ -68,6 +69,9 @@ GPtrArray     *mf_bundle_get_images(MfBundle *bundle);
 MfBundleImage *mf_bundle_find_image_for_identity(MfBundle   *bundle,
                                                  const char *identity);
 gboolean       mf_bundle_is_signed(MfBundle *bundle);
+gboolean       mf_bundle_sign_file(const char *path,
+                                   MfSigner   *signer,
+                                   GError    **error);
 
 gboolean       mf_bundle_copy_image(MfBundle          *bundle,
                                     MfBundleImage     *image,

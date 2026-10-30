@@ -251,6 +251,7 @@ mf_bundle_image_get_icons(MfBundleImage *image)
 typedef struct {
     zip_t *zip;
     GPtrArray *images; /* of MfBundleImage */
+    GBytes *index_data;
     gboolean is_signed;
 } MfBundlePrivate;
 
@@ -266,6 +267,7 @@ mf_bundle_finalize(GObject *object)
     if (priv->zip != NULL)
         zip_discard(priv->zip);
     g_clear_pointer(&priv->images, g_ptr_array_unref);
+    g_clear_pointer(&priv->index_data, g_bytes_unref);
 
     G_OBJECT_CLASS(mf_bundle_parent_class)->finalize(object);
 }
@@ -854,7 +856,6 @@ static gboolean
 mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
 {
     MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
-    g_autoptr(GBytes) index_data = NULL;
     g_autoptr(GHashTable) contents = NULL;
     g_autoptr(sd_json_variant) index = NULL;
     MfBundleEntry *index_entry;
@@ -871,10 +872,10 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
     /* the index cannot list itself */
     index_entry->referenced = TRUE;
 
-    index_data = mf_zip_read_entry(priv->zip, index_entry->index, INDEX_NAME, &reader->budget, error);
-    if (index_data == NULL)
+    priv->index_data = mf_zip_read_entry(priv->zip, index_entry->index, INDEX_NAME, &reader->budget, error);
+    if (priv->index_data == NULL)
         return FALSE;
-    index = mf_json_parse_object(g_bytes_get_data(index_data, NULL),
+    index = mf_json_parse_object(g_bytes_get_data(priv->index_data, NULL),
                                  INDEX_NAME,
                                  MF_ERROR_INVALID_BUNDLE,
                                  error);
@@ -1168,6 +1169,85 @@ mf_bundle_is_signed(MfBundle *bundle)
 {
     g_return_val_if_fail(MF_IS_BUNDLE(bundle), FALSE);
     return GET_PRIVATE(bundle)->is_signed;
+}
+
+/**
+ * mf_zip_replace_signature:
+ *
+ * Write @signature into the bundle at @path, replacing any signature it has.
+ */
+static gboolean
+mf_zip_replace_signature(const char *path, GBytes *signature, GError **error)
+{
+    gsize size;
+    const void *data = g_bytes_get_data(signature, &size);
+    zip_source_t *source;
+    zip_int64_t index = -1;
+    int zip_errno = 0;
+    zip_t *zip;
+
+    zip = zip_open(path, 0, &zip_errno);
+    if (zip == NULL) {
+        zip_error_t zerr;
+
+        zip_error_init_with_code(&zerr, zip_errno);
+        mf_set_error_from_zip(error, MF_ERROR_FAILED, &zerr, _("Unable to open the bundle for writing"));
+        zip_error_fini(&zerr);
+        return FALSE;
+    }
+
+    /* NOTE: libzip only reads the buffer in zip_close(), so the signature must stay alive until then. */
+    source = zip_source_buffer(zip, data, size, 0);
+    if (source != NULL) {
+        index = zip_file_add(zip, SIGNATURE_NAME, source, ZIP_FL_ENC_UTF_8 | ZIP_FL_OVERWRITE);
+        if (index < 0)
+            zip_source_free(source);
+    }
+    if (index < 0 || zip_close(zip) != 0) {
+        mf_set_error_from_zip(error, MF_ERROR_FAILED, zip_get_error(zip), _("Unable to write the signature"));
+        zip_discard(zip);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**
+ * mf_bundle_sign_file:
+ * @path: a bundle file
+ * @signer: an #MfSigner
+ * @error: a #GError
+ *
+ * Sign a bundle in place, replacing any signature it has.
+ *
+ * We refuse to sign a bundle that we can not open, for example because a
+ * file changed after its index was written.
+ *
+ * Returns: %TRUE if the bundle was signed
+ */
+gboolean
+mf_bundle_sign_file(const char *path, MfSigner *signer, GError **error)
+{
+    g_autoptr(MfBundle) bundle = NULL;
+    g_autoptr(GBytes) signature = NULL;
+
+    g_return_val_if_fail(path != NULL, FALSE);
+    g_return_val_if_fail(MF_IS_SIGNER(signer), FALSE);
+
+    bundle = mf_bundle_new_from_path(path, error);
+    if (bundle == NULL)
+        return FALSE;
+
+    signature = mf_signer_sign(signer, MF_SIGNATURE_NAMESPACE_BUNDLE, GET_PRIVATE(bundle)->index_data, error);
+    if (signature == NULL)
+        return FALSE;
+
+    if (!mf_zip_replace_signature(path, signature, error)) {
+        g_prefix_error(error, "%s: ", path);
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 /**

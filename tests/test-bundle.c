@@ -864,6 +864,117 @@ test_metadata_limit(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * mft_read_zip_entry:
+ *
+ * Returns: (transfer full): the content of a file in a bundle
+ */
+static GBytes *
+mft_read_zip_entry(const char *path, const char *name)
+{
+    zip_t *zip = zip_open(path, ZIP_RDONLY, NULL);
+    zip_stat_t st;
+    zip_file_t *file;
+    char *data;
+
+    g_assert_nonnull(zip);
+    g_assert_cmpint(zip_stat(zip, name, 0, &st), ==, 0);
+    file = zip_fopen(zip, name, 0);
+    g_assert_nonnull(file);
+    data = g_malloc(st.size);
+    g_assert_cmpint(zip_fread(file, data, st.size), ==, st.size);
+    zip_fclose(file);
+    zip_discard(zip);
+
+    return g_bytes_new_take(data, st.size);
+}
+
+/**
+ * test_sign_file:
+ */
+static void
+test_sign_file(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *ssh_keygen = g_find_program_in_path("ssh-keygen");
+    g_autofree char *path = NULL;
+    g_autofree char *key = NULL;
+    g_autofree char *other_key = NULL;
+    g_autoptr(MfSigner) signer = NULL;
+    g_autoptr(MfSigner) other_signer = NULL;
+    g_autoptr(MfBundle) bundle = NULL;
+    g_autoptr(GBytes) index = NULL;
+    g_autoptr(GBytes) signature = NULL;
+    g_autoptr(GBytes) new_signature = NULL;
+    g_autoptr(GError) error = NULL;
+
+    if (ssh_keygen == NULL) {
+        g_test_skip("ssh-keygen is not installed");
+        return;
+    }
+    path = mft_write_bundle(f,
+                            "unsigned.manifold",
+                            (const TestImage *[]){&f->kit, &f->app, NULL},
+                            &(BundleFlaws){.unsigned_ = TRUE});
+    key = mft_make_key(f->dir, "key");
+    signer = mf_signer_new_for_key_file(key);
+
+    g_assert_true(mf_bundle_sign_file(path, signer, &error));
+    g_assert_no_error(error);
+
+    bundle = mft_open_bundle(path, &error);
+    g_assert_no_error(error);
+    g_assert_true(mf_bundle_is_signed(bundle));
+
+    index = mft_read_zip_entry(path, "index.json");
+    signature = mft_read_zip_entry(path, "index.json.sig");
+    mft_check_signature(f->dir, index, signature);
+
+    /* signing again replaces the signature */
+    other_key = mft_make_key(f->dir, "other-key");
+    other_signer = mf_signer_new_for_key_file(other_key);
+    g_assert_true(mf_bundle_sign_file(path, other_signer, &error));
+    g_assert_no_error(error);
+
+    new_signature = mft_read_zip_entry(path, "index.json.sig");
+    g_assert_false(g_bytes_equal(signature, new_signature));
+    mft_check_signature(f->dir, index, new_signature);
+}
+
+/**
+ * test_sign_tampered_file:
+ *
+ * A bundle that we would not open must not be signed.
+ */
+static void
+test_sign_tampered_file(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *ssh_keygen = g_find_program_in_path("ssh-keygen");
+    g_autofree char *path = NULL;
+    g_autofree char *key = NULL;
+    g_autoptr(MfSigner) signer = NULL;
+    g_autoptr(GError) error = NULL;
+    zip_t *zip;
+
+    if (ssh_keygen == NULL) {
+        g_test_skip("ssh-keygen is not installed");
+        return;
+    }
+    path = mft_write_bundle(f,
+                            "tampered.manifold",
+                            (const TestImage *[]){&f->kit, &f->app, NULL},
+                            &(BundleFlaws){.unsigned_ = TRUE, .tampered = &f->app});
+    key = mft_make_key(f->dir, "key");
+    signer = mf_signer_new_for_key_file(key);
+
+    g_assert_false(mf_bundle_sign_file(path, signer, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_VERIFICATION_FAILED);
+
+    zip = zip_open(path, ZIP_RDONLY, NULL);
+    g_assert_nonnull(zip);
+    g_assert_cmpint(zip_name_locate(zip, "index.json.sig", 0), <, 0);
+    zip_discard(zip);
+}
+
+/**
  * main:
  */
 int
@@ -891,6 +1002,8 @@ main(int argc, char **argv)
     add_test("not-a-bundle", test_not_a_bundle);
     add_test("no-index", test_no_index);
     add_test("metadata-limit", test_metadata_limit);
+    add_test("sign-file", test_sign_file);
+    add_test("sign-tampered-file", test_sign_tampered_file);
 #undef add_test
 
     return g_test_run();
