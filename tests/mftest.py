@@ -278,7 +278,7 @@ def write_bundle(path, images, signed=True, corrupt_image=None, catalog_ids=None
         ref = f'{image.architecture}/{image.component}/{image.version}'
         components.append(
             f'<component type="generic"><id>{catalog_id}</id><name>{catalog_id}</name>{extra}'
-            f'<custom><value key="manifold.id">{ref}</value></custom></component>\n'
+            f'<bundle type="manifold">{ref}</bundle></component>\n'
         )
     files['catalog/manifold-local.xml'] = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'

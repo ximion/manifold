@@ -123,15 +123,15 @@ mft_clear_store(void)
 char *
 mft_catalog_component_xml(const char *component_id, const char *ref, const char *extra)
 {
-    g_autofree char *custom = NULL;
+    g_autofree char *bundle = NULL;
 
     if (ref != NULL)
-        custom = g_strdup_printf("<custom><value key=\"manifold.id\">%s</value></custom>", ref);
+        bundle = g_strdup_printf("<bundle type=\"manifold\">%s</bundle>", ref);
     return g_strdup_printf("<component type=\"generic\"><id>%s</id><name>%s</name>%s%s</component>\n",
                            component_id,
                            component_id,
                            extra != NULL ? extra : "",
-                           custom != NULL ? custom : "");
+                           bundle != NULL ? bundle : "");
 }
 
 /**

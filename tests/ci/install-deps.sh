@@ -13,20 +13,29 @@ set -euo pipefail
 BLAKE3_VERSION=1.8.7
 BLAKE3_SHA256=c6782a28842b1c0478524ac06a4f2ede784038ee298d6e2162c0b089c4306a3c
 
-install_blake3()
+# libfyaml for the AppStream subproject, also built from source where it has no package
+LIBFYAML_VERSION=0.9.6
+LIBFYAML_SHA256=a59cc3331e2eb903ec36933ad52a45888041cac31e44f553a00511131242c483
+
+# build and install a CMake project from the given tarball, of which $3 is the source directory
+install_cmake_tarball()
 {
+    local url=$1
+    local sha256=$2
+    local source_dir=$3
     local workdir
 
+    shift 3
     workdir=$(mktemp -d)
-    curl -fsSL -o "$workdir/blake3.tar.gz" \
-        "https://github.com/BLAKE3-team/BLAKE3/archive/refs/tags/$BLAKE3_VERSION.tar.gz"
-    echo "$BLAKE3_SHA256  $workdir/blake3.tar.gz" | sha256sum --check --quiet
-    tar -xzf "$workdir/blake3.tar.gz" -C "$workdir" --strip-components=1
+    curl -fsSL -o "$workdir/source.tar.gz" "$url"
+    echo "$sha256  $workdir/source.tar.gz" | sha256sum --check --quiet
+    tar -xzf "$workdir/source.tar.gz" -C "$workdir" --strip-components=1
 
-    cmake -S "$workdir/c" -B "$workdir/build" \
+    cmake -S "$workdir/$source_dir" -B "$workdir/build" \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=ON
+        -DBUILD_SHARED_LIBS=ON \
+        "$@"
     cmake --build "$workdir/build"
     cmake --install "$workdir/build"
     ldconfig
@@ -62,8 +71,15 @@ case " $ID ${ID_LIKE:-} " in
             libgirepository1.0-dev
             b3sum
             openssh-client
+            # for the AppStream subproject, if the distribution's version is too old
+            gettext
+            gperf
+            itstool
+            libfyaml-dev
+            libxml2-dev
+            libxmlb-dev
         )
-        blake3_build_packages=(cmake curl)
+        source_build_packages=(cmake curl)
 
         apt-get update -q
         # not every release has it, it is built from source then
@@ -101,8 +117,14 @@ case " $ID ${ID_LIKE:-} " in
             b3sum
             openssh-clients
             gcc-c++
+            # for the AppStream subproject, if the distribution's version is too old
+            gettext
+            gperf
+            itstool
+            'pkgconfig(libxml-2.0)'
+            'pkgconfig(xmlb)'
         )
-        blake3_build_packages=(cmake curl)
+        source_build_packages=(cmake curl)
 
         # the enterprise distributions have some of the packages in CRB and EPEL only,
         # and a newer GCC than their default one as toolset (see build-and-test.sh)
@@ -111,6 +133,9 @@ case " $ID ${ID_LIKE:-} " in
             dnf config-manager --set-enabled crb
             # its libstdc++ for linking, which their libblake3 needs
             packages+=(gcc-toolset-15-gcc gcc-toolset-15-libstdc++-devel)
+        else
+            # the enterprise distributions do not have it, it is built from source there
+            packages+=('pkgconfig(libfyaml)')
         fi
         ;;
 
@@ -134,7 +159,7 @@ case " $ID ${ID_LIKE:-} " in
             b3sum
             openssh
         )
-        blake3_build_packages=(cmake)
+        source_build_packages=(cmake)
 
         pacman -Syu --noconfirm
         ;;
@@ -147,7 +172,21 @@ esac
 
 "${install[@]}" "${packages[@]}"
 
+if ! pkg-config --exists libblake3 libfyaml; then
+    "${install[@]}" "${source_build_packages[@]}"
+fi
 if ! pkg-config --exists libblake3; then
-    "${install[@]}" "${blake3_build_packages[@]}"
-    install_blake3
+    install_cmake_tarball \
+        "https://github.com/BLAKE3-team/BLAKE3/archive/refs/tags/$BLAKE3_VERSION.tar.gz" \
+        "$BLAKE3_SHA256" \
+        c
+fi
+if ! pkg-config --exists libfyaml; then
+    install_cmake_tarball \
+        "https://github.com/pantoniou/libfyaml/releases/download/v$LIBFYAML_VERSION/libfyaml-$LIBFYAML_VERSION.tar.gz" \
+        "$LIBFYAML_SHA256" \
+        . \
+        -DBUILD_TESTING=OFF \
+        -DENABLE_LIBCLANG=OFF \
+        -DENABLE_NETWORK=OFF
 fi

@@ -93,7 +93,15 @@ hardening_link_args = cc.get_supported_link_arguments([
 # Dependencies
 #
 curl_dep = dependency('libcurl', version: '>= 7.62')
-appstream_dep = dependency('appstream')
+appstream_dep = dependency('appstream', version: '>= 1.2.2', default_options: [
+    'bash-completion=false',
+    'display-detection=none',
+    'gir=false',
+    'man=false',
+    'docs=false',
+    'stemming=false',
+    'tools=false',
+])
 libsystemd_dep = dependency('libsystemd', version: '>= 257')
 glib_dep = dependency('glib-2.0', version: '>= 2.80')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.80')

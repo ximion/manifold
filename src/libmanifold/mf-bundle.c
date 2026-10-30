@@ -49,9 +49,6 @@ constexpr char CATALOG_NAME[] = MF_BUNDLE_CATALOG_DIR "/" MF_BUNDLE_CATALOG_ORIG
 constexpr char CATALOG_ICONS_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/icons/";
 constexpr char CATALOG_MEDIA_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/media/";
 
-/* the custom value of a catalog component that names its image */
-constexpr char MANIFOLD_ID_KEY[] = "manifold.id";
-
 constexpr int BUNDLE_FORMAT = 1;
 
 /* the index and manifests are small, anything larger is rejected */
@@ -745,7 +742,7 @@ mf_bundle_image_make_catalog(MfBundleImage *image, AsComponent *component, GErro
  * @contents: the files the index lists, by name
  *
  * Parse the catalog of the bundle, and give every image its component and
- * icons. A component names its image with its `manifold.id` custom value,
+ * icons. A component names its image with the ID of its Manifold bundle,
  * and every image has exactly one component.
  */
 static gboolean
@@ -776,7 +773,8 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
     components = as_metadata_get_components(metadata);
     for (guint i = 0; i < as_component_box_len(components); i++) {
         AsComponent *component = as_component_box_index(components, i);
-        const char *ref = as_component_get_custom_value(component, MANIFOLD_ID_KEY);
+        AsBundle *bundle = as_component_get_bundle(component, AS_BUNDLE_KIND_MANIFOLD);
+        const char *ref = bundle != NULL ? as_bundle_get_id(bundle) : NULL;
         const char *id = as_component_get_id(component);
         MfBundleImage *image = NULL;
 
