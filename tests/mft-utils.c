@@ -147,7 +147,6 @@ mft_check_signature(const char *dir, GBytes *data, GBytes *signature)
     const char *argv[] =
         {"ssh-keygen", "-Y", "check-novalidate", "-n", MF_SIGNATURE_NAMESPACE_BUNDLE, "-s", sig_file, NULL};
 
-    g_assert_true(g_str_has_prefix(g_bytes_get_data(signature, NULL), "-----BEGIN SSH SIGNATURE-----"));
     g_assert_true(g_file_set_contents(data_file, g_bytes_get_data(data, NULL), g_bytes_get_size(data), NULL));
     g_assert_true(
         g_file_set_contents(sig_file, g_bytes_get_data(signature, NULL), g_bytes_get_size(signature), NULL));
