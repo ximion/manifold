@@ -6,6 +6,7 @@ mf_lib_inc = include_directories('.')
 
 mflib_src = [
     'mf-bundle.c',
+    'mf-bundle-writer.c',
     'mf-manager.c',
     'mf-component.c',
     'mf-error.c',
@@ -23,6 +24,7 @@ mflib_src = [
 mflib_pub_headers = [
     'manifold.h',
     'mf-bundle.h',
+    'mf-bundle-writer.h',
     'mf-manager.h',
     'mf-component.h',
     'mf-error.h',
@@ -35,6 +37,7 @@ mflib_pub_headers = [
 ]
 
 mflib_priv_headers = [
+    'mf-bundle-private.h',
     'mf-component-private.h',
     'mf-constants-private.h',
     'mf-interface-private.h',

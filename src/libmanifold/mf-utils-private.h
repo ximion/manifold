@@ -28,6 +28,10 @@ gboolean mf_name_is_valid(const char *name,
                           const char *extra_chars,
                           size_t      length_max);
 
+char    *mf_hash_to_hex(const guint8 *hash,
+                        gsize         size);
+char    *mf_blake3_of_bytes(GBytes *bytes);
+
 MF_INTERNAL_VISIBLE
 char *mf_build_full_version(const char *version,
                             guint64     revision);

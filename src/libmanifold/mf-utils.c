@@ -12,6 +12,7 @@
 #include <sys/utsname.h>
 #include <glib/gi18n-lib.h>
 #include <appstream.h>
+#include <blake3.h>
 
 #include "mf-error.h"
 #include "mf-store-private.h"
@@ -135,6 +136,43 @@ mf_hex_hash_is_valid(const char *hash)
     }
 
     return TRUE;
+}
+
+/**
+ * mf_hash_to_hex:
+ * @hash: the bytes of a hash
+ * @size: the size of @hash
+ *
+ * Returns: (transfer full): the hash as lowercase hex
+ */
+char *
+mf_hash_to_hex(const guint8 *hash, gsize size)
+{
+    GString *hex = g_string_sized_new(2 * size);
+
+    for (gsize i = 0; i < size; i++)
+        g_string_append_printf(hex, "%02x", hash[i]);
+    return g_string_free(hex, FALSE);
+}
+
+/**
+ * mf_blake3_of_bytes:
+ * @bytes: the data to hash
+ *
+ * Returns: (transfer full): the blake3 hash of the data, as hex
+ */
+char *
+mf_blake3_of_bytes(GBytes *bytes)
+{
+    guint8 hash[BLAKE3_OUT_LEN];
+    blake3_hasher hasher;
+    gsize size;
+    gconstpointer data = g_bytes_get_data(bytes, &size);
+
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, data, size);
+    blake3_hasher_finalize(&hasher, hash, sizeof(hash));
+    return mf_hash_to_hex(hash, sizeof(hash));
 }
 
 /**

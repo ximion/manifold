@@ -19,11 +19,10 @@
 #include <blake3.h>
 #include <systemd/sd-json.h>
 
-#include "mf-error.h"
+#include "mf-bundle-private.h"
 #include "mf-json-private.h"
 #include "mf-sdautoptr-private.h"
 #include "mf-utils-private.h"
-#include "mf-constants-private.h"
 
 /**
  * MfBundle:
@@ -40,17 +39,6 @@
  *
  * The images are only verified while they are copied out.
  */
-
-constexpr char INDEX_NAME[] = "index.json";
-constexpr char SIGNATURE_NAME[] = "index.json.sig";
-constexpr char MANIFEST_SUFFIX[] = ".manifold.json";
-
-constexpr char CATALOG_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/";
-constexpr char CATALOG_NAME[] = MF_BUNDLE_CATALOG_DIR "/" MF_BUNDLE_CATALOG_ORIGIN ".xml";
-constexpr char CATALOG_ICONS_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/icons/";
-constexpr char CATALOG_MEDIA_PREFIX[] = MF_BUNDLE_CATALOG_DIR "/media/";
-
-constexpr int BUNDLE_FORMAT = 1;
 
 /* the index and manifests are small, anything larger is rejected */
 constexpr guint64 METADATA_SIZE_MAX = 16 * 1024 * 1024;
@@ -82,15 +70,15 @@ mf_plain_name_is_valid(const char *name, size_t len)
 }
 
 /**
- * mf_file_name_is_valid:
+ * mf_bundle_file_name_is_valid:
  *
  * The names of the files in a bundle are only used to look entries up and in messages,
  * nothing is ever written to disk under them. We still require plain names (nothing
  * hidden, no control characters), so names are safe to print. Only the catalog has
  * directories: its files have a path of plain names below %MF_BUNDLE_CATALOG_DIR.
  */
-static gboolean
-mf_file_name_is_valid(const char *name)
+gboolean
+mf_bundle_file_name_is_valid(const char *name)
 {
     const char *part;
     size_t len;
@@ -100,10 +88,10 @@ mf_file_name_is_valid(const char *name)
     len = strnlen(name, PATH_LENGTH_MAX + 1);
     if (len > PATH_LENGTH_MAX)
         return FALSE;
-    if (!g_str_has_prefix(name, CATALOG_PREFIX))
+    if (!g_str_has_prefix(name, MF_BUNDLE_CATALOG_PREFIX))
         return mf_plain_name_is_valid(name, len);
 
-    part = name + strlen(CATALOG_PREFIX);
+    part = name + strlen(MF_BUNDLE_CATALOG_PREFIX);
     for (;;) {
         const char *slash = strchr(part, '/');
         size_t part_len = slash != NULL ? (size_t) (slash - part) : strlen(part);
@@ -114,40 +102,6 @@ mf_file_name_is_valid(const char *name)
             return TRUE;
         part = slash + 1;
     }
-}
-
-/**
- * mf_blake3_hex:
- *
- * Returns: the hash of a finished blake3 hasher, as hex
- */
-static char *
-mf_blake3_hex(const blake3_hasher *hasher)
-{
-    GString *hex = g_string_sized_new(2 * BLAKE3_OUT_LEN);
-    guint8 out[BLAKE3_OUT_LEN];
-
-    blake3_hasher_finalize(hasher, out, sizeof(out));
-    for (size_t i = 0; i < sizeof(out); i++)
-        g_string_append_printf(hex, "%02x", out[i]);
-    return g_string_free(hex, FALSE);
-}
-
-/**
- * mf_blake3_of_bytes:
- *
- * Returns: the blake3 hash of the bytes, as hex
- */
-static char *
-mf_blake3_of_bytes(GBytes *bytes)
-{
-    blake3_hasher hasher;
-    gsize size;
-    gconstpointer data = g_bytes_get_data(bytes, &size);
-
-    blake3_hasher_init(&hasher);
-    blake3_hasher_update(&hasher, data, size);
-    return mf_blake3_hex(&hasher);
 }
 
 /**
@@ -285,7 +239,7 @@ mf_bundle_init(MfBundle *bundle)
     GET_PRIVATE(bundle)->images = g_ptr_array_new_with_free_func(g_object_unref);
 }
 
-static void
+void
 mf_set_error_from_zip(GError **error, MfError code, zip_error_t *zerr, const char *message)
 {
     g_set_error(error, MF_ERROR, code, "%s: %s", message, zip_error_strerror(zerr));
@@ -444,6 +398,7 @@ mf_zip_hash_entry(zip_t *zip,
 {
     g_autofree char *buffer = g_malloc(COPY_BUFFER_SIZE);
     g_autoptr(GChecksum) checksum = g_checksum_new(G_CHECKSUM_SHA256);
+    guint8 blake3[BLAKE3_OUT_LEN];
     blake3_hasher hasher;
     zip_file_t *file;
     guint64 total = 0;
@@ -471,9 +426,10 @@ mf_zip_hash_entry(zip_t *zip,
     }
     zip_fclose(file);
 
+    blake3_hasher_finalize(&hasher, blake3, sizeof(blake3));
     *ret_size = total;
     *ret_sha256 = g_strdup(g_checksum_get_string(checksum));
-    *ret_blake3 = mf_blake3_hex(&hasher);
+    *ret_blake3 = mf_hash_to_hex(blake3, sizeof(blake3));
     return TRUE;
 }
 
@@ -552,32 +508,49 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
                     MF_ERROR_INVALID_BUNDLE,
                     /* TRANSLATORS: %s is the name of the index file of the bundle */
                     _("%s: file entry is not an object"),
-                    INDEX_NAME);
+                    MF_BUNDLE_INDEX_NAME);
         return FALSE;
     }
 
-    name = mf_json_get_string_field(entry, INDEX_NAME, "name", MF_ERROR_INVALID_BUNDLE, error);
+    name = mf_json_get_string_field(entry, MF_BUNDLE_INDEX_NAME, "name", MF_ERROR_INVALID_BUNDLE, error);
     if (name == NULL)
         return FALSE;
-    if (!mf_file_name_is_valid(name)) {
+    if (!mf_bundle_file_name_is_valid(name)) {
         /* TRANSLATORS: %s is the name of the index file of the bundle */
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("%s: a file name is not valid"), INDEX_NAME);
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    _("%s: a file name is not valid"),
+                    MF_BUNDLE_INDEX_NAME);
         return FALSE;
     }
-    if (!mf_json_get_unsigned_field(entry, INDEX_NAME, "size", MF_ERROR_INVALID_BUNDLE, &size, error))
+    if (!mf_json_get_unsigned_field(entry,
+                                    MF_BUNDLE_INDEX_NAME,
+                                    "size",
+                                    MF_ERROR_INVALID_BUNDLE,
+                                    &size,
+                                    error))
         return FALSE;
-    expected_sha256 = mf_json_get_hash_field(entry, INDEX_NAME, "sha256", MF_ERROR_INVALID_BUNDLE, error);
+    expected_sha256 = mf_json_get_hash_field(entry,
+                                             MF_BUNDLE_INDEX_NAME,
+                                             "sha256",
+                                             MF_ERROR_INVALID_BUNDLE,
+                                             error);
     if (expected_sha256 == NULL)
         return FALSE;
-    expected_blake3 = mf_json_get_hash_field(entry, INDEX_NAME, "blake3", MF_ERROR_INVALID_BUNDLE, error);
+    expected_blake3 = mf_json_get_hash_field(entry,
+                                             MF_BUNDLE_INDEX_NAME,
+                                             "blake3",
+                                             MF_ERROR_INVALID_BUNDLE,
+                                             error);
     if (expected_blake3 == NULL)
         return FALSE;
 
-    archive_entry = mf_bundle_reader_take_reference(reader, name, INDEX_NAME, error);
+    archive_entry = mf_bundle_reader_take_reference(reader, name, MF_BUNDLE_INDEX_NAME, error);
     if (archive_entry == NULL)
         return FALSE;
 
-    if (g_str_has_prefix(name, CATALOG_MEDIA_PREFIX)) {
+    if (g_str_has_prefix(name, MF_BUNDLE_CATALOG_MEDIA_PREFIX)) {
         /* screenshots and videos can be large, so we only hash them */
         if (!mf_zip_hash_entry(priv->zip,
                                archive_entry->index,
@@ -612,17 +585,17 @@ mf_bundle_reader_verify_indexed_file(MfBundleReader *reader,
 }
 
 /**
- * mf_bundle_image_build_ref:
+ * mf_bundle_build_image_ref:
  *
- * Returns: how the catalog names the image, "<architecture>/<component>/<version>"
+ * Returns: how the catalog names an image, "<architecture>/<component>/<version>"
  */
-static char *
-mf_bundle_image_build_ref(MfBundleImage *image)
+char *
+mf_bundle_build_image_ref(MfManifest *manifest)
 {
     return g_strdup_printf("%s/%s/%s",
-                           mf_manifest_get_architecture(image->manifest),
-                           mf_manifest_get_component_id(image->manifest),
-                           mf_manifest_get_version(image->manifest));
+                           mf_manifest_get_architecture(manifest),
+                           mf_manifest_get_component_id(manifest),
+                           mf_manifest_get_version(manifest));
 }
 
 /**
@@ -686,7 +659,7 @@ mf_bundle_image_collect_icons(MfBundleImage *image,
         else
             size_dir = g_strdup_printf("%ux%u", as_icon_get_width(icon), as_icon_get_height(icon));
 
-        path = g_strconcat(CATALOG_ICONS_PREFIX, size_dir, "/", icon_name, NULL);
+        path = g_strconcat(MF_BUNDLE_CATALOG_ICONS_PREFIX, size_dir, "/", icon_name, NULL);
         data = g_hash_table_lookup(contents, path);
         if (data == NULL) {
             g_set_error(error,
@@ -752,13 +725,17 @@ static gboolean
 mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GError **error)
 {
     MfBundlePrivate *priv = GET_PRIVATE(reader->bundle);
-    GBytes *catalog = g_hash_table_lookup(contents, CATALOG_NAME);
+    GBytes *catalog = g_hash_table_lookup(contents, MF_BUNDLE_CATALOG_NAME);
     g_autoptr(AsMetadata) metadata = as_metadata_new();
     g_autoptr(GError) local_error = NULL;
     AsComponentBox *components;
 
     if (catalog == NULL) {
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("The bundle has no %s"), CATALOG_NAME);
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    _("The bundle has no %s"),
+                    MF_BUNDLE_CATALOG_NAME);
         return FALSE;
     }
     as_metadata_set_locale(metadata, "ALL");
@@ -768,7 +745,7 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
                     _("%s is not valid: %s"),
-                    CATALOG_NAME,
+                    MF_BUNDLE_CATALOG_NAME,
                     local_error->message);
         return FALSE;
     }
@@ -783,7 +760,7 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
 
         for (guint j = 0; ref != NULL && image == NULL && j < priv->images->len; j++) {
             MfBundleImage *candidate = g_ptr_array_index(priv->images, j);
-            g_autofree char *candidate_ref = mf_bundle_image_build_ref(candidate);
+            g_autofree char *candidate_ref = mf_bundle_build_image_ref(candidate->manifest);
 
             if (g_str_equal(ref, candidate_ref))
                 image = candidate;
@@ -794,7 +771,7 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
                         MF_ERROR_INVALID_BUNDLE,
                         /* TRANSLATORS: the catalog file, and a component in it */
                         _("%s describes %s, which is not in the bundle"),
-                        CATALOG_NAME,
+                        MF_BUNDLE_CATALOG_NAME,
                         ref != NULL ? ref : (id != NULL ? id : "?"));
             return FALSE;
         }
@@ -804,7 +781,7 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
                         MF_ERROR_INVALID_BUNDLE,
                         /* TRANSLATORS: the catalog file, and the image it describes twice */
                         _("%s describes %s twice"),
-                        CATALOG_NAME,
+                        MF_BUNDLE_CATALOG_NAME,
                         ref);
             return FALSE;
         }
@@ -814,7 +791,7 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
                         MF_ERROR_INVALID_BUNDLE,
                         /* TRANSLATORS: the catalog file, the component it describes, and the expected one */
                         _("%s describes %s, not %s"),
-                        CATALOG_NAME,
+                        MF_BUNDLE_CATALOG_NAME,
                         id != NULL ? id : "?",
                         mf_manifest_get_component_id(image->manifest));
             return FALSE;
@@ -831,14 +808,14 @@ mf_bundle_reader_read_catalog(MfBundleReader *reader, GHashTable *contents, GErr
         MfBundleImage *image = g_ptr_array_index(priv->images, i);
 
         if (image->catalog == NULL) {
-            g_autofree char *ref = mf_bundle_image_build_ref(image);
+            g_autofree char *ref = mf_bundle_build_image_ref(image->manifest);
 
             g_set_error(error,
                         MF_ERROR,
                         MF_ERROR_INVALID_BUNDLE,
                         /* TRANSLATORS: the catalog file, and an image it has no component for */
                         _("%s does not describe %s"),
-                        CATALOG_NAME,
+                        MF_BUNDLE_CATALOG_NAME,
                         ref);
             return FALSE;
         }
@@ -864,36 +841,49 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
     guint64 format;
 
     contents = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify) g_bytes_unref);
-    index_entry = g_hash_table_lookup(reader->entries, INDEX_NAME);
+    index_entry = g_hash_table_lookup(reader->entries, MF_BUNDLE_INDEX_NAME);
     if (index_entry == NULL) {
         /* TRANSLATORS: %s is the name of the index file of the bundle */
-        g_set_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE, _("The bundle has no %s"), INDEX_NAME);
+        g_set_error(error,
+                    MF_ERROR,
+                    MF_ERROR_INVALID_BUNDLE,
+                    _("The bundle has no %s"),
+                    MF_BUNDLE_INDEX_NAME);
         return FALSE;
     }
     /* the index cannot list itself */
     index_entry->referenced = TRUE;
 
-    priv->index_data = mf_zip_read_entry(priv->zip, index_entry->index, INDEX_NAME, &reader->budget, error);
+    priv->index_data = mf_zip_read_entry(priv->zip,
+                                         index_entry->index,
+                                         MF_BUNDLE_INDEX_NAME,
+                                         &reader->budget,
+                                         error);
     if (priv->index_data == NULL)
         return FALSE;
     index = mf_json_parse_object(g_bytes_get_data(priv->index_data, NULL),
-                                 INDEX_NAME,
+                                 MF_BUNDLE_INDEX_NAME,
                                  MF_ERROR_INVALID_BUNDLE,
                                  error);
     if (index == NULL)
         return FALSE;
 
-    if (!mf_json_get_unsigned_field(index, INDEX_NAME, "format", MF_ERROR_INVALID_BUNDLE, &format, error))
+    if (!mf_json_get_unsigned_field(index,
+                                    MF_BUNDLE_INDEX_NAME,
+                                    "format",
+                                    MF_ERROR_INVALID_BUNDLE,
+                                    &format,
+                                    error))
         return FALSE;
-    if (format != (guint64) BUNDLE_FORMAT) {
+    if (format != (guint64) MF_BUNDLE_FORMAT) {
         g_set_error(error,
                     MF_ERROR,
                     MF_ERROR_INVALID_BUNDLE,
                     /* TRANSLATORS: the index file of the bundle, its format, and the supported one */
                     _("%s has format %" PRIu64 ", only %d is supported"),
-                    INDEX_NAME,
+                    MF_BUNDLE_INDEX_NAME,
                     format,
-                    BUNDLE_FORMAT);
+                    MF_BUNDLE_FORMAT);
         return FALSE;
     }
 
@@ -904,7 +894,7 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
                     MF_ERROR_INVALID_BUNDLE,
                     /* TRANSLATORS: %s is the index file of the bundle, "files" is not translated */
                     _("%s: files is missing or not an array"),
-                    INDEX_NAME);
+                    MF_BUNDLE_INDEX_NAME);
         return FALSE;
     }
 
@@ -919,7 +909,8 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
                                                   error))
             return FALSE;
 
-        if (!g_str_has_prefix(name, CATALOG_PREFIX) && g_str_has_suffix(name, MANIFEST_SUFFIX)) {
+        if (!g_str_has_prefix(name, MF_BUNDLE_CATALOG_PREFIX) &&
+            g_str_has_suffix(name, MF_BUNDLE_MANIFEST_SUFFIX)) {
             MfBundleImage *image = mf_bundle_reader_parse_manifest(reader, name, data, error);
 
             if (image == NULL)
@@ -1041,7 +1032,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
         const char *name = zip_get_name(priv->zip, (zip_uint64_t) i, 0);
         MfBundleEntry *entry;
 
-        if (!mf_file_name_is_valid(name)) {
+        if (!mf_bundle_file_name_is_valid(name)) {
             g_set_error_literal(error,
                                 MF_ERROR,
                                 MF_ERROR_INVALID_BUNDLE,
@@ -1058,7 +1049,7 @@ mf_bundle_new_from_fd(int fd, GError **error)
     }
 
     /* the index cannot list its own signature, which is made over the index */
-    signature_entry = g_hash_table_lookup(reader.entries, SIGNATURE_NAME);
+    signature_entry = g_hash_table_lookup(reader.entries, MF_BUNDLE_SIGNATURE_NAME);
     if (signature_entry != NULL)
         signature_entry->referenced = TRUE;
     priv->is_signed = signature_entry != NULL;
@@ -1173,6 +1164,19 @@ mf_bundle_is_signed(MfBundle *bundle)
 }
 
 /**
+ * mf_bundle_get_index_data:
+ *
+ * Returns: (transfer none): the index of the bundle, as it is in the archive
+ */
+GBytes *
+mf_bundle_get_index_data(MfBundle *bundle)
+{
+    MfBundlePrivate *priv = GET_PRIVATE(bundle);
+
+    return priv->index_data;
+}
+
+/**
  * mf_zip_replace_signature:
  *
  * Write @signature into the bundle at @path, replacing any signature it has.
@@ -1200,7 +1204,7 @@ mf_zip_replace_signature(const char *path, GBytes *signature, GError **error)
     /* NOTE: libzip only reads the buffer in zip_close(), so the signature must stay alive until then. */
     source = zip_source_buffer(zip, data, size, 0);
     if (source != NULL) {
-        index = zip_file_add(zip, SIGNATURE_NAME, source, ZIP_FL_ENC_UTF_8 | ZIP_FL_OVERWRITE);
+        index = zip_file_add(zip, MF_BUNDLE_SIGNATURE_NAME, source, ZIP_FL_ENC_UTF_8 | ZIP_FL_OVERWRITE);
         if (index < 0)
             zip_source_free(source);
     }
@@ -1276,6 +1280,7 @@ mf_bundle_copy_image(MfBundle *bundle,
     g_autofree char *buffer = g_malloc(COPY_BUFFER_SIZE);
     g_autoptr(GChecksum) checksum = g_checksum_new(G_CHECKSUM_SHA256);
     g_autofree char *blake3 = NULL;
+    guint8 hash[BLAKE3_OUT_LEN];
     blake3_hasher hasher;
     MfBundlePrivate *priv;
     const char *image_name;
@@ -1322,7 +1327,8 @@ mf_bundle_copy_image(MfBundle *bundle,
 
     /* TODO: Also check that the dm-verity hash tree of the image produces its
      * root hash, before the image is ever mounted. */
-    blake3 = mf_blake3_hex(&hasher);
+    blake3_hasher_finalize(&hasher, hash, sizeof(hash));
+    blake3 = mf_hash_to_hex(hash, sizeof(hash));
     if (total != image_size ||
         g_strcmp0(g_checksum_get_string(checksum),
                   mf_manifest_get_image_checksum(image->manifest, MF_CHECKSUM_KIND_SHA256)) != 0 ||

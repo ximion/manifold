@@ -16,6 +16,7 @@
 #include <mf-manifest.h>
 #include <mf-bundle.h>
 #include <mf-signer.h>
+#include <mf-bundle-writer.h>
 #include <mf-store.h>
 #include <mf-progress.h>
 #include <mf-result.h>

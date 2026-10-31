@@ -2,6 +2,7 @@
 #
 # library sources
 src/libmanifold/mf-bundle.c
+src/libmanifold/mf-bundle-writer.c
 src/libmanifold/mf-component.c
 src/libmanifold/mf-json.c
 src/libmanifold/mf-manager.c

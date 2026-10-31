@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <glib/gstdio.h>
 #include <blake3.h>
 #include <zip.h>
 #include <manifold.h>
@@ -975,6 +976,249 @@ test_sign_tampered_file(Fixture *f, gconstpointer user_data)
 }
 
 /**
+ * mft_image_catalog:
+ * @extra: (nullable): more XML for the component
+ *
+ * Returns: (transfer full): catalog XML for an image. Its origin and the image
+ *   it names are wrong, as they are up to the writer.
+ */
+static GBytes *
+mft_image_catalog(const char *component_id, const char *extra)
+{
+    g_autofree char *component = mft_catalog_component_xml(component_id, "x86_64/wrong/1", extra);
+    char *xml = g_strdup_printf("<components version=\"1.0\" origin=\"other\">%s</components>", component);
+
+    return g_bytes_new_take(xml, strlen(xml));
+}
+
+/**
+ * mft_write_image_file:
+ *
+ * Returns: (transfer full): the path of the file of an image
+ */
+static char *
+mft_write_image_file(Fixture *f, const TestImage *image)
+{
+    g_autofree char *file_name = mft_image_file_name(image);
+    char *path = g_build_filename(f->dir, file_name, NULL);
+
+    g_assert_true(
+        g_file_set_contents(path, g_bytes_get_data(image->data, NULL), g_bytes_get_size(image->data), NULL));
+    return path;
+}
+
+/**
+ * mft_writer_add_image:
+ * @extra: (nullable): more XML for the component
+ */
+static void
+mft_writer_add_image(Fixture *f, MfBundleWriter *writer, const TestImage *image, const char *extra)
+{
+    g_autofree char *path = mft_write_image_file(f, image);
+    char *json = mft_image_manifest_json(image, FALSE);
+    g_autoptr(GBytes) manifest = g_bytes_new_take(json, strlen(json));
+    g_autoptr(GBytes) catalog = mft_image_catalog(image->component_id, extra);
+    g_autoptr(GError) error = NULL;
+
+    g_assert_true(mf_bundle_writer_add_image(writer, path, manifest, catalog, &error));
+    g_assert_no_error(error);
+}
+
+/**
+ * mft_new_writer:
+ *
+ * Returns: (transfer full): a writer for a bundle in the test directory, with the kit
+ */
+static MfBundleWriter *
+mft_new_writer(Fixture *f, const char *path)
+{
+    g_autoptr(GError) error = NULL;
+    MfBundleWriter *writer = mf_bundle_writer_new(path, &error);
+
+    g_assert_no_error(error);
+    mft_writer_add_image(f, writer, &f->kit, NULL);
+    return writer;
+}
+
+/**
+ * test_writer:
+ */
+static void
+test_writer(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = g_build_filename(f->dir, "written.manifold", NULL);
+    g_autofree char *icons = g_build_filename(f->dir, "icons", NULL);
+    g_autofree char *media = g_build_filename(f->dir, "media", NULL);
+    g_autofree char *icon_dir = g_build_filename(icons, "64x64", NULL);
+    g_autofree char *icon = g_build_filename(icon_dir, TEST_APP_ID ".jxl", NULL);
+    g_autofree char *media_dir = g_build_filename(media, TEST_APP_ID, NULL);
+    g_autofree char *screenshot = g_build_filename(media_dir, "screenshot.jxl", NULL);
+    g_autofree char *extra = g_strdup_printf("<icon type=\"cached\" width=\"64\" height=\"64\">%s.jxl</icon>",
+                                             TEST_APP_ID);
+    g_autoptr(MfBundleWriter) writer = mft_new_writer(f, path);
+    g_autoptr(MfBundle) bundle = NULL;
+    g_autoptr(GBytes) catalog = NULL;
+    g_autoptr(GBytes) index = NULL;
+    g_autoptr(GError) error = NULL;
+    MfBundleImage *app;
+    gsize size;
+    const char *xml;
+
+    mft_writer_add_image(f, writer, &f->app, extra);
+
+    mft_make_dirs(icon_dir);
+    mft_make_dirs(media_dir);
+    g_assert_true(g_file_set_contents(icon, (const char *) JXL_DATA, sizeof(JXL_DATA), NULL));
+    g_assert_true(g_file_set_contents(screenshot, (const char *) JXL_DATA, sizeof(JXL_DATA), NULL));
+    g_assert_true(mf_bundle_writer_add_catalog_assets(writer, icons, media, &error));
+    g_assert_no_error(error);
+
+    /* nothing reaches the disk before we finish */
+    g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+    g_assert_true(mf_bundle_writer_finish(writer, NULL, &error));
+    g_assert_no_error(error);
+
+    /* what we write is what we read */
+    bundle = mft_open_bundle(path, &error);
+    g_assert_no_error(error);
+    g_assert_false(mf_bundle_is_signed(bundle));
+    g_assert_cmpuint(mf_bundle_get_images(bundle)->len, ==, 2);
+
+    app = mft_find_image(bundle, TEST_APP_ID);
+    g_assert_cmpstr(mf_bundle_image_get_manifest_name(app), ==, TEST_APP_ID "_0.1.0.manifold.json");
+    g_assert_cmpuint(g_hash_table_size(mf_bundle_image_get_icons(app)), ==, 1);
+    g_assert_true(mf_bundle_verify_image(bundle, app, NULL, NULL, &error));
+    g_assert_no_error(error);
+
+    /* the catalog has our origin, and opening the bundle checked the image it names */
+    catalog = mft_read_zip_entry(path, "catalog/manifold-local.xml");
+    xml = g_bytes_get_data(catalog, &size);
+    g_assert_nonnull(g_strstr_len(xml, size, "origin=\"manifold-local\""));
+    g_assert_null(g_strstr_len(xml, size, "x86_64/wrong/1"));
+
+    /* the manifests record the images, so the index does not list them */
+    index = mft_read_zip_entry(path, "index.json");
+    xml = g_bytes_get_data(index, &size);
+    g_assert_nonnull(g_strstr_len(xml, size, TEST_APP_ID "_0.1.0.manifold.json"));
+    g_assert_null(g_strstr_len(xml, size, TEST_APP_ID "_0.1.0.raw"));
+}
+
+/**
+ * test_writer_sign:
+ *
+ * If signing fails nothing is written, and we can try again.
+ */
+static void
+test_writer_sign(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *ssh_keygen = g_find_program_in_path("ssh-keygen");
+    g_autofree char *path = g_build_filename(f->dir, "written.manifold", NULL);
+    g_autofree char *bad_key = g_build_filename(f->dir, "bad-key", NULL);
+    g_autofree char *key = NULL;
+    g_autoptr(MfBundleWriter) writer = NULL;
+    g_autoptr(MfSigner) bad_signer = NULL;
+    g_autoptr(MfSigner) signer = NULL;
+    g_autoptr(GBytes) index = NULL;
+    g_autoptr(GBytes) signature = NULL;
+    g_autoptr(GError) error = NULL;
+
+    if (ssh_keygen == NULL) {
+        g_test_skip("ssh-keygen is not installed");
+        return;
+    }
+    mft_write_file(bad_key, "not a key\n");
+    bad_signer = mf_signer_new_for_key_file(bad_key);
+    key = mft_make_key(f->dir, "key");
+    signer = mf_signer_new_for_key_file(key);
+
+    writer = mft_new_writer(f, path);
+    g_assert_false(mf_bundle_writer_finish(writer, bad_signer, &error));
+    g_assert_nonnull(error);
+    g_clear_error(&error);
+    g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+
+    g_assert_true(mf_bundle_writer_finish(writer, signer, &error));
+    g_assert_no_error(error);
+
+    index = mft_read_zip_entry(path, "index.json");
+    signature = mft_read_zip_entry(path, "index.json.sig");
+    mft_check_signature(f->dir, index, signature);
+}
+
+/**
+ * test_writer_refused:
+ *
+ * We refuse what would make a bundle unreadable, and that changes nothing:
+ * the bundle we get in the end only holds what was accepted.
+ */
+static void
+test_writer_refused(Fixture *f, gconstpointer user_data)
+{
+    g_autofree char *path = g_build_filename(f->dir, "written.manifold", NULL);
+    g_autofree char *app_file = mft_write_image_file(f, &f->app);
+    g_autofree char *kit_file = mft_write_image_file(f, &f->kit);
+    g_autofree char *app_xml = mft_catalog_component_xml(TEST_APP_ID, NULL, NULL);
+    g_autofree char *kit_xml = mft_catalog_component_xml(TEST_KIT_ID, NULL, NULL);
+    g_autofree char *both_xml = g_strconcat("<components>", app_xml, kit_xml, "</components>", NULL);
+    g_autofree char *icons = g_build_filename(f->dir, "icons", NULL);
+    g_autofree char *good_dir = g_build_filename(icons, "a", NULL);
+    g_autofree char *bad_dir = g_build_filename(icons, "b", NULL);
+    g_autofree char *good_file = g_build_filename(good_dir, "icon", NULL);
+    g_autofree char *hidden_file = g_build_filename(bad_dir, ".hidden", NULL);
+    char *json = mft_image_manifest_json(&f->app, FALSE);
+    g_autoptr(GBytes) manifest = g_bytes_new_take(json, strlen(json));
+    g_autoptr(GBytes) catalog = mft_image_catalog(TEST_APP_ID, NULL);
+    g_autoptr(GBytes) kit_catalog = mft_image_catalog(TEST_KIT_ID, NULL);
+    g_autoptr(GBytes) both_catalog = g_bytes_new_static(both_xml, strlen(both_xml));
+    g_autoptr(MfBundleWriter) writer = mf_bundle_writer_new(path, NULL);
+    g_autoptr(MfBundle) bundle = NULL;
+    g_autoptr(GError) error = NULL;
+
+    g_assert_false(mf_bundle_writer_finish(writer, NULL, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message, ==, "The bundle contains no images");
+    g_clear_error(&error);
+
+    /* the manifest describes another image */
+    g_assert_false(mf_bundle_writer_add_image(writer, kit_file, manifest, catalog, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_VERIFICATION_FAILED);
+    g_clear_error(&error);
+
+    g_assert_false(mf_bundle_writer_add_image(writer, app_file, manifest, kit_catalog, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_assert_cmpstr(error->message, ==, "The catalog data of " TEST_APP_ID " describes " TEST_KIT_ID);
+    g_clear_error(&error);
+
+    g_assert_false(mf_bundle_writer_add_image(writer, app_file, manifest, both_catalog, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_clear_error(&error);
+
+    g_assert_true(mf_bundle_writer_add_image(writer, app_file, manifest, catalog, &error));
+    g_assert_no_error(error);
+    g_assert_false(mf_bundle_writer_add_image(writer, app_file, manifest, catalog, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_clear_error(&error);
+
+    /* the first file of the tree is fine, but it must not stay if a later one is not */
+    mft_make_dirs(good_dir);
+    mft_make_dirs(bad_dir);
+    mft_write_file(good_file, "icon");
+    mft_write_file(hidden_file, "hidden");
+    g_assert_false(mf_bundle_writer_add_catalog_assets(writer, icons, NULL, &error));
+    g_assert_error(error, MF_ERROR, MF_ERROR_INVALID_BUNDLE);
+    g_clear_error(&error);
+    g_assert_cmpint(g_remove(hidden_file), ==, 0);
+    g_assert_true(mf_bundle_writer_add_catalog_assets(writer, icons, NULL, &error));
+    g_assert_no_error(error);
+
+    g_assert_true(mf_bundle_writer_finish(writer, NULL, &error));
+    g_assert_no_error(error);
+    bundle = mft_open_bundle(path, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(mf_bundle_get_images(bundle)->len, ==, 1);
+}
+
+/**
  * main:
  */
 int
@@ -1004,6 +1248,9 @@ main(int argc, char **argv)
     add_test("metadata-limit", test_metadata_limit);
     add_test("sign-file", test_sign_file);
     add_test("sign-tampered-file", test_sign_tampered_file);
+    add_test("writer", test_writer);
+    add_test("writer-sign", test_writer_sign);
+    add_test("writer-refused", test_writer_refused);
 #undef add_test
 
     return g_test_run();
