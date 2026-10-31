@@ -76,6 +76,26 @@ mfc_context_find_command(MfcContext *ctx, const char *name)
 }
 
 /**
+ * mfc_context_is_command_group:
+ *
+ * Returns: %TRUE if @name is the first word of grouped commands, like "key" of "key new"
+ */
+gboolean
+mfc_context_is_command_group(MfcContext *ctx, const char *name)
+{
+    g_autofree char *prefix = g_strconcat(name, " ", NULL);
+
+    for (guint i = 0; i < ctx->commands->len; i++) {
+        MfcCommand *cmd = g_ptr_array_index(ctx->commands, i);
+
+        if (g_str_has_prefix(cmd->name, prefix))
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+/**
  * mfc_command_build_usage:
  *
  * Returns: (transfer full): the name of the command, followed by its arguments

@@ -41,8 +41,8 @@ typedef struct {
  * MfcCommandFunc:
  * @ctx: the context
  * @cmd: the command that is being run
- * @argc: argument count, with the command name as first argument
- * @argv: argument vector, with the command name as first argument
+ * @argc: argument count, with the last word of the command name as first argument
+ * @argv: argument vector, with the last word of the command name as first argument
  *
  * Returns: the exit code
  */
@@ -54,7 +54,8 @@ typedef int (*MfcCommandFunc)(MfcContext *ctx,
 /**
  * MfcCommand:
  *
- * A command of the tool.
+ * A command of the tool. The name of a grouped command has two words,
+ * like "key new".
  */
 struct MfcCommand {
     const char    *name;
@@ -75,6 +76,8 @@ void        mfc_context_register_command(MfcContext    *ctx,
                                          MfcCommandFunc func);
 MfcCommand *mfc_context_find_command(MfcContext *ctx,
                                      const char *name);
+gboolean    mfc_context_is_command_group(MfcContext *ctx,
+                                         const char *name);
 char       *mfc_command_build_usage(const MfcCommand *cmd);
 
 MfManager  *mfc_context_get_manager(MfcContext *ctx);

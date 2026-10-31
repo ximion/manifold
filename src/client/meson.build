@@ -12,6 +12,8 @@ manifold_client_src = [
     'mfc-query.h',
     'mfc-progress-bar.c',
     'mfc-progress-bar.h',
+    'mfc-signing.c',
+    'mfc-signing.h',
     'mfc-util.c',
     'mfc-util.h'
 ]

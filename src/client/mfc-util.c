@@ -86,7 +86,7 @@ mfc_parse_command_options(GOptionContext *context, MfcCommand *cmd, int *argc, c
  * Append a column of a table row: @text, padded with spaces to @width
  * characters, and the space that separates it from the next column.
  */
-static void
+void
 mfc_string_append_column(GString *row, const char *text, gsize width)
 {
     g_string_append(row, text);

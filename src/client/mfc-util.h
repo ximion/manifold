@@ -22,6 +22,9 @@ int             mfc_parse_command_options(GOptionContext *context,
                                           int            *argc,
                                           char         ***argv);
 
+void            mfc_string_append_column(GString    *row,
+                                         const char *text,
+                                         gsize       width);
 char           *mfc_format_components(GPtrArray *components,
                                       gboolean   with_header);
 void            mfc_print_components(GPtrArray *components,

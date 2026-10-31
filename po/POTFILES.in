@@ -15,4 +15,5 @@ src/client/manifold.c
 src/client/mfc-manage.c
 src/client/mfc-progress-bar.c
 src/client/mfc-query.c
+src/client/mfc-signing.c
 src/client/mfc-util.c

@@ -14,6 +14,7 @@
 #include "mfc-context.h"
 #include "mfc-manage.h"
 #include "mfc-query.h"
+#include "mfc-signing.h"
 #include "mfc-util.h"
 
 /* global options, valid for all commands */
@@ -103,6 +104,31 @@ mfc_wants_subcommand_help(int argc, char **argv)
     return FALSE;
 }
 
+/**
+ * mfc_find_command_for_args:
+ *
+ * Find the command that the arguments select. The name of a grouped command,
+ * like "key new", spans two arguments, of which we drop the first one.
+ *
+ * Returns: (transfer none): the command, or %NULL
+ */
+static MfcCommand *
+mfc_find_command_for_args(MfcContext *ctx, int *argc, char ***argv)
+{
+    if (*argc > 2) {
+        g_autofree char *name = g_strconcat((*argv)[1], " ", (*argv)[2], NULL);
+        MfcCommand *cmd = mfc_context_find_command(ctx, name);
+
+        if (cmd != NULL) {
+            (*argc)--;
+            (*argv)++;
+            return cmd;
+        }
+    }
+
+    return mfc_context_find_command(ctx, (*argv)[1]);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -121,6 +147,7 @@ main(int argc, char **argv)
     ctx = mfc_context_new();
     mfc_register_query_commands(ctx);
     mfc_register_manage_commands(ctx);
+    mfc_register_signing_commands(ctx);
 
     context = g_option_context_new("COMMAND");
     g_option_context_add_main_entries(context, mfc_global_options, NULL);
@@ -157,9 +184,12 @@ main(int argc, char **argv)
     if (ctx->verbose)
         g_log_set_debug_enabled(TRUE);
 
-    cmd = mfc_context_find_command(ctx, argv[1]);
+    cmd = mfc_find_command_for_args(ctx, &argc, &argv);
     if (cmd == NULL) {
-        g_printerr(_("Command '%s' is unknown.\n"), argv[1]);
+        if (mfc_context_is_command_group(ctx, argv[1]))
+            g_printerr(_("Command '%s' needs a subcommand.\n"), argv[1]);
+        else
+            g_printerr(_("Command '%s' is unknown.\n"), argv[1]);
         mfc_print_help_hint(NULL, NULL);
         return MFC_EXIT_INVALID_CMD;
     }
