@@ -890,6 +890,19 @@ mft_read_zip_entry(const char *path, const char *name)
 }
 
 /**
+ * mft_sign_file:
+ *
+ * Sign a bundle in place, or remove its signature if there is no @signer.
+ */
+static gboolean
+mft_sign_file(const char *path, MfSigner *signer, GError **error)
+{
+    g_autoptr(MfBundleWriter) writer = mf_bundle_writer_new_for_file(path, error);
+
+    return writer != NULL && mf_bundle_writer_finish(writer, signer, error);
+}
+
+/**
  * test_sign_file:
  */
 static void
@@ -918,7 +931,7 @@ test_sign_file(Fixture *f, gconstpointer user_data)
     key = mft_make_key(f->dir, "key");
     signer = mf_signer_new_for_key_file(key);
 
-    g_assert_true(mf_bundle_sign_file(path, signer, &error));
+    g_assert_true(mft_sign_file(path, signer, &error));
     g_assert_no_error(error);
 
     bundle = mft_open_bundle(path, &error);
@@ -932,12 +945,20 @@ test_sign_file(Fixture *f, gconstpointer user_data)
     /* signing again replaces the signature */
     other_key = mft_make_key(f->dir, "other-key");
     other_signer = mf_signer_new_for_key_file(other_key);
-    g_assert_true(mf_bundle_sign_file(path, other_signer, &error));
+    g_assert_true(mft_sign_file(path, other_signer, &error));
     g_assert_no_error(error);
 
     new_signature = mft_read_zip_entry(path, "index.json.sig");
     g_assert_false(g_bytes_equal(signature, new_signature));
     mft_check_signature(f->dir, index, new_signature);
+
+    /* a signature does not survive without a signer */
+    g_assert_true(mft_sign_file(path, NULL, &error));
+    g_assert_no_error(error);
+    g_clear_object(&bundle);
+    bundle = mft_open_bundle(path, &error);
+    g_assert_no_error(error);
+    g_assert_false(mf_bundle_is_signed(bundle));
 }
 
 /**
@@ -966,7 +987,7 @@ test_sign_tampered_file(Fixture *f, gconstpointer user_data)
     key = mft_make_key(f->dir, "key");
     signer = mf_signer_new_for_key_file(key);
 
-    g_assert_false(mf_bundle_sign_file(path, signer, &error));
+    g_assert_false(mft_sign_file(path, signer, &error));
     g_assert_error(error, MF_ERROR, MF_ERROR_VERIFICATION_FAILED);
 
     zip = zip_open(path, ZIP_RDONLY, NULL);

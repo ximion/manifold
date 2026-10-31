@@ -283,9 +283,10 @@ mfc_run_bundle_sign_command(MfcContext *ctx, MfcCommand *cmd, int argc, char **a
     }
 
     for (int i = 1; i < argc; i++) {
+        g_autoptr(MfBundleWriter) writer = mf_bundle_writer_new_for_file(argv[i], &error);
         g_autoptr(GString) skipped = NULL;
 
-        if (mf_bundle_sign_file(argv[i], signer, &error)) {
+        if (writer != NULL && mf_bundle_writer_finish(writer, signer, &error)) {
             /* TRANSLATORS: the bundle file, and the name of the signing key */
             g_print(_("Signed %s with %s\n"), argv[i], mf_signer_get_name(signer));
             continue;
