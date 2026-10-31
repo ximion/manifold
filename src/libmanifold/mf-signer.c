@@ -13,6 +13,7 @@
 #include <gio/gio.h>
 
 #include "mf-error.h"
+#include "mf-constants-private.h"
 
 /**
  * MfSigner:
@@ -38,8 +39,8 @@ G_DEFINE_TYPE_WITH_PRIVATE(MfSigner, mf_signer, G_TYPE_OBJECT)
 
 #define GET_PRIVATE(o) ((MfSignerPrivate *) mf_signer_get_instance_private(o))
 
-#define PUBLIC_KEY_SUFFIX  ".pub"
-#define FINGERPRINT_PREFIX "SHA256:"
+#define MF_PUBLIC_KEY_SUFFIX  ".pub"
+#define MF_FINGERPRINT_PREFIX "SHA256:"
 
 /**
  * mf_signer_finalize:
@@ -117,7 +118,7 @@ mf_ssh_key_fingerprint(const char *public_key)
     while (len > 0 && encoded[len - 1] == '=')
         encoded[--len] = '\0';
 
-    return g_strconcat(FINGERPRINT_PREFIX, encoded, NULL);
+    return g_strconcat(MF_FINGERPRINT_PREFIX, encoded, NULL);
 }
 
 /**
@@ -160,10 +161,10 @@ mf_signer_new_for_key_file(const char *path)
     priv->name = g_strdup(path);
     priv->key_file = g_strdup(path);
 
-    if (g_str_has_suffix(path, PUBLIC_KEY_SUFFIX))
+    if (g_str_has_suffix(path, MF_PUBLIC_KEY_SUFFIX))
         public_key_file = g_strdup(path);
     else
-        public_key_file = g_strconcat(path, PUBLIC_KEY_SUFFIX, NULL);
+        public_key_file = g_strconcat(path, MF_PUBLIC_KEY_SUFFIX, NULL);
     if (g_file_get_contents(public_key_file, &public_key, NULL, NULL))
         mf_signer_set_public_key(signer, public_key);
 
@@ -324,7 +325,7 @@ mf_signer_new_for_key(const char *key, GError **error)
 {
     g_return_val_if_fail(key != NULL, NULL);
 
-    if (g_str_has_prefix(key, FINGERPRINT_PREFIX)) {
+    if (g_str_has_prefix(key, MF_FINGERPRINT_PREFIX)) {
         g_autoptr(GPtrArray) agent_keys = mf_signer_list_agent_keys();
 
         for (guint i = 0; i < agent_keys->len; i++) {
@@ -427,7 +428,7 @@ mf_signer_list_keys(GError **error)
         g_autoptr(MfSigner) signer = NULL;
 
         /* public keys only accompany the private keys */
-        if (name[0] == '.' || g_str_has_suffix(name, PUBLIC_KEY_SUFFIX))
+        if (name[0] == '.' || g_str_has_suffix(name, MF_PUBLIC_KEY_SUFFIX))
             continue;
         signer = mf_signer_new_for_key_name(name, NULL);
         if (signer != NULL)
@@ -628,7 +629,7 @@ mf_signer_sign(MfSigner *signer, const char *sig_namespace, GBytes *data, GError
         /* with only the public key, ssh-keygen asks ssh-agent to sign */
         g_autofree char *contents = g_strconcat(priv->public_key, "\n", NULL);
 
-        key_file = g_build_filename(tmp_dir, "key" PUBLIC_KEY_SUFFIX, NULL);
+        key_file = g_build_filename(tmp_dir, "key" MF_PUBLIC_KEY_SUFFIX, NULL);
         if (!g_file_set_contents_full(key_file, contents, -1, G_FILE_SET_CONTENTS_NONE, 0600, error)) {
             g_rmdir(tmp_dir);
             return NULL;

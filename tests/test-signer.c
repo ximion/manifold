@@ -10,6 +10,7 @@
 #include <gio/gio.h>
 #include <manifold.h>
 
+#include "mf-constants-private.h"
 #include "mft-utils.h"
 
 typedef struct {

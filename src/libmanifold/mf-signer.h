@@ -15,27 +15,6 @@
 G_BEGIN_DECLS
 
 /**
- * MF_SIGNATURE_NAMESPACE_BUNDLE:
- *
- * The SSHSig namespace the index of a bundle is signed in.
- */
-#define MF_SIGNATURE_NAMESPACE_BUNDLE "manifold.bundle"
-
-/**
- * MF_SIGNATURE_NAMESPACE_REPO:
- *
- * The SSHSig namespace the metadata of a repository is signed in.
- */
-#define MF_SIGNATURE_NAMESPACE_REPO "manifold.repo"
-
-/**
- * MF_SIGNING_KEY_ENV:
- *
- * The environment variable that can hold a private key to sign with.
- */
-#define MF_SIGNING_KEY_ENV "MANIFOLD_SIGNING_KEY"
-
-/**
  * MF_SIGNING_KEY_DEFAULT_NAME:
  *
  * The name of the key in the key directory of the user that we sign with

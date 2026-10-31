@@ -23,6 +23,7 @@
 #include "mf-json-private.h"
 #include "mf-sdautoptr-private.h"
 #include "mf-utils-private.h"
+#include "mf-constants-private.h"
 
 /**
  * MfBundle:

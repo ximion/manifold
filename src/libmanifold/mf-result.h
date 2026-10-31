@@ -17,11 +17,7 @@
 G_BEGIN_DECLS
 
 #define MF_TYPE_RESULT (mf_result_get_type())
-G_DECLARE_DERIVABLE_TYPE(MfResult,
-                         mf_result,
-                         MF,
-                         RESULT,
-                         GObject)
+G_DECLARE_DERIVABLE_TYPE(MfResult, mf_result, MF, RESULT, GObject)
 
 struct _MfResultClass {
     GObjectClass parent_class;

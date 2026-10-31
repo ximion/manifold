@@ -36,6 +36,7 @@ mflib_pub_headers = [
 
 mflib_priv_headers = [
     'mf-component-private.h',
+    'mf-constants-private.h',
     'mf-interface-private.h',
     'mf-json-private.h',
     'mf-macros-private.h',
