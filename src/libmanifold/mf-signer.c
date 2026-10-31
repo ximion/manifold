@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "mf-signer.h"
+#include "mf-signer-private.h"
 
 #include <string.h>
 #include <glib/gi18n-lib.h>
@@ -13,7 +14,6 @@
 #include <gio/gio.h>
 
 #include "mf-error.h"
-#include "mf-constants-private.h"
 
 /**
  * MfSigner:
@@ -520,7 +520,7 @@ mf_find_ssh_keygen(GError **error)
  * Returns: %TRUE if we can try to sign
  */
 gboolean
-mf_signer_check(MfSigner *signer, GError **error)
+mf_signer_check_key(MfSigner *signer, GError **error)
 {
     g_autofree char *ssh_keygen = NULL;
 
@@ -541,6 +541,24 @@ mf_signer_check(MfSigner *signer, GError **error)
     }
 
     return TRUE;
+}
+
+/**
+ * mf_signature_scope_to_namespace:
+ *
+ * Returns: the SSHSig namespace of a scope, or %NULL if the scope is not known
+ */
+static const char *
+mf_signature_scope_to_namespace(MfSignatureScope scope)
+{
+    switch (scope) {
+    case MF_SIGNATURE_SCOPE_BUNDLE:
+        return "manifold.bundle";
+    case MF_SIGNATURE_SCOPE_REPO:
+        return "manifold.repo";
+    default:
+        return NULL;
+    }
 }
 
 /**
@@ -602,7 +620,7 @@ mf_signer_run_ssh_keygen(MfSigner *signer,
 /**
  * mf_signer_sign:
  * @signer: an #MfSigner
- * @sig_namespace: the SSHSig namespace to sign in, like %MF_SIGNATURE_NAMESPACE_BUNDLE
+ * @scope: what the signature is for
  * @data: the data to sign
  *
  * Sign @data with the key of @signer. If the key is protected by a
@@ -611,8 +629,9 @@ mf_signer_run_ssh_keygen(MfSigner *signer,
  * Returns: (transfer full): the armored SSHSig signature, or %NULL on error
  */
 GBytes *
-mf_signer_sign(MfSigner *signer, const char *sig_namespace, GBytes *data, GError **error)
+mf_signer_sign(MfSigner *signer, MfSignatureScope scope, GBytes *data, GError **error)
 {
+    const char *sig_namespace = mf_signature_scope_to_namespace(scope);
     g_autofree char *tmp_dir = NULL;
     g_autofree char *key_file = NULL;
     GBytes *signature;

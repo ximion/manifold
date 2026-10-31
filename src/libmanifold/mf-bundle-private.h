@@ -10,11 +10,26 @@
 #include <zip.h>
 
 #include "mf-bundle.h"
-#include "mf-constants-private.h"
 #include "mf-error.h"
 #include "mf-macros-private.h"
 
 MF_BEGIN_PRIVATE_DECLS
+
+/**
+ * MF_BUNDLE_CATALOG_DIR:
+ *
+ * The directory of a bundle that holds its AppStream catalog (with the
+ * catalog XML, the icons and the screenshot media)
+ */
+#define MF_BUNDLE_CATALOG_DIR "catalog"
+
+/**
+ * MF_BUNDLE_CATALOG_ORIGIN:
+ *
+ * The origin of the AppStream catalog of a bundle, and of the components
+ * installed from local bundles.
+ */
+#define MF_BUNDLE_CATALOG_ORIGIN "manifold-local"
 
 constexpr char MF_BUNDLE_INDEX_NAME[]      = "index.json";
 constexpr char MF_BUNDLE_SIGNATURE_NAME[]  = "index.json.sig";

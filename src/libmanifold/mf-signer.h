@@ -15,6 +15,22 @@
 G_BEGIN_DECLS
 
 /**
+ * MfSignatureScope:
+ * @MF_SIGNATURE_SCOPE_UNKNOWN: Not a known scope.
+ * @MF_SIGNATURE_SCOPE_BUNDLE: The index of a bundle.
+ * @MF_SIGNATURE_SCOPE_REPO: The metadata of a repository.
+ *
+ * What a signature is for. It is only valid in the scope it was made in.
+ */
+typedef enum {
+    MF_SIGNATURE_SCOPE_UNKNOWN,
+    MF_SIGNATURE_SCOPE_BUNDLE,
+    MF_SIGNATURE_SCOPE_REPO,
+    /*< private >*/
+    MF_SIGNATURE_SCOPE_LAST
+} MfSignatureScope;
+
+/**
  * MF_SIGNING_KEY_DEFAULT_NAME:
  *
  * The name of the key in the key directory of the user that we sign with
@@ -45,11 +61,11 @@ const char *mf_signer_get_name(MfSigner *signer);
 const char *mf_signer_get_public_key(MfSigner *signer);
 const char *mf_signer_get_fingerprint(MfSigner *signer);
 
-gboolean    mf_signer_check(MfSigner *signer,
-                            GError  **error);
-GBytes     *mf_signer_sign(MfSigner   *signer,
-                           const char *sig_namespace,
-                           GBytes     *data,
-                           GError    **error);
+gboolean    mf_signer_check_key(MfSigner *signer,
+                                GError  **error);
+GBytes     *mf_signer_sign(MfSigner        *signer,
+                           MfSignatureScope scope,
+                           GBytes          *data,
+                           GError         **error);
 
 G_END_DECLS

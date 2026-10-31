@@ -39,12 +39,12 @@ mflib_pub_headers = [
 mflib_priv_headers = [
     'mf-bundle-private.h',
     'mf-component-private.h',
-    'mf-constants-private.h',
     'mf-interface-private.h',
     'mf-json-private.h',
     'mf-macros-private.h',
     'mf-progress-private.h',
     'mf-result-private.h',
+    'mf-signer-private.h',
     'mf-store-private.h',
     'mf-sdautoptr-private.h',
     'mf-utils-private.h',

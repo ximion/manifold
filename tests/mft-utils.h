@@ -41,6 +41,7 @@ void  mft_run(const char        *stdin_file,
 char *mft_make_key(const char *dir,
                    const char *name);
 void  mft_check_signature(const char *dir,
+                          const char *sig_namespace,
                           GBytes     *data,
                           GBytes     *signature);
 

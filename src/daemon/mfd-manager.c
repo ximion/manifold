@@ -10,7 +10,6 @@
 #include <sys/stat.h>
 #include <appstream.h>
 
-#include "mf-constants-private.h"
 #include "mf-component-private.h"
 #include "mf-result-private.h"
 #include "mf-store-private.h"

@@ -10,7 +10,7 @@
 #include <gio/gio.h>
 #include <manifold.h>
 
-#include "mf-constants-private.h"
+#include "mf-signer-private.h"
 #include "mft-utils.h"
 
 typedef struct {
@@ -53,12 +53,12 @@ mft_sign_and_check(Fixture *fixture, MfSigner *signer)
     g_autoptr(GBytes) signature = NULL;
     g_autoptr(GError) error = NULL;
 
-    g_assert_true(mf_signer_check(signer, &error));
+    g_assert_true(mf_signer_check_key(signer, &error));
     g_assert_no_error(error);
-    signature = mf_signer_sign(signer, MF_SIGNATURE_NAMESPACE_BUNDLE, data, &error);
+    signature = mf_signer_sign(signer, MF_SIGNATURE_SCOPE_BUNDLE, data, &error);
     g_assert_no_error(error);
     g_assert_nonnull(signature);
-    mft_check_signature(fixture->dir, data, signature);
+    mft_check_signature(fixture->dir, "manifold.bundle", data, signature);
 }
 
 static void
@@ -98,6 +98,9 @@ test_key_file(Fixture *fixture, gconstpointer user_data)
     g_autofree char *public_key = NULL;
     g_autofree char *fingerprint = NULL;
     g_autoptr(MfSigner) signer = NULL;
+    g_autoptr(GBytes) data = g_bytes_new_static("some data\n", 10);
+    g_autoptr(GBytes) signature = NULL;
+    g_autoptr(GError) error = NULL;
 
     if (fixture->dir == NULL)
         return;
@@ -111,6 +114,10 @@ test_key_file(Fixture *fixture, gconstpointer user_data)
     g_assert_cmpstr(mf_signer_get_public_key(signer), ==, public_key);
     g_assert_cmpstr(mf_signer_get_fingerprint(signer), ==, fingerprint);
     mft_sign_and_check(fixture, signer);
+
+    signature = mf_signer_sign(signer, MF_SIGNATURE_SCOPE_REPO, data, &error);
+    g_assert_no_error(error);
+    mft_check_signature(fixture->dir, "manifold.repo", data, signature);
 }
 
 static void
@@ -149,16 +156,16 @@ test_bad_key(Fixture *fixture, gconstpointer user_data)
     g_assert_true(g_file_set_contents_full(key, "not a key\n", -1, G_FILE_SET_CONTENTS_NONE, 0600, NULL));
 
     signer = mf_signer_new_for_key_file(key);
-    g_assert_true(mf_signer_check(signer, &error));
+    g_assert_true(mf_signer_check_key(signer, &error));
     g_assert_no_error(error);
-    signature = mf_signer_sign(signer, MF_SIGNATURE_NAMESPACE_BUNDLE, data, &error);
+    signature = mf_signer_sign(signer, MF_SIGNATURE_SCOPE_BUNDLE, data, &error);
     g_assert_error(error, MF_ERROR, MF_ERROR_FAILED);
     g_assert_null(signature);
     g_clear_error(&error);
 
     missing = g_build_filename(fixture->dir, "missing", NULL);
     missing_signer = mf_signer_new_for_key_file(missing);
-    g_assert_false(mf_signer_check(missing_signer, &error));
+    g_assert_false(mf_signer_check_key(missing_signer, &error));
     g_assert_error(error, MF_ERROR, MF_ERROR_NOT_FOUND);
 }
 

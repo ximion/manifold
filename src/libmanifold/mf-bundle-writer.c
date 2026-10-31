@@ -710,7 +710,7 @@ mf_bundle_writer_finish(MfBundleWriter *writer, MfSigner *signer, GError **error
     }
 
     if (signer != NULL) {
-        signature = mf_signer_sign(signer, MF_SIGNATURE_NAMESPACE_BUNDLE, priv->index, error);
+        signature = mf_signer_sign(signer, MF_SIGNATURE_SCOPE_BUNDLE, priv->index, error);
         if (signature == NULL)
             return FALSE;
     }

@@ -940,7 +940,7 @@ test_sign_file(Fixture *f, gconstpointer user_data)
 
     index = mft_read_zip_entry(path, "index.json");
     signature = mft_read_zip_entry(path, "index.json.sig");
-    mft_check_signature(f->dir, index, signature);
+    mft_check_signature(f->dir, "manifold.bundle", index, signature);
 
     /* signing again replaces the signature */
     other_key = mft_make_key(f->dir, "other-key");
@@ -950,7 +950,7 @@ test_sign_file(Fixture *f, gconstpointer user_data)
 
     new_signature = mft_read_zip_entry(path, "index.json.sig");
     g_assert_false(g_bytes_equal(signature, new_signature));
-    mft_check_signature(f->dir, index, new_signature);
+    mft_check_signature(f->dir, "manifold.bundle", index, new_signature);
 
     /* a signature does not survive without a signer */
     g_assert_true(mft_sign_file(path, NULL, &error));
@@ -1163,7 +1163,7 @@ test_writer_sign(Fixture *f, gconstpointer user_data)
 
     index = mft_read_zip_entry(path, "index.json");
     signature = mft_read_zip_entry(path, "index.json.sig");
-    mft_check_signature(f->dir, index, signature);
+    mft_check_signature(f->dir, "manifold.bundle", index, signature);
 }
 
 /**

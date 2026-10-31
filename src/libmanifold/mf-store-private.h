@@ -10,8 +10,8 @@
 
 #include <glib.h>
 
-#include "mf-bundle.h"
 #include "mf-store.h"
+#include "mf-bundle-private.h"
 #include "mf-macros-private.h"
 
 MF_BEGIN_PRIVATE_DECLS

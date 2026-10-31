@@ -12,7 +12,6 @@
 #include <glib/gstdio.h>
 #include <libglnx.h>
 
-#include "mf-constants-private.h"
 #include "mf-store-private.h"
 
 /**
@@ -136,16 +135,15 @@ mft_make_key(const char *dir, const char *name)
 /**
  * mft_check_signature:
  *
- * Check that @signature is a valid signature over @data in the bundle namespace.
+ * Check that @signature is a valid signature over @data in the SSHSig namespace.
  * We need a directory to write them to, as ssh-keygen only reads signature files.
  */
 void
-mft_check_signature(const char *dir, GBytes *data, GBytes *signature)
+mft_check_signature(const char *dir, const char *sig_namespace, GBytes *data, GBytes *signature)
 {
     g_autofree char *data_file = g_build_filename(dir, "data", NULL);
     g_autofree char *sig_file = g_build_filename(dir, "data.sig", NULL);
-    const char *argv[] =
-        {"ssh-keygen", "-Y", "check-novalidate", "-n", MF_SIGNATURE_NAMESPACE_BUNDLE, "-s", sig_file, NULL};
+    const char *argv[] = {"ssh-keygen", "-Y", "check-novalidate", "-n", sig_namespace, "-s", sig_file, NULL};
 
     g_assert_true(g_file_set_contents(data_file, g_bytes_get_data(data, NULL), g_bytes_get_size(data), NULL));
     g_assert_true(
