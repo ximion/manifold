@@ -279,10 +279,10 @@ test_agent(Fixture *fixture, gconstpointer user_data)
     /* only the agent can sign now */
     g_assert_cmpint(g_unlink(key), ==, 0);
 
+    /* a key in the agent is only reached by its fingerprint */
     keys = mf_signer_list_keys(&error);
     g_assert_no_error(error);
-    g_assert_cmpint(keys->len, ==, 1);
-    g_assert_cmpstr(mf_signer_get_fingerprint(g_ptr_array_index(keys, 0)), ==, fingerprint);
+    g_assert_cmpint(keys->len, ==, 0);
 
     signer = mf_signer_new_for_key(fingerprint, &error);
     g_assert_no_error(error);

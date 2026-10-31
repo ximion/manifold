@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Matthias Klumpp <matthias@tenstral.net>
+ * Copyright (C) 2025-2026 Matthias Klumpp <matthias@tenstral.net>
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
@@ -404,8 +404,7 @@ mf_signer_compare_names(gconstpointer a, gconstpointer b)
 /**
  * mf_signer_list_keys:
  *
- * Find the keys the user can sign with: the keys in the key directory of
- * the user, sorted by name, followed by the keys that ssh-agent holds.
+ * Find the signing keys in the key directory of the user, sorted by name.
  *
  * Returns: (transfer full) (element-type MfSigner): the keys, or %NULL on error
  */
@@ -413,7 +412,6 @@ GPtrArray *
 mf_signer_list_keys(GError **error)
 {
     g_autoptr(GPtrArray) keys = g_ptr_array_new_with_free_func(g_object_unref);
-    g_autoptr(GPtrArray) agent_keys = NULL;
     g_autofree char *key_dir = mf_signer_build_key_dir();
     g_autoptr(GDir) dir = NULL;
     g_autoptr(GError) local_error = NULL;
@@ -436,9 +434,6 @@ mf_signer_list_keys(GError **error)
             g_ptr_array_add(keys, g_steal_pointer(&signer));
     }
     g_ptr_array_sort(keys, mf_signer_compare_names);
-
-    agent_keys = mf_signer_list_agent_keys();
-    g_ptr_array_extend_and_steal(keys, g_steal_pointer(&agent_keys));
 
     return g_steal_pointer(&keys);
 }

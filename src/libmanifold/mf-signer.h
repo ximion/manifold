@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 Matthias Klumpp <matthias@tenstral.net>
+ * Copyright (C) 2025-2026 Matthias Klumpp <matthias@tenstral.net>
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */
