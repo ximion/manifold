@@ -251,7 +251,8 @@ const char *
 mf_store_get_path(MfStore *store)
 {
     g_return_val_if_fail(MF_IS_STORE(store), NULL);
-    return GET_PRIVATE(store)->path;
+    auto priv = GET_PRIVATE(store);
+    return priv->path;
 }
 
 /**
@@ -852,7 +853,9 @@ mf_store_load(MfStore *store, GError **error)
 void
 mf_store_invalidate(MfStore *store)
 {
-    g_clear_pointer(&GET_PRIVATE(store)->components, g_ptr_array_unref);
+    auto priv = GET_PRIVATE(store);
+
+    g_clear_pointer(&priv->components, g_ptr_array_unref);
 }
 
 /**
@@ -989,6 +992,8 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
     g_return_val_if_fail(MF_IS_STORE(store), NULL);
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
 
+    auto priv = GET_PRIVATE(store);
+
     base = mf_store_read_base_link(component, error);
     if (base == NULL)
         return NULL;
@@ -998,11 +1003,7 @@ mf_store_get_base(MfStore *store, MfComponent *component, GError **error)
     GPtrArray *components = mf_store_ensure_loaded(store, error);
     if (components == NULL)
         return NULL;
-    base_dir = g_build_filename(GET_PRIVATE(store)->path,
-                                base->subdir,
-                                base->component_id,
-                                base->version_name,
-                                NULL);
+    base_dir = g_build_filename(priv->path, base->subdir, base->component_id, base->version_name, NULL);
     for (guint i = 0; i < components->len; i++) {
         MfComponent *candidate = g_ptr_array_index(components, i);
 
@@ -1084,7 +1085,8 @@ mf_store_get_image_path(MfStore *store, MfComponent *component)
     g_return_val_if_fail(MF_IS_STORE(store), NULL);
     g_return_val_if_fail(MF_IS_COMPONENT(component), NULL);
 
-    return mf_store_image_path_at(GET_PRIVATE(store)->path, mf_component_get_verity_hash(component));
+    auto priv = GET_PRIVATE(store);
+    return mf_store_image_path_at(priv->path, mf_component_get_verity_hash(component));
 }
 
 /**
@@ -1097,7 +1099,8 @@ mf_store_get_image_path(MfStore *store, MfComponent *component)
 gboolean
 mf_store_has_image(MfStore *store, const char *verity_hash)
 {
-    g_autofree char *path = mf_store_image_path_at(GET_PRIVATE(store)->path, verity_hash);
+    auto priv = GET_PRIVATE(store);
+    g_autofree char *path = mf_store_image_path_at(priv->path, verity_hash);
 
     return g_file_test(path, G_FILE_TEST_IS_REGULAR);
 }
@@ -1123,8 +1126,10 @@ mf_store_list_images(MfStore *store, GError **error)
 
     g_return_val_if_fail(MF_IS_STORE(store), NULL);
 
+    auto priv = GET_PRIVATE(store);
+
     /* a store that never had an image has no image directory */
-    images_dir = g_build_filename(GET_PRIVATE(store)->path, MF_STORE_IMAGES_SUBDIR, NULL);
+    images_dir = g_build_filename(priv->path, MF_STORE_IMAGES_SUBDIR, NULL);
     if (!g_file_test(images_dir, G_FILE_TEST_IS_DIR))
         return g_steal_pointer(&hashes);
     dir = g_dir_open(images_dir, 0, error);

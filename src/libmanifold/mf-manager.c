@@ -153,7 +153,8 @@ const char *
 mf_manager_get_socket_path(MfManager *manager)
 {
     g_return_val_if_fail(MF_IS_MANAGER(manager), NULL);
-    return GET_PRIVATE(manager)->socket_path;
+    auto priv = GET_PRIVATE(manager);
+    return priv->socket_path;
 }
 
 /**
@@ -186,7 +187,8 @@ MfTransactionFlags
 mf_manager_get_transaction_flags(MfManager *manager)
 {
     g_return_val_if_fail(MF_IS_MANAGER(manager), MF_TRANSACTION_FLAG_NONE);
-    return GET_PRIVATE(manager)->txn_flags;
+    auto priv = GET_PRIVATE(manager);
+    return priv->txn_flags;
 }
 
 /**
@@ -221,7 +223,8 @@ mf_manager_set_transaction_flags(MfManager *manager, MfTransactionFlags flags)
 static int
 mf_manager_add_transaction_flags(MfManager *manager, sd_json_variant **parameters)
 {
-    MfTransactionFlags flags = GET_PRIVATE(manager)->txn_flags;
+    auto priv = GET_PRIVATE(manager);
+    MfTransactionFlags flags = priv->txn_flags;
     const char *names[2] = {};
     size_t n = 0;
 
@@ -597,6 +600,7 @@ mf_manager_call_async(MfManager *manager,
                       gpointer user_data,
                       gpointer source_tag)
 {
+    auto priv = GET_PRIVATE(manager);
     g_autoptr(GTask) task = g_task_new(manager, cancellable, callback, user_data);
     g_autoptr(sd_json_variant) call_parameters = sd_json_variant_ref(parameters);
     MfCall *call = g_new0(MfCall, 1);
@@ -621,13 +625,13 @@ mf_manager_call_async(MfManager *manager,
         return;
     }
 
-    int r = sd_varlink_connect_address(&call->link, GET_PRIVATE(manager)->socket_path);
+    int r = sd_varlink_connect_address(&call->link, priv->socket_path);
     if (r < 0) {
         g_task_return_new_error(task,
                                 MF_ERROR,
                                 MF_ERROR_NO_SERVICE,
                                 _("Unable to reach the Manifold service at %s: %s"),
-                                GET_PRIVATE(manager)->socket_path,
+                                priv->socket_path,
                                 g_strerror(-r));
         return;
     }

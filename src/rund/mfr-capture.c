@@ -2225,11 +2225,14 @@ mfr_capture_retire(const MfrCapture *capture, GHashTable *used_ids, const char *
 gboolean
 mfr_capture_ensure(MfrCapture *capture, const char *core_mount, GError **error)
 {
-    g_autofree char *name = g_path_get_basename(capture->dir);
-    g_autofree char *tmp_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_TMP_PREFIX, name, NULL);
+    g_autofree char *name = NULL;
+    g_autofree char *tmp_dir = NULL;
     g_autoptr(GError) load_error = NULL;
 
     g_return_val_if_fail(capture->arch_tuple != NULL, FALSE);
+
+    name = g_path_get_basename(capture->dir);
+    tmp_dir = g_strconcat(MFR_CAPTURE_DIR "/", MF_TMP_PREFIX, name, NULL);
 
     if (capture->id == NULL && g_file_test(capture->dir, G_FILE_TEST_IS_DIR) &&
         !mfr_capture_load(capture, &load_error)) {

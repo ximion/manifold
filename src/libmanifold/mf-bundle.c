@@ -236,7 +236,9 @@ mf_bundle_class_init(MfBundleClass *klass)
 static void
 mf_bundle_init(MfBundle *bundle)
 {
-    GET_PRIVATE(bundle)->images = g_ptr_array_new_with_free_func(g_object_unref);
+    auto priv = GET_PRIVATE(bundle);
+
+    priv->images = g_ptr_array_new_with_free_func(g_object_unref);
 }
 
 void
@@ -937,7 +939,8 @@ mf_bundle_reader_read_index(MfBundleReader *reader, GError **error)
 static gboolean
 mf_bundle_check_kinds(MfBundle *bundle, GError **error)
 {
-    GPtrArray *images = GET_PRIVATE(bundle)->images;
+    auto priv = GET_PRIVATE(bundle);
+    GPtrArray *images = priv->images;
 
     for (guint i = 0; i < images->len; i++) {
         MfManifest *manifest = ((MfBundleImage *) g_ptr_array_index(images, i))->manifest;
@@ -1120,7 +1123,8 @@ GPtrArray *
 mf_bundle_get_images(MfBundle *bundle)
 {
     g_return_val_if_fail(MF_IS_BUNDLE(bundle), NULL);
-    return GET_PRIVATE(bundle)->images;
+    auto priv = GET_PRIVATE(bundle);
+    return priv->images;
 }
 
 /**
@@ -1139,7 +1143,9 @@ mf_bundle_find_image_for_identity(MfBundle *bundle, const char *identity)
 
     g_return_val_if_fail(MF_IS_BUNDLE(bundle), NULL);
 
-    images = GET_PRIVATE(bundle)->images;
+    auto priv = GET_PRIVATE(bundle);
+
+    images = priv->images;
     for (guint i = 0; i < images->len; i++) {
         MfBundleImage *image = g_ptr_array_index(images, i);
 
@@ -1160,7 +1166,8 @@ gboolean
 mf_bundle_is_signed(MfBundle *bundle)
 {
     g_return_val_if_fail(MF_IS_BUNDLE(bundle), FALSE);
-    return GET_PRIVATE(bundle)->is_signed;
+    auto priv = GET_PRIVATE(bundle);
+    return priv->is_signed;
 }
 
 /**
@@ -1243,7 +1250,10 @@ mf_bundle_sign_file(const char *path, MfSigner *signer, GError **error)
     if (bundle == NULL)
         return FALSE;
 
-    signature = mf_signer_sign(signer, MF_SIGNATURE_NAMESPACE_BUNDLE, GET_PRIVATE(bundle)->index_data, error);
+    signature = mf_signer_sign(signer,
+                               MF_SIGNATURE_NAMESPACE_BUNDLE,
+                               mf_bundle_get_index_data(bundle),
+                               error);
     if (signature == NULL)
         return FALSE;
 

@@ -251,6 +251,7 @@ mf_signer_new_for_key_name(const char *name, GError **error)
 {
     g_autofree char *key_dir = mf_signer_build_key_dir();
     g_autofree char *path = g_build_filename(key_dir, name, NULL);
+    MfSignerPrivate *priv;
     MfSigner *signer;
 
     if (!g_file_test(path, G_FILE_TEST_IS_REGULAR)) {
@@ -259,8 +260,9 @@ mf_signer_new_for_key_name(const char *name, GError **error)
     }
 
     signer = mf_signer_new_for_key_file(path);
-    g_free(GET_PRIVATE(signer)->name);
-    GET_PRIVATE(signer)->name = g_strdup(name);
+    priv = GET_PRIVATE(signer);
+    g_free(priv->name);
+    priv->name = g_strdup(name);
 
     return signer;
 }
@@ -330,8 +332,9 @@ mf_signer_new_for_key(const char *key, GError **error)
 
         for (guint i = 0; i < agent_keys->len; i++) {
             MfSigner *signer = g_ptr_array_index(agent_keys, i);
+            auto priv = GET_PRIVATE(signer);
 
-            if (g_strcmp0(GET_PRIVATE(signer)->fingerprint, key) == 0)
+            if (g_strcmp0(priv->fingerprint, key) == 0)
                 return g_object_ref(signer);
         }
         g_set_error(error,
@@ -366,11 +369,13 @@ MfSigner *
 mf_signer_new_default(GError **error)
 {
     const char *key_data = g_getenv(MF_SIGNING_KEY_ENV);
+    MfSignerPrivate *priv;
     MfSigner *signer;
 
     if (key_data != NULL && key_data[0] != '\0') {
         signer = mf_signer_new_for_key_data(key_data);
-        GET_PRIVATE(signer)->name = g_strdup("$" MF_SIGNING_KEY_ENV);
+        priv = GET_PRIVATE(signer);
+        priv->name = g_strdup("$" MF_SIGNING_KEY_ENV);
         return signer;
     }
 
@@ -398,8 +403,10 @@ mf_signer_compare_names(gconstpointer a, gconstpointer b)
 {
     MfSigner *signer_a = *((MfSigner **) a);
     MfSigner *signer_b = *((MfSigner **) b);
+    auto priv_a = GET_PRIVATE(signer_a);
+    auto priv_b = GET_PRIVATE(signer_b);
 
-    return g_strcmp0(GET_PRIVATE(signer_a)->name, GET_PRIVATE(signer_b)->name);
+    return g_strcmp0(priv_a->name, priv_b->name);
 }
 
 /**
@@ -453,7 +460,8 @@ const char *
 mf_signer_get_name(MfSigner *signer)
 {
     g_return_val_if_fail(MF_IS_SIGNER(signer), NULL);
-    return GET_PRIVATE(signer)->name;
+    auto priv = GET_PRIVATE(signer);
+    return priv->name;
 }
 
 /**
@@ -466,7 +474,8 @@ const char *
 mf_signer_get_public_key(MfSigner *signer)
 {
     g_return_val_if_fail(MF_IS_SIGNER(signer), NULL);
-    return GET_PRIVATE(signer)->public_key;
+    auto priv = GET_PRIVATE(signer);
+    return priv->public_key;
 }
 
 /**
@@ -479,7 +488,8 @@ const char *
 mf_signer_get_fingerprint(MfSigner *signer)
 {
     g_return_val_if_fail(MF_IS_SIGNER(signer), NULL);
-    return GET_PRIVATE(signer)->fingerprint;
+    auto priv = GET_PRIVATE(signer);
+    return priv->fingerprint;
 }
 
 /**
@@ -512,10 +522,11 @@ mf_find_ssh_keygen(GError **error)
 gboolean
 mf_signer_check(MfSigner *signer, GError **error)
 {
-    MfSignerPrivate *priv = GET_PRIVATE(signer);
     g_autofree char *ssh_keygen = NULL;
 
     g_return_val_if_fail(MF_IS_SIGNER(signer), FALSE);
+
+    auto priv = GET_PRIVATE(signer);
 
     ssh_keygen = mf_find_ssh_keygen(error);
     if (ssh_keygen == NULL)
@@ -602,7 +613,6 @@ mf_signer_run_ssh_keygen(MfSigner *signer,
 GBytes *
 mf_signer_sign(MfSigner *signer, const char *sig_namespace, GBytes *data, GError **error)
 {
-    MfSignerPrivate *priv = GET_PRIVATE(signer);
     g_autofree char *tmp_dir = NULL;
     g_autofree char *key_file = NULL;
     GBytes *signature;
@@ -610,6 +620,8 @@ mf_signer_sign(MfSigner *signer, const char *sig_namespace, GBytes *data, GError
     g_return_val_if_fail(MF_IS_SIGNER(signer), NULL);
     g_return_val_if_fail(sig_namespace != NULL, NULL);
     g_return_val_if_fail(data != NULL, NULL);
+
+    auto priv = GET_PRIVATE(signer);
 
     if (priv->key_file != NULL)
         return mf_signer_run_ssh_keygen(signer, priv->key_file, sig_namespace, data, error);

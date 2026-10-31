@@ -70,7 +70,8 @@ GPtrArray *
 mf_result_get_installed(MfResult *result)
 {
     g_return_val_if_fail(MF_IS_RESULT(result), NULL);
-    return GET_PRIVATE(result)->installed;
+    auto priv = GET_PRIVATE(result);
+    return priv->installed;
 }
 
 /**
@@ -83,7 +84,8 @@ GPtrArray *
 mf_result_get_removed(MfResult *result)
 {
     g_return_val_if_fail(MF_IS_RESULT(result), NULL);
-    return GET_PRIVATE(result)->removed;
+    auto priv = GET_PRIVATE(result);
+    return priv->removed;
 }
 
 /**
@@ -96,7 +98,8 @@ GPtrArray *
 mf_result_get_removed_images(MfResult *result)
 {
     g_return_val_if_fail(MF_IS_RESULT(result), NULL);
-    return GET_PRIVATE(result)->removed_images;
+    auto priv = GET_PRIVATE(result);
+    return priv->removed_images;
 }
 
 /**
@@ -109,7 +112,8 @@ guint64
 mf_result_get_bytes_added(MfResult *result)
 {
     g_return_val_if_fail(MF_IS_RESULT(result), 0);
-    return GET_PRIVATE(result)->bytes_added;
+    auto priv = GET_PRIVATE(result);
+    return priv->bytes_added;
 }
 
 /**
@@ -122,7 +126,8 @@ guint64
 mf_result_get_bytes_freed(MfResult *result)
 {
     g_return_val_if_fail(MF_IS_RESULT(result), 0);
-    return GET_PRIVATE(result)->bytes_freed;
+    auto priv = GET_PRIVATE(result);
+    return priv->bytes_freed;
 }
 
 /**
@@ -150,7 +155,8 @@ mf_result_add_installed(MfResult *result, MfComponent *component)
 {
     g_return_if_fail(MF_IS_RESULT(result));
     g_return_if_fail(MF_IS_COMPONENT(component));
-    g_ptr_array_add(GET_PRIVATE(result)->installed, g_object_ref(component));
+    auto priv = GET_PRIVATE(result);
+    g_ptr_array_add(priv->installed, g_object_ref(component));
 }
 
 /**
@@ -165,7 +171,8 @@ mf_result_add_removed(MfResult *result, MfComponent *component)
 {
     g_return_if_fail(MF_IS_RESULT(result));
     g_return_if_fail(MF_IS_COMPONENT(component));
-    g_ptr_array_add(GET_PRIVATE(result)->removed, g_object_ref(component));
+    auto priv = GET_PRIVATE(result);
+    g_ptr_array_add(priv->removed, g_object_ref(component));
 }
 
 /**
@@ -177,7 +184,8 @@ void
 mf_result_add_removed_image(MfResult *result, const char *verity_hash)
 {
     g_return_if_fail(MF_IS_RESULT(result));
-    g_ptr_array_add(GET_PRIVATE(result)->removed_images, g_strdup(verity_hash));
+    auto priv = GET_PRIVATE(result);
+    g_ptr_array_add(priv->removed_images, g_strdup(verity_hash));
 }
 
 /**
@@ -191,7 +199,8 @@ void
 mf_result_set_bytes_added(MfResult *result, guint64 bytes)
 {
     g_return_if_fail(MF_IS_RESULT(result));
-    GET_PRIVATE(result)->bytes_added = bytes;
+    auto priv = GET_PRIVATE(result);
+    priv->bytes_added = bytes;
 }
 
 /**
@@ -205,7 +214,8 @@ void
 mf_result_set_bytes_freed(MfResult *result, guint64 bytes)
 {
     g_return_if_fail(MF_IS_RESULT(result));
-    GET_PRIVATE(result)->bytes_freed = bytes;
+    auto priv = GET_PRIVATE(result);
+    priv->bytes_freed = bytes;
 }
 
 /**

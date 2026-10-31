@@ -482,7 +482,8 @@ GBytes *
 mf_manifest_get_data(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->data;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->data;
 }
 
 /**
@@ -495,7 +496,8 @@ const char *
 mf_manifest_get_component_id(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->component_id;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->component_id;
 }
 
 /**
@@ -508,7 +510,8 @@ MfComponentKind
 mf_manifest_get_kind(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), MF_COMPONENT_KIND_UNKNOWN);
-    return GET_PRIVATE(manifest)->kind;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->kind;
 }
 
 /**
@@ -521,7 +524,8 @@ const char *
 mf_manifest_get_version(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->version;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->version;
 }
 
 /**
@@ -534,7 +538,8 @@ guint64
 mf_manifest_get_revision(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->revision;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->revision;
 }
 
 /**
@@ -547,7 +552,8 @@ const char *
 mf_manifest_get_architecture(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->architecture;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->architecture;
 }
 
 /**
@@ -560,7 +566,8 @@ gboolean
 mf_manifest_is_sdk(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), FALSE);
-    return GET_PRIVATE(manifest)->sdk;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->sdk;
 }
 
 /**
@@ -573,7 +580,8 @@ const char *
 mf_manifest_get_identity(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->identity;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->identity;
 }
 
 /**
@@ -586,7 +594,8 @@ const char *
 mf_manifest_get_content_hash(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->content_hash;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->content_hash;
 }
 
 /**
@@ -600,7 +609,8 @@ const char *
 mf_manifest_get_base_id(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->base_id;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->base_id;
 }
 
 /**
@@ -613,7 +623,8 @@ const char *
 mf_manifest_get_base_version(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->base_version;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->base_version;
 }
 
 /**
@@ -626,7 +637,8 @@ guint64
 mf_manifest_get_base_revision(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->base_revision;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->base_revision;
 }
 
 /**
@@ -639,7 +651,8 @@ const char *
 mf_manifest_get_base_identity(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->base_identity;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->base_identity;
 }
 
 /**
@@ -652,7 +665,8 @@ const char *
 mf_manifest_get_base_content_hash(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->base_content_hash;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->base_content_hash;
 }
 
 /**
@@ -665,7 +679,8 @@ const char *
 mf_manifest_get_image_file(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->image_file;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->image_file;
 }
 
 /**
@@ -678,7 +693,8 @@ guint64
 mf_manifest_get_image_size(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->image_size;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->image_size;
 }
 
 /**
@@ -693,7 +709,8 @@ mf_manifest_get_image_checksum(MfManifest *manifest, MfChecksumKind kind)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
     g_return_val_if_fail(kind > MF_CHECKSUM_KIND_UNKNOWN && kind < MF_CHECKSUM_KIND_LAST, NULL);
-    return GET_PRIVATE(manifest)->image_checksums[kind];
+    auto priv = GET_PRIVATE(manifest);
+    return priv->image_checksums[kind];
 }
 
 /**
@@ -706,7 +723,8 @@ const char *
 mf_manifest_get_verity_hash(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->verity_hash;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->verity_hash;
 }
 
 /**
@@ -719,7 +737,8 @@ guint64
 mf_manifest_get_data_offset(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->data_offset;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->data_offset;
 }
 
 /**
@@ -732,7 +751,8 @@ guint64
 mf_manifest_get_data_size(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->data_size;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->data_size;
 }
 
 /**
@@ -745,7 +765,8 @@ guint64
 mf_manifest_get_hash_offset(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->hash_offset;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->hash_offset;
 }
 
 /**
@@ -758,7 +779,8 @@ guint64
 mf_manifest_get_hash_size(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), 0);
-    return GET_PRIVATE(manifest)->hash_size;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->hash_size;
 }
 
 /**
@@ -771,5 +793,6 @@ const char *
 mf_manifest_get_command(MfManifest *manifest)
 {
     g_return_val_if_fail(MF_IS_MANIFEST(manifest), NULL);
-    return GET_PRIVATE(manifest)->command;
+    auto priv = GET_PRIVATE(manifest);
+    return priv->command;
 }
